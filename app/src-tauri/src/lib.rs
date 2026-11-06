@@ -197,8 +197,9 @@ fn calc_check() -> CalcCheck {
             let fact: i64 = rows.iter().map(|r| r.fact).sum();
             if t.id == "573" {
                 checks.push(check(s.issued == t.plan_total() && s.issued == 12_200_000, "573: аванс равен заявке, 122 000,00"));
-                checks.push(check(fact == 5_564_110, format!("573: израсходовано {} — как в 1С (55 641,10)", fmt2(fact))));
-                checks.push(check(s.balance == 6_635_890, format!("573: вернуть {} — как в 1С (66 358,90)", fmt2(s.balance))));
+                let same = |ok: bool, in_1c: &str| if ok { "совпадает с 1С".to_string() } else { format!("в 1С {in_1c}") };
+                checks.push(check(fact == 5_564_110, format!("573: израсходовано {} — {}", fmt2(fact), same(fact == 5_564_110, "55 641,10"))));
+                checks.push(check(s.balance == 6_635_890, format!("573: вернуть {} — {}", fmt2(s.balance), same(s.balance == 6_635_890, "66 358,90"))));
                 checks.push(check(rows[3].over == 70_000, "573: сверх бюджета 700,00 по суточным"));
             }
             if t.id == "552" {

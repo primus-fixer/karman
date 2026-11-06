@@ -13,12 +13,12 @@ jobs:
     name: Windows — установщик
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           key: windows
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -29,7 +29,7 @@ jobs:
       - name: Сборка
         run: npm run tauri build
         working-directory: app
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: karman-windows
           path: |
@@ -43,23 +43,25 @@ jobs:
     env:
       NDK_VERSION: 27.2.12479018
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
-      - uses: android-actions/setup-android@v3
-      - name: Android NDK
+      - name: Android SDK и NDK
         run: |
-          sdkmanager --install "ndk;${NDK_VERSION}"
+          SDKM="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" --install "ndk;${NDK_VERSION}" "platform-tools" > /dev/null
           echo "NDK_HOME=${ANDROID_HOME}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          ls "${ANDROID_HOME}/ndk"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
         with:
           key: android
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -75,14 +77,14 @@ jobs:
       - name: Сборка APK
         run: npm run tauri android build -- --debug --apk --target aarch64
         working-directory: app
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: karman-android
           path: app/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
       - name: Android-проект для разбора
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: android-project
           path: |
