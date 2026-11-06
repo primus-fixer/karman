@@ -36,6 +36,7 @@ jobs:
             target/release/bundle/nsis/*.exe
             target/release/bundle/msi/*.msi
           if-no-files-found: error
+          retention-days: 14
 
   android:
     name: Android — APK
@@ -86,6 +87,7 @@ jobs:
           name: karman-android
           path: app/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
+          retention-days: 14
       - name: Android-проект для разбора
         if: always()
         uses: actions/upload-artifact@v6
@@ -94,5 +96,7 @@ jobs:
           path: |
             app/src-tauri/gen/android
             !app/src-tauri/gen/android/**/build/**
+            !app/src-tauri/gen/android/**/jniLibs/**
             !app/src-tauri/gen/android/.gradle/**
           if-no-files-found: ignore
+          retention-days: 3
