@@ -1,0 +1,37 @@
+name: Проверки
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Ядро — тесты
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: core
+      - run: cargo test -p karman-core
+
+  frontend:
+    name: Интерфейс — сборка
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - run: npm run build
