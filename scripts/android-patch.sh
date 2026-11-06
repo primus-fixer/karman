@@ -29,6 +29,12 @@ add_permission() {
 add_permission android.permission.ACCESS_NETWORK_STATE
 add_permission android.permission.ACCESS_WIFI_STATE
 add_permission android.permission.CHANGE_WIFI_MULTICAST_STATE
+add_permission android.permission.ACCESS_LOCAL_NETWORK
+
+# Этап 0: targetSdk 36. Приложениям с targetSdk 37 на Android 17 нужно отдельно
+# запрашивать доступ к локальной сети — этот запрос появится в этапе 1.
+GRADLE="$PROJECT/app/build.gradle.kts"
+[ -f "$GRADLE" ] && sed -i -E 's/targetSdk = [0-9]+/targetSdk = 36/' "$GRADLE"
 
 echo "Android-проект донастроен:"
 grep -E "uses-permission|targetSdk|minSdk" -r "$MANIFEST" "$PROJECT/app/build.gradle.kts" 2>/dev/null || true

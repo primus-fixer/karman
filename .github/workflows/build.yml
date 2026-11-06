@@ -53,8 +53,12 @@ jobs:
           SDKM="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKM" --licenses > /dev/null || true
           "$SDKM" --install "ndk;${NDK_VERSION}" "platform-tools" > /dev/null
-          echo "NDK_HOME=${ANDROID_HOME}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
-          ls "${ANDROID_HOME}/ndk"
+          NDK="${ANDROID_HOME}/ndk/${NDK_VERSION}"
+          BIN="${NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "NDK_HOME=${NDK}" >> "$GITHUB_ENV"
+          # OpenSSL при сборке ищет aarch64-linux-android-ranlib, а в NDK есть только llvm-ranlib.
+          echo "RANLIB_aarch64_linux_android=${BIN}/llvm-ranlib" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=${BIN}/llvm-ar" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
