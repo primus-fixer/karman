@@ -1,0 +1,300 @@
+/* Цвета схемы «Щит» из макета: светлая и тёмная. */
+:root {
+  --bg: #eef2f3;
+  --surf: #f9fbfb;
+  --inset: #e3e9eb;
+  --ink: #15232d;
+  --ink2: #3f4f5a;
+  --ink3: #566671;
+  --line: #cdd6da;
+  --work: #a64a08;
+  --workBg: #f7e6d8;
+  --onWork: #ffffff;
+  --own: #0e5a8a;
+  --ownBg: #dceaf3;
+  --onOwn: #ffffff;
+  --pos: #0b6b57;
+  --warn: #a4262c;
+  --warnBg: #f8e3e1;
+  --num: 'Geologica', 'Golos Text', Arial, sans-serif;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141e26;
+    --surf: #1c2933;
+    --inset: #25343f;
+    --ink: #e7eef1;
+    --ink2: #b4c2ca;
+    --ink3: #93a3ad;
+    --line: #32434f;
+    --work: #f2a25c;
+    --workBg: #3a2a1c;
+    --onWork: #1e1206;
+    --own: #7dbdeb;
+    --ownBg: #1d3445;
+    --onOwn: #0a1c2a;
+    --pos: #5fcfb0;
+    --warn: #f4968e;
+    --warnBg: #43241f;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'Golos Text', 'Segoe UI', Roboto, Arial, sans-serif;
+  font-size: 15px;
+  line-height: 21px;
+  font-variant-numeric: tabular-nums;
+  -webkit-text-size-adjust: 100%;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+.page {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(40px, env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-left));
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.brand {
+  margin: 0;
+  font-family: var(--num);
+  font-weight: 500;
+  font-size: 34px;
+  line-height: 40px;
+  letter-spacing: -0.015em;
+}
+
+.lead {
+  margin: 2px 0 0;
+  color: var(--ink2);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--surf);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  min-width: 0;
+}
+
+.card h2 {
+  margin: 0;
+  font-family: var(--num);
+  font-weight: 500;
+  font-size: 17px;
+  line-height: 22px;
+}
+
+.note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--ink2);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-top: 1px solid var(--line);
+}
+
+.row > span:first-child {
+  color: var(--ink2);
+}
+
+.row > span:last-child {
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.btn {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--ink);
+  color: var(--bg);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn.own {
+  background: var(--own);
+  color: var(--onOwn);
+}
+
+.btn.work {
+  background: var(--work);
+  color: var(--onWork);
+}
+
+.btn.ghost {
+  background: none;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.field {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  min-width: 0;
+}
+
+textarea.field {
+  padding: 10px 12px;
+  resize: vertical;
+  width: 100%;
+}
+
+.checks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.checks li {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.checks svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.ok {
+  color: var(--pos);
+}
+
+.bad {
+  color: var(--warn);
+}
+
+.error {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--warnBg);
+  color: var(--warn);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.trip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+}
+
+.trip b {
+  font-weight: 500;
+}
+
+.trip small {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--ink2);
+}
+
+.qr {
+  align-self: center;
+  width: 232px;
+  height: 232px;
+  padding: 8px;
+  background: #fff;
+  border-radius: 12px;
+}
+
+.qr svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.num {
+  font-family: var(--num);
+}
+
+.op {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 48px;
+  border-top: 1px solid var(--line);
+}
+
+.op small {
+  display: block;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--ink2);
+}
+
+.link {
+  min-height: 40px;
+  padding: 0 6px;
+  border: 0;
+  background: none;
+  color: var(--warn);
+  cursor: pointer;
+}

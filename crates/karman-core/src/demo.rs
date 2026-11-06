@@ -1,0 +1,117 @@
+//! Демо-данные — те же, что в макете. Настоящие здесь только суммы заявки 573 из 1С.
+
+use crate::date::Date;
+use crate::money::rub;
+use crate::trip::{DocKind, Op, OpKind, Trip, TripStatus, DEFAULT_RATE};
+
+/// «Сегодня» в демо-данных.
+pub fn today() -> Date {
+    d("2026-11-06")
+}
+
+fn d(s: &str) -> Date {
+    Date::parse(s).expect("дата в демо-данных")
+}
+
+fn trip(id: &str, city: &str, dates: [&str; 4], status: TripStatus, plan: [f64; 5], fixed: bool) -> Trip {
+    Trip {
+        id: id.into(),
+        city: city.into(),
+        start: d(dates[0]),
+        end: d(dates[1]),
+        plan_start: d(dates[2]),
+        plan_end: d(dates[3]),
+        status,
+        plan: plan.map(rub),
+        fixed_rate: if fixed { Some(DEFAULT_RATE) } else { None },
+    }
+}
+
+pub fn trips() -> Vec<Trip> {
+    vec![
+        trip("588", "Сургут", ["2026-11-03", "2026-11-14", "2026-11-03", "2026-11-14"], TripStatus::InTrip, [28000.0, 0.0, 24000.0, 8400.0, 1600.0], false),
+        trip("573", "Чекмагуш", ["2026-10-21", "2026-10-31", "2026-10-21", "2026-10-30"], TripStatus::AwaitingReport, [60000.0, 0.0, 50000.0, 7000.0, 5000.0], false),
+        trip("561", "Нижневартовск", ["2026-09-28", "2026-10-09", "2026-09-28", "2026-10-09"], TripStatus::Review, [19700.0, 0.0, 19800.0, 8400.0, 400.0], true),
+        trip("552", "Ноябрьск", ["2026-09-15", "2026-09-19", "2026-09-15", "2026-09-19"], TripStatus::Review, [16000.0, 0.0, 10000.0, 3500.0, 10000.0], true),
+        trip("540", "Тобольск", ["2026-09-01", "2026-09-09", "2026-09-01", "2026-09-09"], TripStatus::Closed, [14200.0, 0.0, 14400.0, 6300.0, 6100.0], true),
+    ]
+}
+
+// (дата, вид, категория, название, сумма, счёт, поездка, документ)
+type Row = (&'static str, OpKind, &'static str, &'static str, f64, &'static str, Option<&'static str>, Option<DocKind>);
+
+const ROWS: &[Row] = {
+    use DocKind::*;
+    use OpKind::*;
+    &[
+        ("2026-11-06", Work, "taxi", "Такси до объекта", 640.0, "work", Some("588"), Some(Qr)),
+        ("2026-11-06", Food, "food", "Столовая", 480.0, "personal", Some("588"), None),
+        ("2026-11-06", Personal, "gifts", "Сувениры домой", 1250.0, "personal", Some("588"), None),
+        ("2026-11-05", Work, "lodging", "Гостиница, предоплата", 12000.0, "work", Some("588"), Some(File)),
+        ("2026-11-05", Work, "tools", "Изолента и стяжки", 860.0, "work", Some("588"), Some(Qr)),
+        ("2026-11-05", Food, "food", "Кафе", 260.0, "personal", Some("588"), None),
+        ("2026-11-04", Work, "taxi", "Такси от вокзала", 1210.0, "personal", Some("588"), None),
+        ("2026-11-04", Food, "food", "Продукты", 540.0, "personal", Some("588"), None),
+        ("2026-11-03", Work, "tickets", "Билеты до Сургута", 18400.0, "work", Some("588"), Some(File)),
+        ("2026-11-02", Advance, "advance", "Аванс по заявке 588", 62000.0, "work", Some("588"), None),
+        ("2026-10-31", Work, "tickets", "Поезд из Уфы", 5870.55, "work", Some("573"), Some(File)),
+        ("2026-10-31", Work, "taxi", "Автобус Чекмагуш – Уфа", 600.0, "cash", Some("573"), Some(Photo)),
+        ("2026-10-30", Food, "food", "Столовая", 780.0, "personal", Some("573"), None),
+        ("2026-10-29", Food, "food", "Столовая", 390.0, "personal", Some("573"), None),
+        ("2026-10-28", Food, "food", "Кафе", 650.0, "personal", Some("573"), None),
+        ("2026-10-26", Food, "food", "Продукты", 2140.0, "personal", Some("573"), None),
+        ("2026-10-23", Food, "food", "Продукты", 1860.0, "personal", Some("573"), None),
+        ("2026-10-22", Work, "lodging", "Съёмная квартира", 35000.0, "personal", Some("573"), Some(File)),
+        ("2026-10-22", Food, "food", "Столовая", 420.0, "personal", Some("573"), None),
+        ("2026-10-21", Work, "tickets", "Поезд до Уфы", 5870.55, "work", Some("573"), Some(File)),
+        ("2026-10-21", Work, "taxi", "Автобус Уфа – Чекмагуш", 600.0, "cash", Some("573"), Some(Photo)),
+        ("2026-10-20", Advance, "advance", "Аванс по заявке 573", 122000.0, "work", Some("573"), None),
+        ("2026-10-09", Work, "tickets", "Поезд обратно", 9850.0, "work", Some("561"), Some(File)),
+        ("2026-10-05", Food, "food", "Продукты", 2300.0, "personal", Some("561"), None),
+        ("2026-10-02", Work, "taxi", "Такси на объект", 1400.0, "work", Some("561"), Some(Qr)),
+        ("2026-10-01", Food, "food", "Столовая", 1900.0, "personal", Some("561"), None),
+        ("2026-09-29", Work, "lodging", "Гостиница", 19800.0, "work", Some("561"), Some(File)),
+        ("2026-09-28", Work, "tickets", "Поезд туда", 9850.0, "work", Some("561"), Some(File)),
+        ("2026-09-26", Advance, "advance", "Аванс по заявке 561", 48300.0, "work", Some("561"), None),
+        ("2026-09-19", Work, "tickets", "Поезд обратно", 7800.0, "work", Some("552"), Some(File)),
+        ("2026-09-18", Food, "food", "Кафе", 600.0, "work", Some("552"), None),
+        ("2026-09-18", Work, "taxi", "Такси обратно", 1400.0, "work", Some("552"), None),
+        ("2026-09-18", Work, "taxi", "Такси до объекта", 900.0, "work", Some("552"), Some(Qr)),
+        ("2026-09-17", Food, "food", "Продукты", 1100.0, "work", Some("552"), None),
+        ("2026-09-17", Work, "taxi", "Такси", 2100.0, "work", Some("552"), None),
+        ("2026-09-16", Food, "food", "Столовая", 900.0, "work", Some("552"), None),
+        ("2026-09-16", Work, "lodging", "Гостиница", 10000.0, "work", Some("552"), Some(File)),
+        ("2026-09-15", Work, "taxi", "Водитель до объекта, перевод", 6000.0, "work", Some("552"), None),
+        ("2026-09-15", Work, "tickets", "Поезд туда", 7800.0, "work", Some("552"), Some(File)),
+        ("2026-09-12", Advance, "advance", "Аванс по заявке 552", 39500.0, "work", Some("552"), None),
+        ("2026-09-12", Return, "ret", "Возврат остатка, заявка 540", 4100.0, "work", Some("540"), None),
+        ("2026-09-09", Work, "tickets", "Поезд обратно", 7100.0, "work", Some("540"), Some(File)),
+        ("2026-09-08", Food, "food", "Продукты", 2600.0, "personal", Some("540"), None),
+        ("2026-09-05", Work, "taxi", "Такси", 2000.0, "work", Some("540"), Some(Qr)),
+        ("2026-09-04", Food, "food", "Столовая", 2900.0, "personal", Some("540"), None),
+        ("2026-09-02", Work, "lodging", "Гостиница", 14400.0, "work", Some("540"), Some(File)),
+        ("2026-09-01", Work, "tickets", "Поезд туда", 7100.0, "work", Some("540"), Some(File)),
+        ("2026-08-30", Advance, "advance", "Аванс по заявке 540", 41000.0, "work", Some("540"), None),
+    ]
+};
+
+pub fn ops() -> Vec<Op> {
+    ROWS.iter()
+        .enumerate()
+        .map(|(i, r)| Op {
+            id: format!("demo-{i}"),
+            date: d(r.0),
+            kind: r.1,
+            cat: r.2.into(),
+            title: r.3.into(),
+            amount: rub(r.4),
+            account: r.5.into(),
+            trip: r.6.map(Into::into),
+            doc: r.7,
+            sent: false,
+            family: false,
+            debt: None,
+            inflow: false,
+        })
+        .collect()
+}
