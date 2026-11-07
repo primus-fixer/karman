@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, inApp, LOCKED, message, onFx, onLocked, type Attachment, type DeviceInfo, type LockStatus, type Op, type Snapshot, type TripStatus } from './api';
+import { api, inApp, LOCKED, message, onBackup, onFx, onLocked, type Attachment, type DeviceInfo, type LockStatus, type Op, type Snapshot, type TripStatus } from './api';
 import Entry, { defaultDraft, draftFromOp, tripDraft, type EntryDraft } from './Entry';
 import { rub } from './format';
 import { dueText } from './logic';
@@ -197,10 +197,13 @@ export default function App() {
     const unlisten = onLocked(goLocked).catch(() => () => undefined);
     // Свежие курсы ЦБ пересчитали остатки на счетах в валюте. Пока «Карман» заблокирован, данные не придут — и не нужны.
     const unFx = onFx(() => api.snapshot().then(setSnap, () => undefined)).catch(() => () => undefined);
+    // Автокопия записала, когда сделана, — обновить напоминание о копиях.
+    const unBackup = onBackup(() => api.snapshot().then(setSnap, () => undefined)).catch(() => () => undefined);
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
       unlisten.then((f) => f());
       unFx.then((f) => f());
+      unBackup.then((f) => f());
     };
   }, [refresh, goLocked, showNotice]);
 
@@ -524,6 +527,7 @@ export default function App() {
         nav={nav}
         act={opAct}
         fin={finAct}
+        mobile={mobile}
         openFinance={(v) => {
           setFinView(v);
           nav.go('finance');
@@ -533,7 +537,8 @@ export default function App() {
   else if (screen === 'feed') body = <Feed snap={snap} act={opAct} />;
   else if (screen === 'trips') body = <Trips snap={snap} nav={nav} />;
   else if (screen === 'finance') body = <Finance snap={snap} act={finAct} view={finView} setView={setFinView} goSettings={() => nav.go('settings')} openTrip={nav.openTrip} mobile={mobile} />;
-  else if (screen === 'settings') body = <Settings snap={snap} info={info} mobile={mobile} run={run} refresh={refresh} theme={theme} setTheme={setTheme} dark={dark} security={security} />;
+  else if (screen === 'settings')
+    body = <Settings snap={snap} info={info} mobile={mobile} run={run} refresh={refresh} theme={theme} setTheme={setTheme} dark={dark} security={security} flash={(text, long) => flash(text, undefined, long)} />;
   else if (screen === 'trip' && tripId)
     body = (
       <TripScreen

@@ -21,6 +21,11 @@ pub enum Error {
     /// Другое устройство не смогло принять записи (старая версия).
     #[error("{0}")]
     Peer(String),
+    /// Резервная копия: файл не подходит, повреждён или обрезан.
+    #[error("{0}")]
+    Backup(String),
+    #[error("Пароль не подходит к этой копии")]
+    BackupPassword,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

@@ -227,6 +227,27 @@ export type LockStatus = {
   notice: string | null;
 };
 
+/** Последняя копия на этом компьютере. */
+export type BackupLast = { at: number; path: string; auto: boolean; bytes: number; events: number; blobs: number };
+/** Резервные копии на этом устройстве: пароль, папка, как часто, последняя копия. */
+export type BackupStatus = {
+  desktop: boolean;
+  password: boolean;
+  dir: string;
+  chosen: boolean;
+  every: 'day' | 'week' | 'off';
+  keep: number;
+  last: BackupLast | null;
+  error: string | null;
+  running: boolean;
+};
+/** Что в файле копии (пароль подошёл, файл прочитан целиком). */
+export type BackupInfo = { created: number; device: string; app: string; ops: number; trips: number; events: number; blobs: number; bytes: number };
+export type RestoreResult = { events: number; blobs: number; ops: number; trips: number; snapshot: Snapshot };
+
+/** Файл копии уходит в ядро кусками по 4 МБ: так он читается и на телефоне, и без лишней памяти. */
+const UPLOAD_CHUNK = 4 << 20;
+
 /** Ответ команд с данными, пока «Карман» заблокирован. */
 export const LOCKED = 'locked';
 
@@ -283,12 +304,40 @@ export const api = {
   pinRecover: () => invoke<LockStatus>('pin_recover'),
   lockNow: () => invoke<LockStatus>('lock_now'),
   appVisible: (visible: boolean) => invoke<LockStatus>('app_visible', { visible }),
+  backupStatus: () => invoke<BackupStatus>('backup_status'),
+  backupPassword: (password: string) => invoke<BackupStatus>('backup_password', { password }),
+  backupEvery: (every: BackupStatus['every']) => invoke<BackupStatus>('backup_every', { every }),
+  /** Папка копий; `null` — папка по умолчанию. */
+  backupDir: (path: string | null) => invoke<BackupStatus>('backup_dir', { path }),
+  backupPickDir: () => invoke<BackupStatus>('backup_pick_dir'),
+  backupNow: () => invoke<BackupLast>('backup_now'),
+  /** Загружает файл копии в ядро и возвращает номер загрузки. */
+  backupUpload: async (file: File, progress?: (done: number, total: number) => void): Promise<string> => {
+    let id = 'new';
+    for (let at = 0; at < file.size || at === 0; at += UPLOAD_CHUNK) {
+      const part = new Uint8Array(await file.slice(at, at + UPLOAD_CHUNK).arrayBuffer());
+      const r = await invoke<{ id: string; size: number }>('backup_upload', part, { headers: { 'x-upload': id, 'x-offset': String(at) } });
+      id = r.id;
+      progress?.(r.size, file.size);
+      if (file.size === 0) break;
+    }
+    return id;
+  },
+  backupInspect: (id: string, password: string) => invoke<BackupInfo>('backup_inspect', { id, password }),
+  backupRestore: (id: string, password: string) => invoke<RestoreResult>('backup_restore', { id, password, today: today() }),
+  backupDiscard: (id: string) => invoke<null>('backup_discard', { id }),
 };
 
 /** Ядро сообщает, что «Карман» заблокировался (5 минут в фоне). */
 export async function onLocked(cb: () => void): Promise<() => void> {
   const { listen } = await import('@tauri-apps/api/event');
   return listen('locked', cb);
+}
+
+/** Сделана автокопия (или не получилась) — обновить сведения о копиях. */
+export async function onBackup(cb: () => void): Promise<() => void> {
+  const { listen } = await import('@tauri-apps/api/event');
+  return listen('backup', cb);
 }
 
 /** Загрузились свежие курсы ЦБ — остатки на счетах в валюте пересчитаны. */

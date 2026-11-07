@@ -3,6 +3,7 @@
 //! Экраны получают одну сводку (`snapshot`) и после каждого изменения — новую.
 //! Вся логика расчётов — в ядре `karman-core`. Вход по PIN-коду и отпечатку — в `guard`.
 
+mod backup;
 mod fx;
 mod guard;
 mod notify;
@@ -44,10 +45,16 @@ struct AppState {
 impl AppState {
     /// База для команд с данными: пока «Карман» заблокирован, ответ — `locked`.
     fn store(&self) -> Res<MutexGuard<'_, Store>> {
+        self.unlocked()?;
+        self.store.lock().map_err(err)
+    }
+
+    /// Пока «Карман» заблокирован, команды с данными отвечают `locked`.
+    fn unlocked(&self) -> Res<()> {
         if self.guard.lock().map_err(err)?.locked {
             return Err(LOCKED.into());
         }
-        self.store.lock().map_err(err)
+        Ok(())
     }
 }
 
@@ -87,8 +94,12 @@ fn load_identity(dir: &Path) -> Res<Identity> {
         }
     }
     let id = Identity { id: book::new_id().map_err(err)?, name: default_name() };
-    std::fs::write(&path, serde_json::to_string_pretty(&id).map_err(err)?).map_err(err)?;
+    save_identity(dir, &id)?;
     Ok(id)
+}
+
+fn save_identity(dir: &Path, id: &Identity) -> Res<()> {
+    std::fs::write(dir.join("device.json"), serde_json::to_string_pretty(id).map_err(err)?).map_err(err)
 }
 
 /// Ключ базы. На Windows и Android он хранится зашифрованным средствами системы (key.sec):
@@ -142,9 +153,11 @@ fn wipe(path: &Path) {
 }
 
 /// Открывает базу. Если ключ или база не открываются, прежние файлы откладываются в сторону
-/// (не удаляются) и начинается чистая база — данные можно вернуть синхронизацией.
-fn open_store(dir: &Path, db_path: &Path, device: &str) -> Res<(Store, Option<String>)> {
-    let opened = load_key(dir).and_then(|k| Store::open(db_path, &k, device).map_err(err));
+/// (не удаляются) и начинается чистая база — данные можно вернуть синхронизацией или из резервной копии.
+/// Чистая база получает новый номер устройства: иначе её записи пошли бы под теми же номерами,
+/// что и прежние, и при синхронизации или восстановлении часть записей потерялась бы.
+fn open_store(dir: &Path, db_path: &Path, me: &mut Identity) -> Res<(Store, Option<String>)> {
+    let opened = load_key(dir).and_then(|k| Store::open(db_path, &k, &me.id).map_err(err));
     match opened {
         Ok(s) => Ok((s, None)),
         Err(e) => {
@@ -155,9 +168,11 @@ fn open_store(dir: &Path, db_path: &Path, device: &str) -> Res<(Store, Option<St
                     let _ = std::fs::rename(&p, dir.join(format!("{name}.{stamp}.old")));
                 }
             }
+            *me = Identity { id: book::new_id().map_err(err)?, name: me.name.clone() };
+            save_identity(dir, me)?;
             let k = load_key(dir)?;
-            let s = Store::open(db_path, &k, device).map_err(err)?;
-            Ok((s, Some(format!("Прежнюю базу открыть не удалось ({e}). Её файлы сохранены рядом, с пометкой .old. Данные можно вернуть синхронизацией с другого устройства."))))
+            let s = Store::open(db_path, &k, &me.id).map_err(err)?;
+            Ok((s, Some(format!("Прежнюю базу открыть не удалось ({e}). Её файлы сохранены рядом, с пометкой .old. Данные можно вернуть синхронизацией с другого устройства или из резервной копии: Настройки → Резервная копия."))))
         }
     }
 }
@@ -908,14 +923,20 @@ pub fn run() {
     {
         builder = builder.plugin(tauri_plugin_barcode_scanner::init()).plugin(tauri_plugin_biometric::init());
     }
+    // Окно выбора папки для резервных копий.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_dialog::init());
+    }
     builder
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
-            let me = load_identity(&dir)?;
+            let mut me = load_identity(&dir)?;
             let db_path = dir.join("karman.db");
-            let (mut store, notice) = open_store(&dir, &db_path, &me.id)?;
+            let (mut store, notice) = open_store(&dir, &db_path, &mut me)?;
+            backup::clean_uploads(&dir);
             cleanup_stage0(&mut store)?;
             book::ensure_defaults(&mut store)?;
             // Снимки, которые так и не прикрепили к операции, убираем через сутки.
@@ -934,6 +955,7 @@ pub fn run() {
             fx::refresh_on_start(app.handle().clone(), today);
             notify::init(app.handle());
             notify::start_desktop_loop(app.handle().clone());
+            backup::start_auto(app.handle().clone());
             if notify::TRAY.load(std::sync::atomic::Ordering::Relaxed) {
                 #[cfg(windows)]
                 notify::tray(app.handle())?;
@@ -990,6 +1012,16 @@ pub fn run() {
             budget_save,
             stats,
             export_xlsx,
+            backup::backup_status,
+            backup::backup_password,
+            backup::backup_every,
+            backup::backup_dir,
+            backup::backup_pick_dir,
+            backup::backup_now,
+            backup::backup_upload,
+            backup::backup_inspect,
+            backup::backup_restore,
+            backup::backup_discard,
             notify::remind_status,
             notify::remind_desktop,
             guard::lock_status,

@@ -30,9 +30,16 @@ time = "0.3"
 tauri-plugin-barcode-scanner = "2"
 tauri-plugin-biometric = "2"
 
+# Выбор папки для резервных копий — окно системы (только на компьютере).
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-dialog = "2"
+
 # Напоминания уведомлением Windows: «Карман» запускается с системой и живёт в трее;
 # второй запуск открывает уже работающий.
 [target.'cfg(windows)'.dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
+
+[dev-dependencies]
+tempfile = "3"

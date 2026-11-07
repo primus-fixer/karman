@@ -89,12 +89,46 @@ impl Store {
                added INTEGER NOT NULL);",
         )?;
         let mut store = Store { conn, device: device.to_string() };
-        if store.meta("schema")?.as_deref() != Some(SCHEMA) {
+        let schema = store.meta("schema")?;
+        if schema.as_deref() != Some(SCHEMA) {
+            // Перед перестройкой — копия файла базы рядом (тем же ключом): если новая версия
+            // ошибётся, прежнее состояние можно вернуть. Хранятся две последние.
+            if let Some(old) = schema {
+                store.copy_before_rebuild(path, key, &old)?;
+            }
             store.rebuild()?;
             store.conn.execute_batch("DROP TABLE IF EXISTS ops;")?;
             store.set_meta("schema", SCHEMA)?;
         }
         Ok(store)
+    }
+
+    fn copy_before_rebuild(&self, path: &Path, key: &[u8; 32], old: &str) -> Result<()> {
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else { return Ok(()) };
+        let dir = path.parent().unwrap_or(Path::new("."));
+        let safe: String = old.chars().filter(|c| c.is_ascii_alphanumeric()).take(16).collect();
+        self.export_copy(&dir.join(format!("{name}.schema-{safe}.bak")), key)?;
+        let prefix = format!("{name}.schema-");
+        let mut copies: Vec<(std::time::SystemTime, std::path::PathBuf)> = std::fs::read_dir(dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_str().is_some_and(|n| n.starts_with(&prefix) && n.ends_with(".bak")))
+            .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+            .collect();
+        copies.sort();
+        while copies.len() > 2 {
+            let _ = std::fs::remove_file(copies.remove(0).1);
+        }
+        Ok(())
+    }
+
+    /// Копия базы в файл тем же ключом (sqlcipher_export).
+    pub fn export_copy(&self, dest: &Path, key: &[u8; 32]) -> Result<()> {
+        let _ = std::fs::remove_file(dest);
+        self.conn.execute("ATTACH DATABASE ?1 AS copy KEY ?2", params![dest.to_string_lossy(), format!("x'{}'", hex(key))])?;
+        let done = self.conn.query_row("SELECT sqlcipher_export('copy')", [], |_| Ok(()));
+        self.conn.execute("DETACH DATABASE copy", [])?;
+        done?;
+        Ok(())
     }
 
     /// Собирает таблицу записей заново из журнала событий.
@@ -294,6 +328,18 @@ impl Store {
         Ok(out)
     }
 
+    /// Тело события, если оно есть в журнале.
+    pub fn event_body(&self, device: &str, seq: u64) -> Result<Option<serde_json::Value>> {
+        let body: Option<String> = self
+            .conn
+            .query_row("SELECT body FROM events WHERE device = ?1 AND seq = ?2", params![device, seq as i64], |r| r.get(0))
+            .optional()?;
+        Ok(match body {
+            Some(b) => Some(serde_json::from_str(&b)?),
+            None => None,
+        })
+    }
+
     pub fn event_count(&self) -> Result<u64> {
         Ok(self.conn.query_row("SELECT count(*) FROM events", [], |r| r.get::<_, i64>(0))? as u64)
     }
@@ -340,6 +386,17 @@ impl Store {
     /// Вложения, на которые ссылаются операции.
     pub fn referenced_blobs(&self) -> Result<BTreeSet<String>> {
         Ok(self.ops()?.into_iter().flat_map(|o| o.att.into_iter().map(|a| a.id)).collect())
+    }
+
+    /// Вложения из операций, которые есть на этом устройстве.
+    pub fn present_blobs(&self) -> Result<Vec<String>> {
+        let mut out = Vec::new();
+        for id in self.referenced_blobs()? {
+            if self.has_blob(&id)? {
+                out.push(id);
+            }
+        }
+        Ok(out)
     }
 
     /// Вложения из операций, которых на этом устройстве ещё нет.
@@ -432,6 +489,34 @@ mod tests {
         let s = Store::open(&path, &key, "dev-a").unwrap();
         assert_eq!(s.ops().unwrap().len(), 5);
         assert!(matches!(Store::open(&path, &[1u8; 32], "dev-a"), Err(Error::WrongKey)));
+    }
+
+    #[test]
+    fn copy_of_the_base_before_rebuild() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("karman.db");
+        let key = [9u8; 32];
+        {
+            let mut s = Store::open(&path, &key, "dev-a").unwrap();
+            for op in demo::ops().into_iter().take(3) {
+                s.put_op(op).unwrap();
+            }
+        }
+        assert!(!dir.path().join("karman.db.schema-5.bak").exists(), "новой базе копия не нужна");
+        // Будто база осталась от прежней версии: при открытии она перестраивается — сначала копия.
+        for old in ["4", "5", "x"] {
+            Store::open(&path, &key, "dev-a").unwrap().set_meta("schema", old).unwrap();
+            let s = Store::open(&path, &key, "dev-a").unwrap();
+            assert_eq!(s.ops().unwrap().len(), 3);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let copies: Vec<String> = std::fs::read_dir(dir.path()).unwrap().filter_map(|e| e.ok()?.file_name().into_string().ok()).filter(|n| n.contains(".schema-")).collect();
+        assert_eq!(copies.len(), 2, "хранятся две последние: {copies:?}");
+        assert!(!copies.iter().any(|n| n.ends_with("-4.bak")));
+        let copy = Store::open(&dir.path().join("karman.db.schema-x.bak"), &key, "dev-a").unwrap();
+        assert_eq!(copy.ops().unwrap().len(), 3, "копия открывается тем же ключом");
+        assert!(!is_plaintext_sqlite(&dir.path().join("karman.db.schema-x.bak")).unwrap(), "и зашифрована");
+        assert!(Store::open(&dir.path().join("karman.db.schema-x.bak"), &[1u8; 32], "dev-a").is_err());
     }
 
     #[test]

@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import type { Snapshot } from '../api';
-import { NB, fmt, rub, weekdayLabel } from '../format';
+import { NB, fmt, plural, rub, weekdayLabel } from '../format';
 import { CATS, isSpend, statusIndex, tripRow } from '../logic';
 import { Dots, Icon, OpRow, type OpActions } from '../ui';
 import type { Nav } from '../App';
 import { DueRow, type FinanceActions, type FinView } from './Finance';
 import { Bar, leftText } from './Budget';
+import { daysSince, lastBackup } from './Backup';
 
 export function Figures({ snap, nav, big = true }: { snap: Snapshot; nav: Nav; big?: boolean }) {
   const items: { label: string; value: string; note?: string; mark: string; go: () => void }[] = [];
@@ -75,7 +76,13 @@ export function TripList({ snap, nav, closed = false }: { snap: Snapshot; nav: N
   );
 }
 
-export default function Overview({ snap, nav, act, fin, openFinance }: { snap: Snapshot; nav: Nav; act: OpActions; fin: FinanceActions; openFinance: (v: FinView) => void }) {
+/** В настройки, к разделу «Резервная копия». */
+function goBackup(nav: Nav) {
+  nav.go('settings');
+  window.setTimeout(() => document.getElementById('backup')?.scrollIntoView({ block: 'start' }), 80);
+}
+
+export default function Overview({ snap, nav, act, fin, openFinance, mobile }: { snap: Snapshot; nav: Nav; act: OpActions; fin: FinanceActions; openFinance: (v: FinView) => void; mobile: boolean }) {
   const [accountsOpen, setAccountsOpen] = useState(false);
   const mine = fmt(snap.mine);
   const comma = mine.indexOf(',');
@@ -86,6 +93,10 @@ export default function Overview({ snap, nav, act, fin, openFinance }: { snap: S
   const soon = snap.upcoming.filter((u) => u.soon);
   // Бюджеты, где задан хоть один лимит.
   const budgets = snap.budgets.filter((b) => b.total || b.cats.some((c) => c.limit != null));
+  // Копий не было или они давно не делались — напомнить (когда записей уже набралось).
+  const last = lastBackup(snap);
+  const backupDays = last ? daysSince(last.at) : null;
+  const remindBackup = !empty && snap.ops.length >= 10 && (backupDays == null || backupDays > 14);
   const debts: string[] = [];
   if (snap.i_owe > 0) debts.push('я должен ' + rub(snap.i_owe));
   if (snap.owed_to_me > 0) debts.push('мне должны ' + rub(snap.owed_to_me));
@@ -208,6 +219,26 @@ export default function Overview({ snap, nav, act, fin, openFinance }: { snap: S
         </section>
       )}
 
+      {remindBackup && (
+        <section className="card stack gap6 backupnote">
+          <div className="between" style={{ alignItems: 'center' }}>
+            <span style={{ fontWeight: 500 }}>{backupDays == null ? 'Резервных копий ещё не было' : `Последняя копия — ${backupDays}${NB}${plural(backupDays, 'день', 'дня', 'дней')} назад`}</span>
+            <button type="button" className="btn ghost small" style={{ flex: 'none' }} onClick={() => goBackup(nav)}>
+              {mobile ? 'Подробнее' : 'Настроить'}
+            </button>
+          </div>
+          <span className="note">
+            {mobile
+              ? backupDays == null
+                ? 'Их делает «Карман» на компьютере: задайте там пароль копии.'
+                : 'Откройте «Карман» на компьютере и свяжите устройства по Wi-Fi.'
+              : backupDays == null
+                ? 'Задайте пароль копии — дальше копии будут делаться сами.'
+                : 'Проверьте автокопии в настройках.'}
+          </span>
+        </section>
+      )}
+
       {empty && (
         <section className="card stack gap10">
           <h2 className="h2">С чего начать</h2>
@@ -223,6 +254,10 @@ export default function Overview({ snap, nav, act, fin, openFinance }: { snap: S
               Записать расход
             </button>
           </div>
+          <p className="note">Уже пользовались «Карманом»? Восстановите данные из резервной копии или свяжите это устройство с другим по Wi-Fi.</p>
+          <button type="button" className="btn link" style={{ alignSelf: 'flex-start', color: 'var(--own)', padding: 0, minHeight: 32 }} onClick={() => goBackup(nav)}>
+            Восстановить из копии
+          </button>
         </section>
       )}
 
