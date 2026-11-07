@@ -341,23 +341,20 @@ function Trips({ stats, openTrip }: { stats: Stats; openTrip: (id: string) => vo
 export default function StatsScreen({ snap, act, mobile, openTrip }: { snap: Snapshot; act: FinanceActions; mobile: boolean; openTrip: (id: string) => void }) {
   const [span, setSpan] = useState<StatSpan>('month');
   const [anchor, setAnchor] = useState(snap.today);
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [busy, setBusy] = useState(false);
+  // Цифры на экране и период, за который они посчитаны: пока грузится другой, прежние — бледнее.
+  const [shown, setShown] = useState<{ stats: Stats; span: StatSpan; key: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
-    setBusy(true);
     api.stats(span, anchor).then(
       (s) => {
         if (!alive) return;
-        setStats(s);
+        setShown({ stats: s, span, key: span + ':' + anchor });
         setError(null);
-        setBusy(false);
       },
       (e) => {
         if (!alive) return;
-        setBusy(false);
         if (message(e) === LOCKED) act.locked();
         else setError(message(e));
       },
@@ -379,6 +376,9 @@ export default function StatsScreen({ snap, act, mobile, openTrip }: { snap: Sna
       setSaving(false);
     }
   };
+  const stats = shown?.stats ?? null;
+  const at = shown?.span ?? span;
+  const busy = !shown || shown.key !== span + ':' + anchor;
   const canNext = !!stats && addDays(stats.to, 1) <= snap.today;
   return (
     <div className="stack gap26" style={{ marginTop: 10 }}>
@@ -399,9 +399,9 @@ export default function StatsScreen({ snap, act, mobile, openTrip }: { snap: Sna
           </button>
           <span className="stack" style={{ alignItems: 'center' }}>
             <span className="h2" aria-live="polite">
-              {stats ? periodTitle(span, stats.from) : NB}
+              {stats ? periodTitle(at, stats.from) : NB}
             </span>
-            {stats && span === 'quarter' && <span className="note">{dRange(stats.from, stats.to)}</span>}
+            {stats && at === 'quarter' && <span className="note">{dRange(stats.from, stats.to)}</span>}
           </span>
           <button type="button" className="iconbtn" aria-label="Следующий период" disabled={!canNext} onClick={() => stats && setAnchor(addDays(stats.to, 1))}>
             <Icon name="right" size={22} stroke={2} />
@@ -415,7 +415,7 @@ export default function StatsScreen({ snap, act, mobile, openTrip }: { snap: Sna
             <h2 className="h2" style={{ marginBottom: 6 }}>
               Расходы по категориям
             </h2>
-            <Categories stats={stats} span={span} />
+            <Categories stats={stats} span={at} />
           </section>
           <section className="stack">
             <h2 className="h2" style={{ marginBottom: 10 }}>
@@ -431,12 +431,12 @@ export default function StatsScreen({ snap, act, mobile, openTrip }: { snap: Sna
           </section>
           {!mobile && (
             <section className="stack gap10">
-              <button type="button" className="btn ghost" style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 8 }} disabled={saving} onClick={exportXlsx}>
+              <button type="button" className="btn ghost" style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 8 }} disabled={saving || busy} onClick={exportXlsx}>
                 <Icon name="download" size={18} />
                 Выгрузить в Excel
               </button>
               <p className="note">
-                Операции за {periodWhat(span, stats.from)}, итоги по категориям и по месяцам, командировки за {stats.trips.year} год — файлом в «Загрузки».
+                Операции за {periodWhat(at, stats.from)}, итоги по категориям и по месяцам, командировки за {stats.trips.year} год — файлом в «Загрузки».
               </p>
             </section>
           )}
