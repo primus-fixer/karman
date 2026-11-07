@@ -5,15 +5,20 @@ import { CATS, OWN_OUT, dueText, everyText, opView } from '../logic';
 import { ErrorText, Icon, Seg } from '../ui';
 import BudgetScreen from './Budget';
 import Savings from './Savings';
+import StatsScreen from './Stats';
 
 /** Разделы «Финансов». */
-export type FinView = 'pay' | 'budget' | 'save';
+export type FinView = 'pay' | 'budget' | 'save' | 'stats';
 
 /** Действия экрана: запись через ядро и сообщение внизу. */
 export type FinanceActions = {
   run: (p: Promise<Snapshot>, ok?: string) => Promise<Snapshot | null>;
   /** После первого платежа или долга со сроком — попросить разрешение на уведомления (Android). */
   saved: () => void;
+  /** Сообщение внизу экрана (`long` — подольше, например с путём к файлу). */
+  flash: (text: string, long?: boolean) => void;
+  /** Хранилище закрылось — на экран входа. */
+  locked: () => void;
 };
 
 function newId(): string {
@@ -558,23 +563,26 @@ function PlanRow({ snap, view, act, onEdit }: { snap: Snapshot; view: PlanView; 
   );
 }
 
-export default function Finance({ snap, act, view, setView, goSettings }: { snap: Snapshot; act: FinanceActions; view: FinView; setView: (v: FinView) => void; goSettings: () => void }) {
+export default function Finance({ snap, act, view, setView, goSettings, openTrip, mobile }: { snap: Snapshot; act: FinanceActions; view: FinView; setView: (v: FinView) => void; goSettings: () => void; openTrip: (id: string) => void; mobile: boolean }) {
   return (
     <div className="stack gap16">
       <h1 className="h1">Финансы</h1>
       <Seg
         label="Раздел финансов"
+        fit
         value={view}
         onPick={setView}
         items={[
           { id: 'pay', label: 'Платежи' },
           { id: 'budget', label: 'Бюджет' },
           { id: 'save', label: 'Накопления' },
+          { id: 'stats', label: 'Статистика' },
         ]}
       />
       {view === 'pay' && <Payments snap={snap} act={act} />}
       {view === 'budget' && <BudgetScreen snap={snap} act={act} />}
       {view === 'save' && <Savings snap={snap} act={act} goSettings={goSettings} />}
+      {view === 'stats' && <StatsScreen snap={snap} act={act} mobile={mobile} openTrip={openTrip} />}
     </div>
   );
 }

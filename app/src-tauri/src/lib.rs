@@ -810,27 +810,60 @@ fn receipts_zip(app: AppHandle, state: State<AppState>, trip: String) -> Res<Str
         return Err("У поездки пока нет снимков и файлов чеков".into());
     }
     let zip = karman_core::zip::build(&files).map_err(err)?;
-    // «Загрузки»; если система её не знает — папка Downloads в домашней.
+    save_download(&app, &format!("Чеки {trip} {city}"), "zip", &zip)
+}
+
+/// Файл в «Загрузки» (если система её не знает — Downloads в домашней папке) с именем без повторов;
+/// на Windows он сразу показывается в Проводнике.
+fn save_download(app: &AppHandle, name: &str, ext: &str, data: &[u8]) -> Res<String> {
     let dir = app
         .path()
         .download_dir()
         .or_else(|_| app.path().home_dir().map(|h| h.join("Downloads")))
         .map_err(|_| "не нашлась папка «Загрузки»".to_string())?;
     std::fs::create_dir_all(&dir).map_err(err)?;
-    let base = karman_core::zip::safe_name(&format!("Чеки {trip} {city}"));
-    let mut path = dir.join(format!("{base}.zip"));
+    let base = karman_core::zip::safe_name(name);
+    let mut path = dir.join(format!("{base}.{ext}"));
     let mut n = 2;
     while path.exists() {
-        path = dir.join(format!("{base} ({n}).zip"));
+        path = dir.join(format!("{base} ({n}).{ext}"));
         n += 1;
     }
-    std::fs::write(&path, zip).map_err(err)?;
+    std::fs::write(&path, data).map_err(err)?;
     #[cfg(windows)]
     {
-        // Показываем файл в Проводнике.
         let _ = std::process::Command::new("explorer").arg(format!("/select,{}", path.display())).spawn();
     }
     Ok(path.display().to_string())
+}
+
+// ——— Статистика и выгрузка ———
+
+fn stats_for(st: &Store, today: &str, span: &str, anchor: &str) -> Res<karman_core::stats::Stats> {
+    let ops = st.ops().map_err(err)?;
+    let rate = book::settings_rate(&st.settings().map_err(err)?);
+    Ok(karman_core::stats::stats(&ops, &st.accounts().map_err(err)?, &st.trips().map_err(err)?, rate, karman_core::stats::Span::parse(span), day(anchor)?, day(today)?))
+}
+
+/// Статистика за месяц, квартал или год, в который попадает `anchor`.
+#[tauri::command]
+fn stats(state: State<AppState>, today: String, span: String, anchor: String) -> Res<karman_core::stats::Stats> {
+    let st = state.store()?;
+    stats_for(&st, &today, &span, &anchor)
+}
+
+/// Операции периода и итоги — файлом Excel в «Загрузки» (на компьютере).
+#[tauri::command]
+fn export_xlsx(app: AppHandle, state: State<AppState>, today: String, span: String, anchor: String) -> Res<String> {
+    if cfg!(mobile) {
+        return Err("Выгрузка в Excel — на компьютере: свяжите устройства по Wi-Fi и выгрузите там".into());
+    }
+    let (bytes, name) = {
+        let st = state.store()?;
+        let s = stats_for(&st, &today, &span, &anchor)?;
+        (karman_core::export::workbook(&st.ops().map_err(err)?, &st.accounts().map_err(err)?, &s).map_err(err)?, karman_core::export::file_name(&s))
+    };
+    save_download(&app, &name, "xlsx", &bytes)
 }
 
 // ——— Чек ———
@@ -955,6 +988,8 @@ pub fn run() {
             goal_delete,
             goal_move,
             budget_save,
+            stats,
+            export_xlsx,
             notify::remind_status,
             notify::remind_desktop,
             guard::lock_status,

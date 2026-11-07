@@ -247,7 +247,7 @@ export default function App() {
       () => undefined,
     );
   }, [flash, refresh]);
-  const finAct: FinanceActions = { run, saved: ensureNotify };
+  const finAct: FinanceActions = { run, saved: ensureNotify, flash: (text, long) => flash(text, undefined, long), locked: goLocked };
 
   // Напоминание при открытии: что пора оплатить и какие сроки близко (один раз за запуск).
   const reminded = useRef(false);
@@ -532,7 +532,7 @@ export default function App() {
     );
   else if (screen === 'feed') body = <Feed snap={snap} act={opAct} />;
   else if (screen === 'trips') body = <Trips snap={snap} nav={nav} />;
-  else if (screen === 'finance') body = <Finance snap={snap} act={finAct} view={finView} setView={setFinView} goSettings={() => nav.go('settings')} />;
+  else if (screen === 'finance') body = <Finance snap={snap} act={finAct} view={finView} setView={setFinView} goSettings={() => nav.go('settings')} openTrip={nav.openTrip} mobile={mobile} />;
   else if (screen === 'settings') body = <Settings snap={snap} info={info} mobile={mobile} run={run} refresh={refresh} theme={theme} setTheme={setTheme} dark={dark} security={security} />;
   else if (screen === 'trip' && tripId)
     body = (
