@@ -96,8 +96,15 @@ pub fn open(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>> {
     cipher.decrypt(nonce, &data[28..]).map_err(|_| Error::Decrypt)
 }
 
+/// Версия «Кармана»: другое устройство узнаёт её при обмене.
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Устройство до 0.4 не может принять записи новых видов.
+const OLD_PEER: &str = "На другом устройстве старая версия «Кармана», и она не приняла новые записи. Обновите «Карман» там и свяжите устройства снова";
+
 /// Сообщения обмена. Поле `files` — устройство умеет передавать вложения
 /// (версии до 0.4 его не присылают, и шаг с вложениями пропускается).
+/// Поле `app` — версия «Кармана» (присылают версии с 0.5).
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 enum Msg {
@@ -107,6 +114,8 @@ enum Msg {
         vv: VersionVector,
         #[serde(default)]
         files: bool,
+        #[serde(default)]
+        app: String,
     },
     Batch {
         device: String,
@@ -115,6 +124,8 @@ enum Msg {
         events: Vec<Event>,
         #[serde(default)]
         files: bool,
+        #[serde(default)]
+        app: String,
     },
     Done {
         applied: usize,
@@ -205,6 +216,9 @@ pub struct SyncReport {
     pub files_sent: usize,
     #[serde(default)]
     pub files_received: usize,
+    /// Версия «Кармана» на другом устройстве; пусто — версия до 0.5.
+    #[serde(default)]
+    pub peer_app: String,
 }
 
 fn lock(store: &Mutex<Store>) -> std::sync::MutexGuard<'_, Store> {
@@ -226,9 +240,9 @@ pub fn sync_over(mut s: TcpStream, key: &[u8; 32], store: &Mutex<Store>, name: &
         let st = lock(store);
         (st.device().to_string(), st.version_vector()?)
     };
-    write_msg(&mut s, key, &Msg::Hello { device: device.clone(), name: name.into(), vv, files: true })?;
-    let (peer, peer_name, their_vv, events, peer_files) = match read_msg(&mut s, key)? {
-        Msg::Batch { device, name, vv, events, files } => (device, name, vv, events, files),
+    write_msg(&mut s, key, &Msg::Hello { device: device.clone(), name: name.into(), vv, files: true, app: APP_VERSION.into() })?;
+    let (peer, peer_name, their_vv, events, peer_files, peer_app) = match read_msg(&mut s, key)? {
+        Msg::Batch { device, name, vv, events, files, app } => (device, name, vv, events, files, app),
         _ => return Err(Error::Format("неожиданный ответ".into())),
     };
     let (received, ours) = {
@@ -237,9 +251,12 @@ pub fn sync_over(mut s: TcpStream, key: &[u8; 32], store: &Mutex<Store>, name: &
         (n, st.events_after(&their_vv)?)
     };
     let vv = lock(store).version_vector()?;
-    write_msg(&mut s, key, &Msg::Batch { device, name: name.into(), vv, events: ours, files: true })?;
-    let sent = match read_msg(&mut s, key)? {
-        Msg::Done { applied } => applied,
+    write_msg(&mut s, key, &Msg::Batch { device, name: name.into(), vv, events: ours, files: true, app: APP_VERSION.into() })?;
+    let sent = match read_msg(&mut s, key) {
+        Ok(Msg::Done { applied }) => applied,
+        // Старая версия не разобрала пакет с записями новых видов и оборвала связь.
+        Err(_) if !peer_files => return Err(Error::Peer(OLD_PEER.into())),
+        Err(e) => return Err(e),
         _ => return Err(Error::Format("неожиданный ответ".into())),
     };
     let (mut files_sent, mut files_received) = (0, 0);
@@ -266,7 +283,7 @@ pub fn sync_over(mut s: TcpStream, key: &[u8; 32], store: &Mutex<Store>, name: &
         }
         write_msg(&mut s, key, &Msg::Done { applied: 0 })?;
     }
-    Ok(SyncReport { peer, peer_name, sent, received, files_sent, files_received })
+    Ok(SyncReport { peer, peer_name, sent, received, files_sent, files_received, peer_app })
 }
 
 /// Подключается к устройству из QR-кода: пробует все его адреса по очереди.
@@ -293,8 +310,8 @@ pub fn sync_with(p: &Pairing, store: &Mutex<Store>, name: &str) -> Result<SyncRe
 /// Сторона, которая ждёт подключения (обычно компьютер, показавший QR).
 pub fn serve_one(mut s: TcpStream, key: &[u8; 32], store: &Mutex<Store>, name: &str) -> Result<SyncReport> {
     prepare(&s)?;
-    let (peer, peer_name, their_vv, peer_files) = match read_msg(&mut s, key)? {
-        Msg::Hello { device, name, vv, files } => (device, name, vv, files),
+    let (peer, peer_name, their_vv, peer_files, peer_app) = match read_msg(&mut s, key)? {
+        Msg::Hello { device, name, vv, files, app } => (device, name, vv, files, app),
         _ => return Err(Error::Format("ожидалось приветствие".into())),
     };
     let (device, vv, events) = {
@@ -302,9 +319,11 @@ pub fn serve_one(mut s: TcpStream, key: &[u8; 32], store: &Mutex<Store>, name: &
         (st.device().to_string(), st.version_vector()?, st.events_after(&their_vv)?)
     };
     let sent = events.len();
-    write_msg(&mut s, key, &Msg::Batch { device, name: name.into(), vv, events, files: true })?;
-    let incoming = match read_msg(&mut s, key)? {
-        Msg::Batch { events, .. } => events,
+    write_msg(&mut s, key, &Msg::Batch { device, name: name.into(), vv, events, files: true, app: APP_VERSION.into() })?;
+    let incoming = match read_msg(&mut s, key) {
+        Ok(Msg::Batch { events, .. }) => events,
+        Err(_) if !peer_files => return Err(Error::Peer(OLD_PEER.into())),
+        Err(e) => return Err(e),
         _ => return Err(Error::Format("ожидались события".into())),
     };
     let received = lock(store).apply(&incoming)?;
@@ -331,7 +350,7 @@ pub fn serve_one(mut s: TcpStream, key: &[u8; 32], store: &Mutex<Store>, name: &
             }
         }
     }
-    Ok(SyncReport { peer, peer_name, sent, received, files_sent, files_received })
+    Ok(SyncReport { peer, peer_name, sent, received, files_sent, files_received, peer_app })
 }
 
 /// Фоновый приём подключений, пока не остановят.
@@ -422,7 +441,7 @@ mod tests {
         let p = Pairing { device: "laptop".into(), name: "Ноутбук".into(), hosts: vec!["127.0.0.1".into()], port: server.port, key };
         let r = sync_with(&p, &a, "Телефон").unwrap();
         assert_eq!(r.peer, "laptop");
-        assert_eq!(r.peer_name, "Ноутбук");
+        assert_eq!((r.peer_name.as_str(), r.peer_app.as_str()), ("Ноутбук", APP_VERSION));
         assert_eq!(r.received, 3);
         assert_eq!(r.sent, 5);
         let oa = a.lock().unwrap().ops().unwrap();
@@ -522,5 +541,57 @@ mod tests {
         st.put_op(o).unwrap();
         let again = st.ops().unwrap().remove(0);
         assert_eq!((again.title.as_str(), &again.extra["future_field"]), ("Правка", &serde_json::json!({"x": 1})));
+    }
+
+    /// Старая версия (до 0.4) не разбирает записи новых видов и рвёт связь — говорим об этом понятно.
+    #[test]
+    fn old_peer_gets_clear_error_and_versions_are_exchanged() {
+        use std::net::TcpListener;
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(Store::open(&dir.path().join("n.db"), &[3u8; 32], "new").unwrap()));
+        store.lock().unwrap().put_op(demo::ops().remove(0)).unwrap();
+        let key = [7u8; 32];
+        let raw_write = move |s: &mut TcpStream, json: &str| {
+            let frame = seal(&key, json.as_bytes()).unwrap();
+            s.write_all(&(frame.len() as u32).to_be_bytes()).unwrap();
+            s.write_all(&frame).unwrap();
+        };
+        let raw_read = move |s: &mut TcpStream| {
+            let mut len = [0u8; 4];
+            s.read_exact(&mut len).unwrap();
+            let mut buf = vec![0u8; u32::from_be_bytes(len) as usize];
+            s.read_exact(&mut buf).unwrap();
+            serde_json::from_slice::<serde_json::Value>(&open(&key, &buf).unwrap()).unwrap()
+        };
+
+        // Мы подключаемся к старому устройству.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let old = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let hello = raw_read(&mut s);
+            raw_write(&mut s, r#"{"t":"batch","device":"old","name":"Старый","vv":{},"events":[]}"#);
+            let _ours = raw_read(&mut s);
+            hello
+        });
+        let r = sync_over(TcpStream::connect(addr).unwrap(), &key, &store, "Новый");
+        let hello = old.join().unwrap();
+        assert_eq!(hello["app"], APP_VERSION, "своя версия уходит в приветствии");
+        assert!(matches!(r, Err(Error::Peer(ref m)) if m.contains("старая версия")), "{:?}", r.map(|_| ()));
+
+        // Старое устройство подключается к нам.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let st2 = store.clone();
+        let server = std::thread::spawn(move || {
+            let (s, _) = listener.accept().unwrap();
+            serve_one(s, &key, &st2, "Новый").map(|_| ())
+        });
+        let mut c = TcpStream::connect(addr).unwrap();
+        raw_write(&mut c, r#"{"t":"hello","device":"old","name":"Старый","vv":{}}"#);
+        let batch = raw_read(&mut c);
+        assert_eq!((batch["app"].as_str(), batch["events"].as_array().map(|e| e.len())), (Some(APP_VERSION), Some(1)));
+        drop(c);
+        assert!(matches!(server.join().unwrap(), Err(Error::Peer(_))));
     }
 }

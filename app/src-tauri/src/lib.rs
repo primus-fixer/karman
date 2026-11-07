@@ -3,6 +3,7 @@
 //! Экраны получают одну сводку (`snapshot`) и после каждого изменения — новую.
 //! Вся логика расчётов — в ядре `karman-core`. Вход по PIN-коду и отпечатку — в `guard`.
 
+mod fx;
 mod guard;
 
 use karman_core::book::{self, Account, Snapshot};
@@ -295,6 +296,8 @@ struct DeviceInfo {
     encrypted: bool,
     cipher: String,
     events: u64,
+    /// Записи из более новой версии «Кармана»: видны после обновления.
+    unknown: usize,
 }
 
 #[tauri::command]
@@ -310,6 +313,7 @@ fn device_info(state: State<AppState>) -> Res<DeviceInfo> {
         encrypted: !is_plaintext_sqlite(&state.db_path).unwrap_or(true),
         cipher: st.cipher_version().map_err(err)?,
         events: st.event_count().map_err(err)?,
+        unknown: st.unknown_events().map_err(err)?,
     })
 }
 
@@ -451,7 +455,7 @@ fn sync_status(state: State<AppState>) -> Res<SyncStatus> {
         log: log
             .iter()
             .map(|r| match r {
-                Ok(s) => check(true, format!("«{}»: отправлено {}, получено {}{}", s.peer_name, s.sent, s.received, files_text(s.files_sent, s.files_received))),
+                Ok(s) => check(true, format!("«{}»: отправлено {}, получено {}{}{}", s.peer_name, s.sent, s.received, files_text(s.files_sent, s.files_received), prefixed(&version_hint(&s.peer_app)))),
                 Err(e) => check(false, format!("Не удалось: {e}")),
             })
             .collect(),
@@ -473,6 +477,34 @@ struct SyncResult {
     received: usize,
     files_sent: usize,
     files_received: usize,
+    /// Подсказка, если на другом устройстве другая версия «Кармана».
+    hint: String,
+}
+
+fn version_num(v: &str) -> (u32, u32, u32) {
+    let mut it = v.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
+    (it.next().unwrap_or(0), it.next().unwrap_or(0), it.next().unwrap_or(0))
+}
+
+/// Что сказать, если версии на устройствах разные: записи новых видов старая версия не показывает.
+fn version_hint(peer_app: &str) -> String {
+    let mine = env!("CARGO_PKG_VERSION");
+    if peer_app.is_empty() {
+        return format!("На другом устройстве «Карман» старше 0.5: переводы и новые записи там не видны, пока его не обновите до {mine}.");
+    }
+    match version_num(peer_app).cmp(&version_num(mine)) {
+        std::cmp::Ordering::Less => format!("На другом устройстве версия {peer_app} — обновите его до {mine}, чтобы видеть там все записи."),
+        std::cmp::Ordering::Greater => format!("На другом устройстве версия {peer_app}, новее этой ({mine}) — обновите это устройство, чтобы видеть все записи."),
+        std::cmp::Ordering::Equal => String::new(),
+    }
+}
+
+fn prefixed(hint: &str) -> String {
+    if hint.is_empty() {
+        String::new()
+    } else {
+        format!(". {hint}")
+    }
 }
 
 fn files_text(sent: usize, received: usize) -> String {
@@ -493,11 +525,12 @@ async fn sync_connect(state: State<'_, AppState>, uri: String) -> Res<SyncResult
     }
     let store = state.store.clone();
     let name = state.me.name.clone();
-    let report = tauri::async_runtime::spawn_blocking(move || sync::sync_with(&p, &store, &name))
-        .await
-        .map_err(err)?
-        .map_err(|e| format!("Не удалось связаться: {e}. Устройства должны быть в одной сети Wi-Fi"))?;
-    Ok(SyncResult { peer_name: report.peer_name, sent: report.sent, received: report.received, files_sent: report.files_sent, files_received: report.files_received })
+    let report = tauri::async_runtime::spawn_blocking(move || sync::sync_with(&p, &store, &name)).await.map_err(err)?.map_err(|e| match e {
+        karman_core::Error::Peer(m) => m,
+        e => format!("Не удалось связаться: {e}. Устройства должны быть в одной сети Wi-Fi"),
+    })?;
+    let hint = version_hint(&report.peer_app);
+    Ok(SyncResult { peer_name: report.peer_name, sent: report.sent, received: report.received, files_sent: report.files_sent, files_received: report.files_received, hint })
 }
 
 // ——— Снимки и файлы чеков ———
@@ -605,6 +638,7 @@ pub fn run() {
             book::ensure_defaults(&mut store)?;
             // Снимки, которые так и не прикрепили к операции, убираем через сутки.
             let _ = store.gc_blobs();
+            let today = Date::today_utc().to_string();
             let guard = Guard::new(guard::has_pin(&store));
             app.manage(AppState {
                 store: Arc::new(Mutex::new(store)),
@@ -615,6 +649,7 @@ pub fn run() {
                 guard: Mutex::new(guard),
                 notice: Mutex::new(notice),
             });
+            fx::refresh_on_start(app.handle().clone(), today);
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -643,6 +678,7 @@ pub fn run() {
             blob_put,
             blob_url,
             receipts_zip,
+            fx::fx_rate,
             guard::lock_status,
             guard::pin_unlock,
             guard::pin_set,

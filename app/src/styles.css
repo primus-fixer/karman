@@ -886,6 +886,11 @@ textarea.field {
   color: var(--warn);
 }
 
+.tag.own {
+  background: var(--ownBg);
+  color: var(--own);
+}
+
 .opdetails {
   display: flex;
   flex-direction: column;

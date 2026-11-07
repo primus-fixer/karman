@@ -62,7 +62,8 @@ pub fn new_id() -> Result<String> {
 pub fn fx_rates(settings: &BTreeMap<String, String>) -> BTreeMap<String, f64> {
     let mut fx = BTreeMap::from([("RUB".to_string(), 1.0), ("KZT".to_string(), 0.154), ("USD".to_string(), 80.5)]);
     for (k, v) in settings {
-        if let Some(cur) = k.strip_prefix("fx.") {
+        // Только коды валют (fx.KZT), не другие настройки курсов (fx.auto).
+        if let Some(cur) = k.strip_prefix("fx.").filter(|c| c.len() == 3 && c.bytes().all(|b| b.is_ascii_uppercase())) {
             if let Ok(r) = v.replace(',', ".").parse::<f64>() {
                 if r > 0.0 {
                     fx.insert(cur.to_string(), r);
@@ -104,6 +105,12 @@ pub struct Snapshot {
     pub device: String,
     pub rate: Kop,
     pub fx: BTreeMap<String, f64>,
+    /// Курсы берутся с сайта ЦБ (настройка «fx.auto», по умолчанию да).
+    pub fx_auto: bool,
+    /// Дата курсов ЦБ, если они уже загружены.
+    pub fx_date: Option<String>,
+    /// Курсы из настроек: запасные, если курс ЦБ не загрузился.
+    pub fx_manual: BTreeMap<String, f64>,
     pub accounts: Vec<AccountView>,
     /// Всего на счетах, в рублях.
     pub total: Kop,
@@ -131,10 +138,68 @@ pub fn trip_view(t: &Trip, ops: &[Op], settings_rate: Kop, today: Date) -> TripV
     TripView { trip: t.clone(), rate, rate_source, s, rows, over_total, auto_just }
 }
 
+/// Как операция меняет остаток счёта (в валюте счёта). Перевод списывает со счёта-источника
+/// и зачисляет на счёт-получатель; остальные операции двигают только свой счёт.
+pub fn account_delta(o: &Op, account: &str, foreign: bool) -> Kop {
+    if o.kind == OpKind::Transfer {
+        let mut d = 0;
+        if o.account == account {
+            d -= if foreign { o.orig.unwrap_or(o.amount) } else { o.amount };
+        }
+        if o.to.as_deref() == Some(account) {
+            // Между счетами в одной валюте сумма та же, что ушла.
+            d += if foreign { o.to_amount.or(o.orig).unwrap_or(o.amount) } else { o.amount };
+        }
+        return d;
+    }
+    if o.account != account {
+        return 0;
+    }
+    let v = if foreign { o.orig.unwrap_or(o.amount) } else { o.amount };
+    if o.is_inflow() {
+        v
+    } else {
+        -v
+    }
+}
+
+/// Курсы ЦБ, сохранённые на этом устройстве: дата и рублей за единицу валюты.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CbrRates {
+    pub date: String,
+    pub rates: BTreeMap<String, f64>,
+}
+
+/// Ключ meta для последних курсов ЦБ и для курсов на дату.
+pub const META_CBR: &str = "fx.cbr";
+pub fn meta_cbr_on(date: &str) -> String {
+    format!("fx.cbr.{date}")
+}
+
+/// Курсы для пересчёта остатков: по умолчанию — ЦБ, а ручные из настроек — запасные.
+fn fx_with_cbr(settings: &BTreeMap<String, String>, cbr: Option<&CbrRates>) -> BTreeMap<String, f64> {
+    let mut fx = fx_rates(settings);
+    let auto = settings.get("fx.auto").map(|v| v != "0").unwrap_or(true);
+    if auto {
+        if let Some(c) = cbr {
+            for (k, v) in &c.rates {
+                if *v > 0.0 {
+                    fx.insert(k.clone(), *v);
+                }
+            }
+        }
+    }
+    fx
+}
+
 /// Всё, что нужно экранам, одним ответом.
 pub fn snapshot(store: &Store, today: Date) -> Result<Snapshot> {
     let settings = store.settings()?;
-    let fx = fx_rates(&settings);
+    let cbr: Option<CbrRates> = store.meta(META_CBR)?.and_then(|t| serde_json::from_str(&t).ok());
+    let fx = fx_with_cbr(&settings, cbr.as_ref());
+    let fx_manual = fx_rates(&settings);
+    let fx_auto = settings.get("fx.auto").map(|v| v != "0").unwrap_or(true);
+    let fx_date = if fx_auto { cbr.as_ref().map(|c| c.date.clone()) } else { None };
     let rate = settings_rate(&settings);
     let ops = store.ops()?;
     let accounts: Vec<AccountView> = store
@@ -142,18 +207,7 @@ pub fn snapshot(store: &Store, today: Date) -> Result<Snapshot> {
         .into_iter()
         .map(|a| {
             let foreign = a.currency != "RUB";
-            let moved: Kop = ops
-                .iter()
-                .filter(|o| o.account == a.id)
-                .map(|o| {
-                    let v = if foreign { o.orig.unwrap_or(o.amount) } else { o.amount };
-                    if o.is_inflow() {
-                        v
-                    } else {
-                        -v
-                    }
-                })
-                .sum();
+            let moved: Kop = ops.iter().map(|o| account_delta(o, &a.id, foreign)).sum();
             let balance = a.opening + moved;
             let rate = fx.get(&a.currency).copied().unwrap_or(1.0);
             let balance_rub = if foreign { (balance as f64 * rate).round() as Kop } else { balance };
@@ -174,7 +228,7 @@ pub fn snapshot(store: &Store, today: Date) -> Result<Snapshot> {
             owed -= b;
         }
     }
-    Ok(Snapshot { today, device: store.device().to_string(), rate, fx, accounts, total, held, due, owed, debt_due, mine: total - held - due, trips, ops, settings })
+    Ok(Snapshot { today, device: store.device().to_string(), rate, fx, fx_auto, fx_date, fx_manual, accounts, total, held, due, owed, debt_due, mine: total - held - due, trips, ops, settings })
 }
 
 fn find_trip(store: &Store, id: &str) -> Result<Trip> {
@@ -220,6 +274,8 @@ fn company_op(id: String, date: Date, kind: OpKind, cat: &str, title: String, am
         cur: None,
         note: String::new(),
         att: Vec::new(),
+        to: None,
+        to_amount: None,
         extra: Default::default(),
     }
 }
@@ -353,6 +409,53 @@ mod tests {
         let snap = snapshot(&s, demo::today()).unwrap();
         assert_eq!(snap.trips[0].s.balance, 0);
     }
+
+    #[test]
+    fn transfers_move_money_between_own_accounts() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Store::open(&dir.path().join("t.db"), &[6u8; 32], "dev").unwrap();
+        ensure_defaults(&mut s).unwrap();
+        let mut kzt = default_accounts().remove(2);
+        kzt.id = "acc-kzt".into();
+        kzt.currency = "KZT".into();
+        kzt.short = "₸".into();
+        s.append(EventBody::AccountPut { account: kzt }).unwrap();
+        s.append(EventBody::SettingPut { key: "fx.KZT".into(), value: "0.2".into() }).unwrap();
+        let mut base = crate::demo::ops().remove(0);
+        base.trip = None;
+        base.doc = None;
+        // Снял 5 000 ₽ с личной карты наличными.
+        let cash = Op { id: "t1".into(), kind: OpKind::Transfer, cat: "transfer".into(), title: "Снял наличные".into(), amount: crate::money::rub(5000.0), account: "acc-personal".into(), to: Some("acc-cash".into()), ..base.clone() };
+        s.put_op(cash.clone()).unwrap();
+        // Обменял 3 000 ₽ на 15 000 ₸.
+        let fx = Op { id: "t2".into(), kind: OpKind::Transfer, cat: "transfer".into(), title: "Обмен".into(), amount: crate::money::rub(3000.0), account: "acc-cash".into(), to: Some("acc-kzt".into()), to_amount: Some(crate::money::rub(15000.0)), ..base.clone() };
+        s.put_op(fx).unwrap();
+        let snap = snapshot(&s, crate::demo::today()).unwrap();
+        let bal = |id: &str| snap.accounts.iter().find(|a| a.account.id == id).unwrap().balance;
+        assert_eq!(bal("acc-personal"), -crate::money::rub(5000.0));
+        assert_eq!(bal("acc-cash"), crate::money::rub(2000.0));
+        assert_eq!(bal("acc-kzt"), crate::money::rub(15000.0), "в тенге");
+        assert_eq!(snap.total, crate::money::rub(0.0), "по курсу 0,2 перевод ничего не меняет в сумме: −5000 + 2000 + 3000");
+        // Курсы ЦБ важнее ручных, пока не выключены.
+        s.set_meta(META_CBR, &serde_json::to_string(&CbrRates { date: "2026-11-06".into(), rates: BTreeMap::from([("KZT".into(), 0.18)]) }).unwrap()).unwrap();
+        let snap = snapshot(&s, crate::demo::today()).unwrap();
+        assert_eq!((snap.fx["KZT"], snap.fx_date.as_deref()), (0.18, Some("2026-11-06")));
+        s.append(EventBody::SettingPut { key: "fx.auto".into(), value: "0".into() }).unwrap();
+        let snap = snapshot(&s, crate::demo::today()).unwrap();
+        assert_eq!((snap.fx["KZT"], snap.fx_date), (0.2, None), "ЦБ выключен — ручной курс");
+        s.append(EventBody::SettingPut { key: "fx.auto".into(), value: "1".into() }).unwrap();
+        let snap = snapshot(&s, crate::demo::today()).unwrap();
+        assert!(!snap.fx.contains_key("auto"), "настройка fx.auto — не валюта");
+        assert_eq!((snap.fx["KZT"], snap.fx_manual["KZT"]), (0.18, 0.2), "ручной курс виден как запасной");
+        // Между счетами в одной валюте приходит столько же, сколько ушло.
+        let same = Op { to: Some("acc-kzt2".into()), orig: Some(700_00), cur: Some("KZT".into()), ..cash.clone() };
+        assert_eq!(account_delta(&same, "acc-kzt2", true), 700_00);
+        // Удалённый перевод ничего не двигает.
+        s.delete_op("t1").unwrap();
+        let snap = snapshot(&s, crate::demo::today()).unwrap();
+        assert_eq!(snap.accounts.iter().find(|a| a.account.id == "acc-personal").unwrap().balance, 0);
+    }
+
 }
 
 /// Чеки поездки для архива: имена «дата название сумма», без повторов.
@@ -381,4 +484,5 @@ pub fn trip_receipts(store: &Store, trip_id: &str) -> Result<Vec<(String, Vec<u8
         }
     }
     Ok(out)
+
 }

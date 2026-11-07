@@ -34,6 +34,8 @@ pub enum OpKind {
     Return,
     /// Платёж по личному долгу или возврат долга мне.
     Debt,
+    /// Перевод между своими счетами: снятие наличных, пополнение вклада. Не расход и не доход.
+    Transfer,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -77,6 +79,12 @@ pub struct Op {
     /// Снимки и файлы чеков.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub att: Vec<Attachment>,
+    /// Перевод: счёт, на который ушли деньги.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
+    /// Перевод: сколько пришло в валюте счёта-получателя, если она не рубли.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_amount: Option<Kop>,
     /// Поля из более новых версий: сохраняются как есть и не теряются при правке.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,

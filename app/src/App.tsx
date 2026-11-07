@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, inApp, LOCKED, message, onLocked, type Attachment, type DeviceInfo, type LockStatus, type Op, type Snapshot, type TripStatus } from './api';
+import { api, inApp, LOCKED, message, onFx, onLocked, type Attachment, type DeviceInfo, type LockStatus, type Op, type Snapshot, type TripStatus } from './api';
 import Entry, { defaultDraft, draftFromOp, tripDraft, type EntryDraft } from './Entry';
 import { rub } from './format';
 import { bioLabel, LockScreen, PinFlow, type PinMode } from './Lock';
@@ -190,9 +190,12 @@ export default function App() {
     };
     document.addEventListener('visibilitychange', onVisible);
     const unlisten = onLocked(goLocked).catch(() => () => undefined);
+    // Свежие курсы ЦБ пересчитали остатки на счетах в валюте. Пока «Карман» заблокирован, данные не придут — и не нужны.
+    const unFx = onFx(() => api.snapshot().then(setSnap, () => undefined)).catch(() => () => undefined);
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
       unlisten.then((f) => f());
+      unFx.then((f) => f());
     };
   }, [refresh, goLocked, showNotice]);
 
