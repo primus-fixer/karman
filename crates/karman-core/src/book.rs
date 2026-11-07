@@ -25,10 +25,13 @@ pub struct Account {
     pub order: i32,
     #[serde(default)]
     pub archived: bool,
+    /// Поля из более новых версий.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 fn account(id: &str, name: &str, short: &str, kind: &str, order: i32) -> Account {
-    Account { id: id.into(), name: name.into(), short: short.into(), currency: "RUB".into(), opening: 0, kind: kind.into(), order, archived: false }
+    Account { id: id.into(), name: name.into(), short: short.into(), currency: "RUB".into(), opening: 0, kind: kind.into(), order, archived: false, extra: Default::default() }
 }
 
 /// Счета, с которых начинается пустая база. Номера постоянные: если два устройства
@@ -216,6 +219,8 @@ fn company_op(id: String, date: Date, kind: OpKind, cat: &str, title: String, am
         orig: None,
         cur: None,
         note: String::new(),
+        att: Vec::new(),
+        extra: Default::default(),
     }
 }
 
@@ -348,4 +353,32 @@ mod tests {
         let snap = snapshot(&s, demo::today()).unwrap();
         assert_eq!(snap.trips[0].s.balance, 0);
     }
+}
+
+/// Чеки поездки для архива: имена «дата название сумма», без повторов.
+pub fn trip_receipts(store: &Store, trip_id: &str) -> Result<Vec<(String, Vec<u8>)>> {
+    let mut ops: Vec<Op> = store.ops()?.into_iter().filter(|o| o.trip.as_deref() == Some(trip_id) && !o.att.is_empty()).collect();
+    ops.sort_by(|a, b| a.date.cmp(&b.date).then(a.id.cmp(&b.id)));
+    let mut out: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut used = std::collections::BTreeSet::new();
+    for o in ops {
+        for (i, a) in o.att.iter().enumerate() {
+            let Some((mime, data)) = store.blob(&a.id)? else { continue };
+            let ext = match mime.as_str() {
+                "image/png" => "png",
+                "image/webp" => "webp",
+                "application/pdf" => "pdf",
+                _ => "jpg",
+            };
+            let base = crate::zip::safe_name(&format!("{} {} {}", o.date, o.title, crate::money::fmt2(o.amount).replace('\u{a0}', " ")));
+            let mut name = if o.att.len() > 1 { format!("{base} ({}).{ext}", i + 1) } else { format!("{base}.{ext}") };
+            let mut n = 2;
+            while !used.insert(name.clone()) {
+                name = format!("{base} ({n}).{ext}");
+                n += 1;
+            }
+            out.push((name, data));
+        }
+    }
+    Ok(out)
 }

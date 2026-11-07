@@ -8,6 +8,8 @@ use crate::error::{Error, Result};
 use crate::pairing::Pairing;
 use crate::book::Account;
 use crate::trip::{Op, Trip};
+use base64::engine::general_purpose::STANDARD as B64;
+use base64::Engine;
 use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, OsRng};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use serde::{Deserialize, Serialize};
@@ -27,7 +29,20 @@ pub struct Event {
     pub device: String,
     pub seq: u64,
     pub lamport: u64,
-    pub body: EventBody,
+    /// Тело события как JSON. Типы и поля из более новых версий хранятся
+    /// и передаются дальше без потерь, даже если эта версия их не понимает.
+    pub body: serde_json::Value,
+}
+
+impl Event {
+    pub fn new(device: String, seq: u64, lamport: u64, body: &EventBody) -> crate::Result<Event> {
+        Ok(Event { device, seq, lamport, body: serde_json::to_value(body)? })
+    }
+
+    /// Тело, понятное этой версии; None — событие из более новой версии.
+    pub fn parsed(&self) -> Option<EventBody> {
+        serde_json::from_value(self.body.clone()).ok()
+    }
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -81,12 +96,80 @@ pub fn open(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>> {
     cipher.decrypt(nonce, &data[28..]).map_err(|_| Error::Decrypt)
 }
 
+/// Сообщения обмена. Поле `files` — устройство умеет передавать вложения
+/// (версии до 0.4 его не присылают, и шаг с вложениями пропускается).
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 enum Msg {
-    Hello { device: String, name: String, vv: VersionVector },
-    Batch { device: String, name: String, vv: VersionVector, events: Vec<Event> },
-    Done { applied: usize },
+    Hello {
+        device: String,
+        name: String,
+        vv: VersionVector,
+        #[serde(default)]
+        files: bool,
+    },
+    Batch {
+        device: String,
+        name: String,
+        vv: VersionVector,
+        events: Vec<Event>,
+        #[serde(default)]
+        files: bool,
+    },
+    Done {
+        applied: usize,
+    },
+    /// Каких вложений не хватает.
+    Want { ids: Vec<String> },
+    /// Вложения по запросу и свой список недостающих.
+    Give { blobs: Vec<Blob>, want: Vec<String> },
+}
+
+#[derive(Serialize, Deserialize)]
+struct Blob {
+    id: String,
+    mime: String,
+    /// Содержимое в base64.
+    data: String,
+}
+
+/// Столько байт вложений в одном пакете — с запасом до предела кадра.
+const FILES_PER_PACKET: usize = 24 * 1024 * 1024;
+/// Больше кругов обмена вложениями за одно подключение не делаем.
+const MAX_ROUNDS: usize = 50;
+
+/// Достаёт запрошенные вложения, пока не наберётся предел пакета.
+/// Возвращает вложения и сколько из имеющихся не поместилось.
+fn collect_blobs(store: &Mutex<Store>, ids: &[String]) -> Result<(Vec<Blob>, usize)> {
+    let st = lock(store);
+    let (mut out, mut total, mut left) = (Vec::new(), 0usize, 0usize);
+    for id in ids {
+        if let Some((mime, data)) = st.blob(id)? {
+            if total + data.len() > FILES_PER_PACKET && !out.is_empty() {
+                left += 1;
+                continue;
+            }
+            total += data.len();
+            out.push(Blob { id: id.clone(), mime, data: B64.encode(&data) });
+        }
+    }
+    Ok((out, left))
+}
+
+/// Сохраняет полученные вложения: только запрошенные и только с верным отпечатком.
+fn store_blobs(store: &Mutex<Store>, asked: &[String], blobs: Vec<Blob>) -> usize {
+    let st = lock(store);
+    let mut n = 0;
+    for b in blobs {
+        if !asked.contains(&b.id) {
+            continue;
+        }
+        let Ok(data) = B64.decode(b.data.as_bytes()) else { continue };
+        if st.put_blob_checked(&b.id, &b.mime, &data).is_ok() {
+            n += 1;
+        }
+    }
+    n
 }
 
 fn write_msg(s: &mut TcpStream, key: &[u8; 32], msg: &Msg) -> Result<()> {
@@ -117,6 +200,11 @@ pub struct SyncReport {
     pub sent: usize,
     /// Сколько новых событий пришло к нам.
     pub received: usize,
+    /// Сколько снимков и файлов чеков ушло и пришло.
+    #[serde(default)]
+    pub files_sent: usize,
+    #[serde(default)]
+    pub files_received: usize,
 }
 
 fn lock(store: &Mutex<Store>) -> std::sync::MutexGuard<'_, Store> {
@@ -124,8 +212,9 @@ fn lock(store: &Mutex<Store>) -> std::sync::MutexGuard<'_, Store> {
 }
 
 fn prepare(s: &TcpStream) -> Result<()> {
-    s.set_read_timeout(Some(Duration::from_secs(20)))?;
-    s.set_write_timeout(Some(Duration::from_secs(20)))?;
+    // Пакет со снимками по медленному Wi-Fi идёт долго.
+    s.set_read_timeout(Some(Duration::from_secs(60)))?;
+    s.set_write_timeout(Some(Duration::from_secs(60)))?;
     s.set_nodelay(true)?;
     Ok(())
 }
@@ -137,9 +226,9 @@ pub fn sync_over(mut s: TcpStream, key: &[u8; 32], store: &Mutex<Store>, name: &
         let st = lock(store);
         (st.device().to_string(), st.version_vector()?)
     };
-    write_msg(&mut s, key, &Msg::Hello { device: device.clone(), name: name.into(), vv })?;
-    let (peer, peer_name, their_vv, events) = match read_msg(&mut s, key)? {
-        Msg::Batch { device, name, vv, events } => (device, name, vv, events),
+    write_msg(&mut s, key, &Msg::Hello { device: device.clone(), name: name.into(), vv, files: true })?;
+    let (peer, peer_name, their_vv, events, peer_files) = match read_msg(&mut s, key)? {
+        Msg::Batch { device, name, vv, events, files } => (device, name, vv, events, files),
         _ => return Err(Error::Format("неожиданный ответ".into())),
     };
     let (received, ours) = {
@@ -148,12 +237,36 @@ pub fn sync_over(mut s: TcpStream, key: &[u8; 32], store: &Mutex<Store>, name: &
         (n, st.events_after(&their_vv)?)
     };
     let vv = lock(store).version_vector()?;
-    write_msg(&mut s, key, &Msg::Batch { device, name: name.into(), vv, events: ours })?;
+    write_msg(&mut s, key, &Msg::Batch { device, name: name.into(), vv, events: ours, files: true })?;
     let sent = match read_msg(&mut s, key)? {
         Msg::Done { applied } => applied,
         _ => return Err(Error::Format("неожиданный ответ".into())),
     };
-    Ok(SyncReport { peer, peer_name, sent, received })
+    let (mut files_sent, mut files_received) = (0, 0);
+    if peer_files {
+        for _ in 0..MAX_ROUNDS {
+            let want = lock(store).missing_blobs()?;
+            write_msg(&mut s, key, &Msg::Want { ids: want.clone() })?;
+            let (blobs, their_want) = match read_msg(&mut s, key)? {
+                Msg::Give { blobs, want } => (blobs, want),
+                _ => return Err(Error::Format("неожиданный ответ".into())),
+            };
+            let got = store_blobs(store, &want, blobs);
+            files_received += got;
+            let (mine, left) = collect_blobs(store, &their_want)?;
+            write_msg(&mut s, key, &Msg::Give { blobs: mine, want: Vec::new() })?;
+            match read_msg(&mut s, key)? {
+                Msg::Done { applied } => files_sent += applied,
+                _ => return Err(Error::Format("неожиданный ответ".into())),
+            }
+            let still = lock(store).missing_blobs()?.len();
+            if (still == 0 || got == 0) && left == 0 {
+                break;
+            }
+        }
+        write_msg(&mut s, key, &Msg::Done { applied: 0 })?;
+    }
+    Ok(SyncReport { peer, peer_name, sent, received, files_sent, files_received })
 }
 
 /// Подключается к устройству из QR-кода: пробует все его адреса по очереди.
@@ -180,8 +293,8 @@ pub fn sync_with(p: &Pairing, store: &Mutex<Store>, name: &str) -> Result<SyncRe
 /// Сторона, которая ждёт подключения (обычно компьютер, показавший QR).
 pub fn serve_one(mut s: TcpStream, key: &[u8; 32], store: &Mutex<Store>, name: &str) -> Result<SyncReport> {
     prepare(&s)?;
-    let (peer, peer_name, their_vv) = match read_msg(&mut s, key)? {
-        Msg::Hello { device, name, vv } => (device, name, vv),
+    let (peer, peer_name, their_vv, peer_files) = match read_msg(&mut s, key)? {
+        Msg::Hello { device, name, vv, files } => (device, name, vv, files),
         _ => return Err(Error::Format("ожидалось приветствие".into())),
     };
     let (device, vv, events) = {
@@ -189,14 +302,36 @@ pub fn serve_one(mut s: TcpStream, key: &[u8; 32], store: &Mutex<Store>, name: &
         (st.device().to_string(), st.version_vector()?, st.events_after(&their_vv)?)
     };
     let sent = events.len();
-    write_msg(&mut s, key, &Msg::Batch { device, name: name.into(), vv, events })?;
+    write_msg(&mut s, key, &Msg::Batch { device, name: name.into(), vv, events, files: true })?;
     let incoming = match read_msg(&mut s, key)? {
         Msg::Batch { events, .. } => events,
         _ => return Err(Error::Format("ожидались события".into())),
     };
     let received = lock(store).apply(&incoming)?;
     write_msg(&mut s, key, &Msg::Done { applied: received })?;
-    Ok(SyncReport { peer, peer_name, sent, received })
+    let (mut files_sent, mut files_received) = (0, 0);
+    if peer_files {
+        for _ in 0..MAX_ROUNDS {
+            match read_msg(&mut s, key)? {
+                Msg::Want { ids } => {
+                    let (blobs, _) = collect_blobs(store, &ids)?;
+                    files_sent += blobs.len();
+                    let want = lock(store).missing_blobs()?;
+                    write_msg(&mut s, key, &Msg::Give { blobs, want: want.clone() })?;
+                    let incoming = match read_msg(&mut s, key)? {
+                        Msg::Give { blobs, .. } => blobs,
+                        _ => return Err(Error::Format("ожидались вложения".into())),
+                    };
+                    let n = store_blobs(store, &want, incoming);
+                    files_received += n;
+                    write_msg(&mut s, key, &Msg::Done { applied: n })?;
+                }
+                Msg::Done { .. } => break,
+                _ => return Err(Error::Format("неожиданное сообщение".into())),
+            }
+        }
+    }
+    Ok(SyncReport { peer, peer_name, sent, received, files_sent, files_received })
 }
 
 /// Фоновый приём подключений, пока не остановят.
@@ -303,5 +438,89 @@ mod tests {
         let wrong = Pairing { key: [0u8; 32], ..p };
         assert!(sync_with(&wrong, &a, "Телефон").is_err());
         server.stop();
+    }
+
+    /// Минимальный JPEG для проверок: заголовок и разное содержимое.
+    fn jpeg(seed: u8, len: usize) -> Vec<u8> {
+        let mut v = vec![0xFF, 0xD8, 0xFF, 0xE0];
+        v.extend((0..len).map(|i| (i as u8).wrapping_mul(31).wrapping_add(seed)));
+        v
+    }
+
+    #[test]
+    fn receipts_travel_with_operations() {
+        let dir = tempfile::tempdir().unwrap();
+        let phone = Arc::new(Mutex::new(Store::open(&dir.path().join("p.db"), &[1u8; 32], "phone").unwrap()));
+        let laptop = Arc::new(Mutex::new(Store::open(&dir.path().join("l.db"), &[2u8; 32], "laptop").unwrap()));
+        // Снимок на телефоне, PDF на ноутбуке; один большой, чтобы понадобилось несколько пакетов.
+        let photo = jpeg(1, 300_000);
+        let big: Vec<Vec<u8>> = (0..3).map(|i| jpeg(10 + i, 9 * 1024 * 1024)).collect();
+        let pdf = b"%PDF-1.7 tiny".to_vec();
+        let mut op = demo::ops().remove(2);
+        {
+            let p = phone.lock().unwrap();
+            let mut att = vec![];
+            for data in std::iter::once(&photo).chain(big.iter()) {
+                let id = p.put_blob("image/jpeg", data).unwrap();
+                att.push(crate::trip::Attachment { id, mime: "image/jpeg".into(), name: "чек.jpg".into(), size: data.len() as u64 });
+            }
+            op.att = att;
+        }
+        phone.lock().unwrap().put_op(op.clone()).unwrap();
+        let mut op2 = demo::ops().remove(4);
+        {
+            let l = laptop.lock().unwrap();
+            let id = l.put_blob("application/pdf", &pdf).unwrap();
+            op2.att = vec![crate::trip::Attachment { id, mime: "application/pdf".into(), name: "билет.pdf".into(), size: pdf.len() as u64 }];
+        }
+        laptop.lock().unwrap().put_op(op2.clone()).unwrap();
+
+        let key = crate::pairing::random_key().unwrap();
+        let server = Server::start(laptop.clone(), key, "Ноутбук".into(), 0).unwrap();
+        let p = Pairing { device: "laptop".into(), name: "Ноутбук".into(), hosts: vec!["127.0.0.1".into()], port: server.port, key };
+        let r = sync_with(&p, &phone, "Телефон").unwrap();
+        assert_eq!((r.files_sent, r.files_received), (4, 1), "{r:?}");
+        assert!(phone.lock().unwrap().missing_blobs().unwrap().is_empty());
+        assert!(laptop.lock().unwrap().missing_blobs().unwrap().is_empty());
+        let (mime, data) = laptop.lock().unwrap().blob(&op.att[0].id).unwrap().unwrap();
+        assert_eq!((mime.as_str(), data), ("image/jpeg", photo));
+        // Второй обмен ничего не гоняет.
+        let r2 = sync_with(&p, &phone, "Телефон").unwrap();
+        assert_eq!((r2.sent, r2.received, r2.files_sent, r2.files_received), (0, 0, 0, 0));
+        server.stop();
+    }
+
+    #[test]
+    fn foreign_blob_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = Store::open(&dir.path().join("x.db"), &[3u8; 32], "x").unwrap();
+        let data = jpeg(5, 100);
+        assert!(st.put_blob_checked(&"0".repeat(64), "image/jpeg", &data).is_err(), "отпечаток не совпал");
+        assert!(st.put_blob("image/jpeg", b"MZ\x90\x00 exe").is_err(), "не снимок");
+        assert!(st.put_blob("text/html", b"<html>").is_err(), "чужой тип");
+        assert!(st.put_blob("image/jpeg", &vec![0xFFu8; crate::db::MAX_BLOB + 1]).is_err(), "слишком большой");
+    }
+
+    #[test]
+    fn events_from_newer_versions_survive() {
+        // Событие неизвестного вида и операция с незнакомым полем приходят от новой версии.
+        let dir = tempfile::tempdir().unwrap();
+        let mut st = Store::open(&dir.path().join("o.db"), &[4u8; 32], "old").unwrap();
+        let mut op = serde_json::to_value(demo::ops().remove(0)).unwrap();
+        op["future_field"] = serde_json::json!({"x": 1});
+        let events = vec![
+            Event { device: "new".into(), seq: 1, lamport: 1, body: serde_json::json!({"type": "op_put", "op": op}) },
+            Event { device: "new".into(), seq: 2, lamport: 2, body: serde_json::json!({"type": "budget_put", "budget": {"id": "b1", "limit": 100}}) },
+        ];
+        assert_eq!(st.apply(&events).unwrap(), 2, "оба события приняты, обмен не сломался");
+        let stored = st.events_after(&VersionVector::new()).unwrap();
+        assert_eq!(stored[1].body["type"], "budget_put", "неизвестное событие хранится как есть");
+        let mut o = st.ops().unwrap().remove(0);
+        assert_eq!(o.extra["future_field"], serde_json::json!({"x": 1}));
+        // Правка на старой версии не теряет поле новой.
+        o.title = "Правка".into();
+        st.put_op(o).unwrap();
+        let again = st.ops().unwrap().remove(0);
+        assert_eq!((again.title.as_str(), &again.extra["future_field"]), ("Правка", &serde_json::json!({"x": 1})));
     }
 }

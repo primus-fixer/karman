@@ -16,8 +16,10 @@ use karman_core::{demo, Date};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
+use base64::engine::general_purpose::STANDARD as B64;
+use base64::Engine;
 use std::time::Instant;
-use tauri::{Manager, State};
+use tauri::{AppHandle, Manager, State};
 
 use guard::{Guard, LOCKED};
 
@@ -449,7 +451,7 @@ fn sync_status(state: State<AppState>) -> Res<SyncStatus> {
         log: log
             .iter()
             .map(|r| match r {
-                Ok(s) => check(true, format!("«{}»: отправлено {}, получено {}", s.peer_name, s.sent, s.received)),
+                Ok(s) => check(true, format!("«{}»: отправлено {}, получено {}{}", s.peer_name, s.sent, s.received, files_text(s.files_sent, s.files_received))),
                 Err(e) => check(false, format!("Не удалось: {e}")),
             })
             .collect(),
@@ -469,6 +471,16 @@ struct SyncResult {
     peer_name: String,
     sent: usize,
     received: usize,
+    files_sent: usize,
+    files_received: usize,
+}
+
+fn files_text(sent: usize, received: usize) -> String {
+    if sent + received == 0 {
+        String::new()
+    } else {
+        format!("; снимков чеков: отправлено {sent}, получено {received}")
+    }
 }
 
 /// Подключается к устройству по QR-коду (или вставленной ссылке) и обменивается данными.
@@ -485,7 +497,66 @@ async fn sync_connect(state: State<'_, AppState>, uri: String) -> Res<SyncResult
         .await
         .map_err(err)?
         .map_err(|e| format!("Не удалось связаться: {e}. Устройства должны быть в одной сети Wi-Fi"))?;
-    Ok(SyncResult { peer_name: report.peer_name, sent: report.sent, received: report.received })
+    Ok(SyncResult { peer_name: report.peer_name, sent: report.sent, received: report.received, files_sent: report.files_sent, files_received: report.files_received })
+}
+
+// ——— Снимки и файлы чеков ———
+
+#[derive(Serialize)]
+struct BlobInfo {
+    id: String,
+    size: usize,
+}
+
+/// Сохраняет снимок или файл чека (base64) в зашифрованной базе.
+#[tauri::command]
+fn blob_put(state: State<AppState>, mime: String, data: String) -> Res<BlobInfo> {
+    let bytes = B64.decode(data.as_bytes()).map_err(|_| "файл не прочитался".to_string())?;
+    let st = state.store()?;
+    let id = st.put_blob(&mime, &bytes).map_err(err)?;
+    Ok(BlobInfo { id, size: bytes.len() })
+}
+
+/// Вложение для показа на экране (data URL). None — снимок ещё не пришёл с другого устройства.
+#[tauri::command]
+fn blob_url(state: State<AppState>, id: String) -> Res<Option<String>> {
+    let st = state.store()?;
+    Ok(st.blob(&id).map_err(err)?.map(|(mime, data)| format!("data:{mime};base64,{}", B64.encode(data))))
+}
+
+/// Архив чеков поездки в папку «Загрузки» (на компьютере). Возвращает путь к файлу.
+#[tauri::command]
+fn receipts_zip(app: AppHandle, state: State<AppState>, trip: String) -> Res<String> {
+    let (files, city) = {
+        let st = state.store()?;
+        let city = st.trips().map_err(err)?.into_iter().find(|t| t.id == trip).map(|t| t.city).unwrap_or_default();
+        (book::trip_receipts(&st, &trip).map_err(err)?, city)
+    };
+    if files.is_empty() {
+        return Err("У поездки пока нет снимков и файлов чеков".into());
+    }
+    let zip = karman_core::zip::build(&files).map_err(err)?;
+    // «Загрузки»; если система её не знает — папка Downloads в домашней.
+    let dir = app
+        .path()
+        .download_dir()
+        .or_else(|_| app.path().home_dir().map(|h| h.join("Downloads")))
+        .map_err(|_| "не нашлась папка «Загрузки»".to_string())?;
+    std::fs::create_dir_all(&dir).map_err(err)?;
+    let base = karman_core::zip::safe_name(&format!("Чеки {trip} {city}"));
+    let mut path = dir.join(format!("{base}.zip"));
+    let mut n = 2;
+    while path.exists() {
+        path = dir.join(format!("{base} ({n}).zip"));
+        n += 1;
+    }
+    std::fs::write(&path, zip).map_err(err)?;
+    #[cfg(windows)]
+    {
+        // Показываем файл в Проводнике.
+        let _ = std::process::Command::new("explorer").arg(format!("/select,{}", path.display())).spawn();
+    }
+    Ok(path.display().to_string())
 }
 
 // ——— Чек ———
@@ -532,6 +603,8 @@ pub fn run() {
             let (mut store, notice) = open_store(&dir, &db_path, &me.id)?;
             cleanup_stage0(&mut store)?;
             book::ensure_defaults(&mut store)?;
+            // Снимки, которые так и не прикрепили к операции, убираем через сутки.
+            let _ = store.gc_blobs();
             let guard = Guard::new(guard::has_pin(&store));
             app.manage(AppState {
                 store: Arc::new(Mutex::new(store)),
@@ -567,6 +640,9 @@ pub fn run() {
             sync_stop,
             sync_connect,
             receipt_parse,
+            blob_put,
+            blob_url,
+            receipts_zip,
             guard::lock_status,
             guard::pin_unlock,
             guard::pin_set,

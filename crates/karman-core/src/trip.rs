@@ -74,6 +74,24 @@ pub struct Op {
     /// Комментарий к операции.
     #[serde(default)]
     pub note: String,
+    /// Снимки и файлы чеков.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub att: Vec<Attachment>,
+    /// Поля из более новых версий: сохраняются как есть и не теряются при правке.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Вложение: снимок или файл чека. Само содержимое лежит отдельно (`Store::blob`),
+/// номер вложения — SHA-256 содержимого.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct Attachment {
+    pub id: String,
+    pub mime: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub size: u64,
 }
 
 impl Op {
@@ -168,6 +186,9 @@ pub struct Trip {
     /// Своё обоснование сверхбюджета вместо подставленного.
     #[serde(default)]
     pub just: Option<String>,
+    /// Поля из более новых версий.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Trip {

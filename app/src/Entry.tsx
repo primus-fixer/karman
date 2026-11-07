@@ -1,8 +1,9 @@
 import { useEffect, useState, type CSSProperties, type FormEvent } from 'react';
-import { api, message, scanQr, type DocKind, type Op, type Snapshot, type TripView } from './api';
-import { NB, SIGN, amountText, dMon, fmt, parseAmount, rub } from './format';
+import { api, message, scanQr, type Attachment, type DocKind, type Op, type Snapshot, type TripView } from './api';
+import { NB, SIGN, amountText, dMon, fmt, parseAmount, plural, rub } from './format';
+import { attachFile, pickFiles } from './media';
 import { CATS, OWN_IN, OWN_OUT, TRIP_IN, TRIP_OUT, isIn, kindFor, statusIndex } from './logic';
-import { Icon, Seg } from './ui';
+import { Icon, Seg, Thumbs } from './ui';
 
 export type EntryDraft = {
   dir: 'out' | 'in';
@@ -13,6 +14,8 @@ export type EntryDraft = {
   acc: string;
   receipt: DocKind | null;
   receiptNote: string;
+  /** Снимки и файлы чеков. */
+  att: Attachment[];
   comment: string;
   date: string;
 };
@@ -57,6 +60,7 @@ export function defaultDraft(snap: Snapshot): EntryDraft {
     acc: accountByKind(snap, t ? 'work' : 'personal'),
     receipt: null,
     receiptNote: '',
+    att: [],
     comment: '',
     date: snap.today,
   };
@@ -75,6 +79,7 @@ export function draftFromOp(o: Op): EntryDraft {
     acc: o.account,
     receipt: o.doc,
     receiptNote: o.doc === 'qr' ? o.note : '',
+    att: o.att ?? [],
     comment: o.title === catName ? '' : o.title,
     date: o.date,
   };
@@ -116,6 +121,7 @@ export default function Entry({
   const [busy, setBusy] = useState(false);
   const [qrText, setQrText] = useState('');
   const [moreTrips, setMoreTrips] = useState(false);
+  const [filesBusy, setFilesBusy] = useState(false);
   const set = (patch: Partial<EntryDraft>) => {
     setE((x) => ({ ...x, ...patch }));
     setError(null);
@@ -181,9 +187,30 @@ export default function Entry({
       setError(message(err));
     }
   };
+  /** Снимок с камеры (на телефоне) или файлы с компьютера. */
+  const addFiles = async (camera: boolean) => {
+    const files = await pickFiles({ accept: camera ? 'image/*' : 'image/*,application/pdf', capture: camera && mobile, multiple: !camera });
+    if (!files.length) return;
+    setFilesBusy(true);
+    try {
+      const added: Attachment[] = [];
+      for (const f of files) added.push(await attachFile(f));
+      setE((x) => ({ ...x, att: [...x.att, ...added], receipt: x.receipt === 'qr' ? 'qr' : camera ? 'photo' : x.receipt || 'file' }));
+      setError(null);
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setFilesBusy(false);
+    }
+  };
+  const removeFile = (id: string) =>
+    setE((x) => {
+      const att = x.att.filter((a) => a.id !== id);
+      return { ...x, att, receipt: att.length || x.receipt === 'qr' ? x.receipt : null };
+    });
   const pickReceipt = async (kind: DocKind) => {
-    if (kind !== 'qr') return set({ receipt: e.receipt === kind ? null : kind, receiptNote: '' });
-    if (e.receipt === 'qr') return set({ receipt: null, receiptNote: '' });
+    if (kind !== 'qr') return addFiles(kind === 'photo');
+    if (e.receipt === 'qr') return set({ receipt: e.att.length ? 'photo' : null, receiptNote: '' });
     if (!mobile) return set({ receipt: 'qr', receiptNote: '' });
     try {
       await applyReceipt(await scanQr());
@@ -205,16 +232,19 @@ export default function Entry({
   const showDocs = e.dir === 'out' && isTrip && e.cat !== 'food';
   let docNote = '';
   let docWarn = true;
-  if (e.receipt) {
+  if (filesBusy) {
     docWarn = false;
+    docNote = 'Сохраняю снимок…';
+  } else if (e.receipt) {
+    docWarn = false;
+    const n = e.att.length;
+    const files = n ? `Прикреплено ${n} ${plural(n, 'вложение', 'вложения', 'вложений')}. ` : '';
     docNote =
       e.receipt === 'qr'
-        ? e.receiptNote
-          ? 'Чек по QR-коду: дата и сумма заполнены, расход войдёт в отчёт.'
-          : 'Чек с QR-кодом есть, расход войдёт в отчёт.'
-        : e.receipt === 'photo'
-          ? 'Чек есть, расход войдёт в отчёт. Хранить снимки чеков приложение научится позже.'
-          : 'Документ есть, расход войдёт в отчёт. Хранить файлы приложение научится позже.';
+        ? files + (e.receiptNote ? 'Чек по QR-коду: дата и сумма заполнены, расход войдёт в отчёт.' : 'Чек с QR-кодом есть, расход войдёт в отчёт.')
+        : n
+          ? files + 'Расход войдёт в отчёт.'
+          : 'Чек есть, расход войдёт в отчёт. Снимок можно добавить позже.';
   } else if (room === 0) docNote = 'Суточные закончились: без чека сумма станет долгом перед компанией.';
   else if (amtRub > room) docNote = `Без чека ${rub(room)} — из суточных, ${rub(amtRub - room)} — долг перед компанией.`;
   else docNote = `Без чека — из суточных (осталось ${rub(room)}), сверх них — долг перед компанией.`;
@@ -268,6 +298,7 @@ export default function Entry({
       orig: cur === 'RUB' ? null : orig,
       cur: cur === 'RUB' ? null : cur,
       note: doc === 'qr' ? e.receiptNote : editing && editing.doc !== 'qr' ? editing.note : '',
+      att: e.att,
     };
     setBusy(true);
     const next = await onSave(op);
@@ -392,6 +423,12 @@ export default function Entry({
               </button>
             ))}
           </div>
+          {e.att.length > 0 && <Thumbs items={e.att} onRemove={removeFile} />}
+          {!e.receipt && !filesBusy && (
+            <button type="button" className="btn link" style={{ alignSelf: 'flex-start', padding: 0, minHeight: 32, color: 'var(--own)', fontSize: 14 }} onClick={() => set({ receipt: 'photo' })}>
+              Чек есть, сниму позже
+            </button>
+          )}
           {e.receipt === 'qr' && !mobile && !e.receiptNote && (
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: 6 }}>
               <input className="field" aria-label="Текст QR-кода с чека" placeholder="Вставьте текст QR-кода: t=…&s=…" value={qrText} onChange={(ev) => setQrText(ev.target.value)} style={{ height: 44, fontSize: 14 }} />

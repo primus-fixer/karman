@@ -11,10 +11,40 @@ use crate::sync::{Event, EventBody, VersionVector};
 use crate::trip::{Op, Trip};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::de::DeserializeOwned;
-use std::collections::BTreeMap;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-const SCHEMA: &str = "2";
+/// Версия схемы. Меняется вместе с новыми видами событий: при открытии таблица
+/// записей собирается заново, и события, которые прежняя версия не понимала, оживают.
+const SCHEMA: &str = "3";
+
+/// Вложения: не больше 15 МБ, только снимки и PDF.
+pub const MAX_BLOB: usize = 15 * 1024 * 1024;
+pub const BLOB_TYPES: [&str; 4] = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+
+/// Номер вложения — SHA-256 содержимого.
+pub fn blob_id(data: &[u8]) -> String {
+    hex(&Sha256::digest(data))
+}
+
+/// Проверяет размер, тип и первые байты файла: под видом снимка не пролезет что-то другое.
+pub fn check_blob(mime: &str, data: &[u8]) -> Result<()> {
+    if data.is_empty() || data.len() > MAX_BLOB {
+        return Err(Error::Format(format!("файл больше {} МБ или пустой", MAX_BLOB / 1024 / 1024)));
+    }
+    let ok = match mime {
+        "image/jpeg" => data.starts_with(&[0xFF, 0xD8, 0xFF]),
+        "image/png" => data.starts_with(&[0x89, b'P', b'N', b'G']),
+        "image/webp" => data.len() > 12 && &data[..4] == b"RIFF" && &data[8..12] == b"WEBP",
+        "application/pdf" => data.starts_with(b"%PDF"),
+        _ => false,
+    };
+    if !ok {
+        return Err(Error::Format("подходят только снимки JPEG, PNG, WebP и PDF".into()));
+    }
+    Ok(())
+}
 
 pub struct Store {
     conn: Connection,
@@ -50,7 +80,10 @@ impl Store {
              CREATE TABLE IF NOT EXISTS items(
                kind TEXT NOT NULL, id TEXT NOT NULL, body TEXT, deleted INTEGER NOT NULL DEFAULT 0,
                lamport INTEGER NOT NULL, device TEXT NOT NULL,
-               PRIMARY KEY(kind, id));",
+               PRIMARY KEY(kind, id));
+             CREATE TABLE IF NOT EXISTS blobs(
+               id TEXT PRIMARY KEY, mime TEXT NOT NULL, size INTEGER NOT NULL, data BLOB NOT NULL,
+               added INTEGER NOT NULL);",
         )?;
         let mut store = Store { conn, device: device.to_string() };
         if store.meta("schema")?.as_deref() != Some(SCHEMA) {
@@ -116,7 +149,7 @@ impl Store {
         let mut out = Vec::with_capacity(bodies.len());
         for body in bodies {
             lamport += 1;
-            let ev = Event { device: self.device.clone(), seq, lamport, body };
+            let ev = Event::new(self.device.clone(), seq, lamport, &body)?;
             seq += 1;
             insert_event(&tx, &ev)?;
             materialize(&tx, &ev)?;
@@ -235,6 +268,65 @@ impl Store {
         Ok(())
     }
 
+    /// Сохраняет вложение и возвращает его номер (SHA-256). Повтор того же файла ничего не меняет.
+    pub fn put_blob(&self, mime: &str, data: &[u8]) -> Result<String> {
+        check_blob(mime, data)?;
+        let id = blob_id(data);
+        self.conn.execute(
+            "INSERT OR IGNORE INTO blobs(id, mime, size, data, added) VALUES(?1, ?2, ?3, ?4, CAST(strftime('%s','now') AS INTEGER))",
+            params![id, mime, data.len() as i64, data],
+        )?;
+        Ok(id)
+    }
+
+    /// Вложение, полученное с другого устройства: номер обязан совпасть с содержимым.
+    pub fn put_blob_checked(&self, id: &str, mime: &str, data: &[u8]) -> Result<()> {
+        if blob_id(data) != id {
+            return Err(Error::Format("вложение повреждено: не совпал отпечаток".into()));
+        }
+        self.put_blob(mime, data).map(|_| ())
+    }
+
+    pub fn blob(&self, id: &str) -> Result<Option<(String, Vec<u8>)>> {
+        Ok(self
+            .conn
+            .query_row("SELECT mime, data FROM blobs WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .optional()?)
+    }
+
+    pub fn has_blob(&self, id: &str) -> Result<bool> {
+        Ok(self.conn.query_row("SELECT count(*) FROM blobs WHERE id = ?1", [id], |r| r.get::<_, i64>(0))? > 0)
+    }
+
+    /// Вложения, на которые ссылаются операции.
+    pub fn referenced_blobs(&self) -> Result<BTreeSet<String>> {
+        Ok(self.ops()?.into_iter().flat_map(|o| o.att.into_iter().map(|a| a.id)).collect())
+    }
+
+    /// Вложения из операций, которых на этом устройстве ещё нет.
+    pub fn missing_blobs(&self) -> Result<Vec<String>> {
+        let mut out = Vec::new();
+        for id in self.referenced_blobs()? {
+            if !self.has_blob(&id)? {
+                out.push(id);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Удаляет вложения, на которые больше суток никто не ссылается
+    /// (сутки — запас на снимок, который ещё не прикрепили к операции).
+    pub fn gc_blobs(&self) -> Result<usize> {
+        let keep = self.referenced_blobs()?;
+        let mut st = self.conn.prepare("SELECT id FROM blobs WHERE added < CAST(strftime('%s','now') AS INTEGER) - 86400")?;
+        let old: Vec<String> = st.query_map([], |r| r.get(0))?.collect::<std::result::Result<_, _>>()?;
+        let mut n = 0;
+        for id in old.into_iter().filter(|id| !keep.contains(id)) {
+            n += self.conn.execute("DELETE FROM blobs WHERE id = ?1", [&id])?;
+        }
+        Ok(n)
+    }
+
     /// Для проверки скорости: пачка строк в одной транзакции в отдельной таблице.
     pub fn bench_rows(&mut self, n: usize) -> Result<usize> {
         let tx = self.conn.transaction()?;
@@ -259,7 +351,9 @@ fn insert_event(tx: &Transaction, ev: &Event) -> Result<bool> {
 }
 
 fn materialize(tx: &Transaction, ev: &Event) -> Result<()> {
-    let (kind, id, body) = ev.body.item()?;
+    // Событие из более новой версии хранится в журнале и оживёт после обновления.
+    let Some(parsed) = ev.parsed() else { return Ok(()) };
+    let (kind, id, body) = parsed.item()?;
     let cur: Option<(i64, String)> = tx
         .query_row("SELECT lamport, device FROM items WHERE kind = ?1 AND id = ?2", params![kind, id], |r| Ok((r.get(0)?, r.get(1)?)))
         .optional()?;
@@ -311,7 +405,7 @@ mod tests {
         s.put_op(op.clone()).unwrap();
         assert_eq!(s.ops().unwrap()[0].title, "Такси до объекта, исправлено");
         // Старое чужое событие не перетирает новое.
-        let stale = Event { device: "dev-b".into(), seq: 1, lamport: 1, body: EventBody::OpPut { op: demo::ops().remove(0) } };
+        let stale = Event::new("dev-b".into(), 1, 1, &EventBody::OpPut { op: demo::ops().remove(0) }).unwrap();
         assert_eq!(s.apply(&[stale.clone()]).unwrap(), 1);
         assert_eq!(s.apply(&[stale]).unwrap(), 0, "повтор пропускается");
         assert_eq!(s.ops().unwrap()[0].title, "Такси до объекта, исправлено");

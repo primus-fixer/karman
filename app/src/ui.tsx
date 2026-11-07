@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import type { Check, Op, Snapshot } from './api';
+import { useEffect, useState } from 'react';
+import type { Attachment, Check, Op, Snapshot } from './api';
+import { blobUrl, sizeText } from './media';
 import { ICON } from './icons';
 import { opView, rail } from './logic';
 
@@ -79,7 +80,107 @@ export function ErrorText({ text }: { text: string | null }) {
 }
 
 /** Строка операции, раскрывается по нажатию. */
-export type OpActions = { addDoc: (op: Op) => void; remove: (op: Op) => void; edit: (op: Op) => void };
+export type OpActions = {
+  addDoc: (op: Op) => void;
+  remove: (op: Op) => void;
+  edit: (op: Op) => void;
+  /** Прикрепить снимок или файл к записанной операции. */
+  attach: (op: Op) => void;
+  view: (a: Attachment) => void;
+};
+
+function Thumb({ att, onOpen, onRemove }: { att: Attachment; onOpen?: (a: Attachment) => void; onRemove?: (id: string) => void }) {
+  const isImage = att.mime.startsWith('image/');
+  // undefined — грузится, null — снимок ещё не пришёл с другого устройства.
+  const [url, setUrl] = useState<string | null | undefined>(isImage ? undefined : null);
+  useEffect(() => {
+    if (!isImage) return;
+    let alive = true;
+    blobUrl(att.id).then(
+      (u) => alive && setUrl(u),
+      () => alive && setUrl(null),
+    );
+    return () => {
+      alive = false;
+    };
+  }, [att.id, isImage]);
+  const missing = isImage && url === null;
+  return (
+    <span className="thumb">
+      <button
+        type="button"
+        className="thumbimg"
+        aria-label={missing ? `${att.name}: ещё не пришёл с другого устройства` : `Открыть ${att.name}`}
+        title={missing ? 'Снимок ещё не пришёл с другого устройства — свяжите устройства по Wi-Fi' : `${att.name}, ${sizeText(att.size)}`}
+        disabled={!onOpen || missing}
+        onClick={() => onOpen?.(att)}
+      >
+        {url ? (
+          <img src={url} alt="" />
+        ) : (
+          <span className="thumbicon">
+            <Icon name={isImage ? 'camera' : 'file'} size={20} />
+            <small>{isImage ? (missing ? 'не пришёл' : '…') : 'PDF'}</small>
+          </span>
+        )}
+      </button>
+      {onRemove && (
+        <button type="button" className="thumbx" aria-label={`Убрать ${att.name}`} onClick={() => onRemove(att.id)}>
+          <Icon name="x" size={14} stroke={2.4} />
+        </button>
+      )}
+    </span>
+  );
+}
+
+/** Миниатюры снимков и файлов чека. */
+export function Thumbs({ items, onOpen, onRemove }: { items: Attachment[]; onOpen?: (a: Attachment) => void; onRemove?: (id: string) => void }) {
+  return (
+    <div className="thumbs">
+      {items.map((a) => (
+        <Thumb key={a.id} att={a} onOpen={onOpen} onRemove={onRemove} />
+      ))}
+    </div>
+  );
+}
+
+/** Просмотр снимка или PDF во весь экран. */
+export function Viewer({ att, pdfInline, onClose }: { att: Attachment; pdfInline: boolean; onClose: () => void }) {
+  const [url, setUrl] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    blobUrl(att.id).then(
+      (u) => alive && setUrl(u),
+      () => alive && setUrl(null),
+    );
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => {
+      alive = false;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [att.id, onClose]);
+  const pdf = att.mime === 'application/pdf';
+  return (
+    <div className="viewer" role="dialog" aria-modal="true" aria-label={att.name}>
+      <header>
+        <span className="stack" style={{ minWidth: 0 }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{att.name}</span>
+          <small style={{ opacity: 0.75 }}>{sizeText(att.size)}</small>
+        </span>
+        <button type="button" className="iconbtn" style={{ color: '#fff' }} aria-label="Закрыть" onClick={onClose}>
+          <Icon name="x" size={22} stroke={2} />
+        </button>
+      </header>
+      <div className="vbody">
+        {url === undefined && <p style={{ color: '#fff' }}>Открываю…</p>}
+        {url === null && <p style={{ color: '#fff' }}>Файл ещё не пришёл с другого устройства.</p>}
+        {url && !pdf && <img src={url} alt={att.name} />}
+        {url && pdf && (pdfInline ? <iframe title={att.name} src={url} /> : <p style={{ color: '#fff', textAlign: 'center' }}>PDF на телефоне не открывается. Посмотрите его на компьютере.</p>)}
+      </div>
+    </div>
+  );
+}
 
 /** Эти операции можно поправить в окне ввода; возврат компании и платежи по долгам — только удалить. */
 export const EDITABLE = new Set(['work', 'food', 'personal', 'income', 'advance', 'reimbursement']);
@@ -99,7 +200,12 @@ export function OpRow({ snap, op, act, dateSub }: { snap: Snapshot; op: Op; act:
         </span>
         <span className="opright">
           <span className={'amount' + (v.inc ? ' in' : '')}>{v.amount}</span>
-          <span style={{ display: 'flex', gap: 4 }}>
+          <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            {!!op.att?.length && (
+              <span className="faint" title="Есть снимок чека" style={{ display: 'flex' }}>
+                <Icon name="clip" size={14} />
+              </span>
+            )}
             {v.noDoc && <span className="tag warn">без чека</span>}
             {v.chip && <span className={'tag' + (v.chipTagged ? ' grey' : '')}>{v.chip}</span>}
           </span>
@@ -113,7 +219,12 @@ export function OpRow({ snap, op, act, dateSub }: { snap: Snapshot; op: Op; act:
               <span style={{ textAlign: 'right' }}>{d.value}</span>
             </div>
           ))}
+          {!!op.att?.length && <Thumbs items={op.att} onOpen={act.view} />}
           <div className="wrap">
+            <button type="button" className="btn ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }} onClick={() => act.attach(op)}>
+              <Icon name="camera" size={18} />
+              {op.att?.length ? 'Ещё снимок' : 'Снимок чека'}
+            </button>
             {v.noDoc && (
               <button type="button" className="btn warn" onClick={() => act.addDoc(op)}>
                 Документ есть

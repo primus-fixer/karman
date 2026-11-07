@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, inApp, LOCKED, message, onLocked, type DeviceInfo, type LockStatus, type Op, type Snapshot, type TripStatus } from './api';
+import { api, inApp, LOCKED, message, onLocked, type Attachment, type DeviceInfo, type LockStatus, type Op, type Snapshot, type TripStatus } from './api';
 import Entry, { defaultDraft, draftFromOp, tripDraft, type EntryDraft } from './Entry';
 import { rub } from './format';
 import { bioLabel, LockScreen, PinFlow, type PinMode } from './Lock';
+import { attachFile, pickFiles } from './media';
 import Feed from './screens/Feed';
 import Overview from './screens/Overview';
 import Settings, { type ThemeState } from './screens/Settings';
@@ -10,7 +11,7 @@ import TripScreen, { type TripActions, type TripTab } from './screens/Trip';
 import TripForm from './screens/TripForm';
 import Trips from './screens/Trips';
 import { applyTheme, type ThemeMode } from './theme';
-import { Icon, type OpActions } from './ui';
+import { Icon, Viewer, type OpActions } from './ui';
 
 export type Tab = 'overview' | 'feed' | 'trips' | 'settings';
 type Screen = Tab | 'trip' | 'trip-form';
@@ -98,6 +99,7 @@ export default function App() {
   const [locked, setLocked] = useState(false);
   const [lockKey, setLockKey] = useState(0);
   const [pinFlow, setPinFlow] = useState<PinMode | null>(null);
+  const [viewer, setViewer] = useState<Attachment | null>(null);
   const mainRef = useRef<HTMLElement>(null);
   const firstLoad = useRef(true);
   const notice = useRef<string | null>(null);
@@ -351,6 +353,22 @@ export default function App() {
     const s = await run(api.opDelete(op.id));
     if (s) flash('Операция удалена', () => run(api.opSave(op), 'Операция возвращена'));
   };
+  const mobileNow = info ? info.os === 'android' || info.os === 'ios' : false;
+  /** Снимок чека к записанной операции: на телефоне — камера, на компьютере — файлы. */
+  const attachTo = async (op: Op) => {
+    const files = await pickFiles({ accept: mobileNow ? 'image/*' : 'image/*,application/pdf', capture: mobileNow, multiple: !mobileNow });
+    if (!files.length) return;
+    try {
+      const added: Attachment[] = [];
+      for (const f of files) added.push(await attachFile(f));
+      const onlyPdf = added.every((a) => a.mime === 'application/pdf');
+      const doc = op.kind === 'work' && !op.doc ? (onlyPdf ? 'file' : 'photo') : op.doc;
+      await run(api.opSave({ ...op, att: [...(op.att ?? []), ...added], doc }), added.length > 1 ? 'Снимки прикреплены' : 'Снимок прикреплён');
+    } catch (e) {
+      if (message(e) === LOCKED) goLocked();
+      else flash(message(e));
+    }
+  };
   const opAct: OpActions = {
     addDoc: (op) => {
       addDoc(op);
@@ -359,6 +377,10 @@ export default function App() {
       deleteOp(op);
     },
     edit: (op) => openEntry(draftFromOp(op), op),
+    attach: (op) => {
+      attachTo(op);
+    },
+    view: (a) => setViewer(a),
   };
 
   const tripAct: TripActions = {
@@ -397,6 +419,12 @@ export default function App() {
       copyText(text).then(
         () => flash('Скопировано: ' + label),
         () => flash('Не удалось скопировать'),
+      );
+    },
+    zip: (id) => {
+      api.receiptsZip(id).then(
+        (path) => flash('Архив чеков сохранён: ' + path, undefined, true),
+        (e) => (message(e) === LOCKED ? goLocked() : flash(message(e))),
       );
     },
   };
@@ -546,6 +574,7 @@ export default function App() {
         </div>
       )}
     </div>
+    {viewer && <Viewer att={viewer} pdfInline={!mobileNow} onClose={() => setViewer(null)} />}
     {overlay}
     </>
   );

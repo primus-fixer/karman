@@ -15,6 +15,7 @@ pub mod pin;
 pub mod receipt;
 pub mod sync;
 pub mod trip;
+pub mod zip;
 
 pub use date::Date;
 pub use error::{Error, Result};
