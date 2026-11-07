@@ -1,343 +1,443 @@
-import { useCallback, useEffect, useState } from 'react';
-import {
-  api,
-  inApp,
-  message,
-  scanQr,
-  type CalcCheck,
-  type Check,
-  type DbCheck,
-  type DeviceInfo,
-  type OpView,
-  type PairingView,
-  type ReceiptView,
-  type SyncResult,
-  type SyncStatus,
-} from './api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { api, inApp, message, type DeviceInfo, type Op, type Snapshot, type TripStatus } from './api';
+import Entry, { defaultDraft, draftFromOp, tripDraft, type EntryDraft } from './Entry';
+import { rub } from './format';
+import Feed from './screens/Feed';
+import Overview from './screens/Overview';
+import Settings, { type ThemeState } from './screens/Settings';
+import TripScreen, { type TripActions, type TripTab } from './screens/Trip';
+import TripForm from './screens/TripForm';
+import Trips from './screens/Trips';
+import { applyTheme, type ThemeMode } from './theme';
+import { Icon, type OpActions } from './ui';
 
-function Mark({ ok }: { ok: boolean }) {
-  return (
-    <svg className={ok ? 'ok' : 'bad'} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-label={ok ? 'Да' : 'Нет'}>
-      <path d={ok ? 'M20 6 9 17l-5-5' : 'M18 6 6 18M6 6l12 12'} />
-    </svg>
-  );
+export type Tab = 'overview' | 'feed' | 'trips' | 'settings';
+type Screen = Tab | 'trip' | 'trip-form';
+
+export type Nav = {
+  go: (tab: Tab) => void;
+  openTrip: (id: string) => void;
+  newTrip: () => void;
+  editTrip: (id: string) => void;
+  openEntry: () => void;
+};
+
+const TABS: { id: Tab; label: string; icon: string }[] = [
+  { id: 'overview', label: 'Обзор', icon: 'overview' },
+  { id: 'feed', label: 'Лента', icon: 'feed' },
+  { id: 'trips', label: 'Поездки', icon: 'trips' },
+  { id: 'settings', label: 'Настройки', icon: 'settings' },
+];
+
+const ADVANCED: Partial<Record<TripStatus, string>> = {
+  in_trip: 'Поездка началась',
+  awaiting_report: 'Поездка завершена. Соберите документы для отчёта',
+  review: 'Отчёт на проверке, ставка суточных зафиксирована',
+  closed: 'Поездка закрыта',
+};
+
+function loadTheme(): ThemeState {
+  try {
+    const scheme = localStorage.getItem('karman.scheme') || 'shield';
+    const mode = localStorage.getItem('karman.mode') as ThemeMode | null;
+    return { scheme, mode: mode === 'dark' || mode === 'system' ? mode : 'light' };
+  } catch {
+    return { scheme: 'shield', mode: 'light' };
+  }
 }
 
-function Checks({ items }: { items: Check[] }) {
-  return (
-    <ul className="checks">
-      {items.map((c, i) => (
-        <li key={i}>
-          <Mark ok={c.ok} />
-          <span>{c.text}</span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function ErrorText({ text }: { text: string | null }) {
-  return text ? <p className="error" role="alert">{text}</p> : null;
-}
-
-/** Запуск действия с индикатором и ошибкой. */
-function useAction<T>() {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const run = useCallback(async (fn: () => Promise<T>): Promise<T | undefined> => {
-    setBusy(true);
-    setError(null);
-    try {
-      return await fn();
-    } catch (e) {
-      setError(message(e));
-      return undefined;
-    } finally {
-      setBusy(false);
-    }
+function usePhone(): boolean {
+  const q = () => window.innerWidth < 900;
+  const [phone, setPhone] = useState(q);
+  useEffect(() => {
+    const on = () => setPhone(q());
+    window.addEventListener('resize', on);
+    return () => window.removeEventListener('resize', on);
   }, []);
-  return { busy, error, run, setError };
+  return phone;
 }
 
-function DeviceCard({ info }: { info: DeviceInfo | null }) {
-  if (!info) return null;
-  const rows: [string, string][] = [
-    ['Устройство', info.name],
-    ['Система', `${info.os}, ${info.arch}`],
-    ['Номер устройства', info.id],
-    ['База', info.encrypted ? `зашифрована, SQLCipher ${info.cipher}` : 'НЕ зашифрована'],
-    ['Событий в журнале', String(info.events)],
-    ['Операций', String(info.ops)],
-  ];
-  return (
-    <section className="card">
-      <h2>Это устройство</h2>
-      <div className="rows">
-        {rows.map(([k, v]) => (
-          <div className="row" key={k}>
-            <span>{k}</span>
-            <span>{v}</span>
-          </div>
-        ))}
-      </div>
-      <p className="note">Папка данных: {info.data_dir}</p>
-    </section>
-  );
+async function copyText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {
+    /* ниже — запасной способ для WebView */
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  const ok = document.execCommand('copy');
+  document.body.removeChild(ta);
+  if (!ok) throw new Error('copy');
 }
 
-function DbCard({ onDone }: { onDone: () => void }) {
-  const [res, setRes] = useState<DbCheck | null>(null);
-  const a = useAction<DbCheck>();
-  return (
-    <section className="card">
-      <h2>Зашифрованная база</h2>
-      <p className="note">Создаёт отдельную проверочную базу, пишет 2 000 строк, открывает её заново и пробует чужой ключ. Потом удаляет.</p>
-      <div className="actions">
-        <button className="btn" disabled={a.busy} onClick={async () => { const r = await a.run(api.dbCheck); if (r) { setRes(r); onDone(); } }}>
-          {a.busy ? 'Проверяю…' : 'Проверить базу'}
-        </button>
-      </div>
-      <ErrorText text={a.error} />
-      {res && <Checks items={res.checks} />}
-    </section>
-  );
-}
-
-function CalcCard() {
-  const [res, setRes] = useState<CalcCheck | null>(null);
-  const a = useAction<CalcCheck>();
-  return (
-    <section className="card">
-      <h2>Расчёт поездок</h2>
-      <p className="note">Поездки из макета. Суточные по ставке, траты без документов — сначала из суточных, остальное — долг перед компанией.</p>
-      <div className="actions">
-        <button className="btn work" disabled={a.busy} onClick={async () => { const r = await a.run(api.calcCheck); if (r) setRes(r); }}>
-          Посчитать
-        </button>
-      </div>
-      <ErrorText text={a.error} />
-      {res && (
-        <>
-          <p className="note">Ставка суточных: {res.rate}</p>
-          <Checks items={res.checks} />
-          <div>
-            {res.trips.map((t) => (
-              <div className="trip" key={t.name}>
-                <b>{t.name}</b>
-                <small>{t.status}. Израсходовано по отчёту {t.fact}</small>
-                <span>{t.headline}</span>
-                <small>{t.per_diem}</small>
-                {t.over_note && <small>Сверх бюджета: {t.over_note}</small>}
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-    </section>
-  );
-}
-
-function SyncCard({ mobile, onChange }: { mobile: boolean; onChange: () => void }) {
-  const [pairing, setPairing] = useState<PairingView | null>(null);
-  const [status, setStatus] = useState<SyncStatus | null>(null);
-  const [uri, setUri] = useState('');
-  const [result, setResult] = useState<SyncResult | null>(null);
-  const [ops, setOps] = useState<OpView[]>([]);
-  const [amount, setAmount] = useState('350');
-  const a = useAction<unknown>();
-
-  const refreshOps = useCallback(async () => setOps(await api.opsList()), []);
-  useEffect(() => {
-    refreshOps().catch(() => undefined);
-  }, [refreshOps]);
-
-  // Пока показан QR, раз в 2 секунды спрашиваем, кто подключался.
-  useEffect(() => {
-    if (!pairing) return;
-    let alive = true;
-    const tick = async () => {
-      try {
-        const s = await api.syncStatus();
-        if (!alive) return;
-        setStatus((prev) => {
-          if (prev && s.log.length > prev.log.length) {
-            refreshOps().catch(() => undefined);
-            onChange();
-          }
-          return s;
-        });
-      } catch {
-        /* окно закрывается */
-      }
-    };
-    tick();
-    const id = window.setInterval(tick, 2000);
-    return () => {
-      alive = false;
-      window.clearInterval(id);
-    };
-  }, [pairing, refreshOps, onChange]);
-
-  const connect = async (text: string) => {
-    const r = (await a.run(() => api.syncConnect(text))) as SyncResult | undefined;
-    if (r) {
-      setResult(r);
-      setOps(r.ops);
-      onChange();
-    }
-  };
-
-  return (
-    <section className="card">
-      <h2>Связь устройств по Wi-Fi</h2>
-      <p className="note">
-        На компьютере нажмите «Показать QR-код», на телефоне — «Сканировать». Устройства должны быть в одной сети Wi-Fi или телефон
-        раздаёт точку доступа. Данные идут зашифрованными.
-      </p>
-      <div className="actions">
-        {!pairing ? (
-          <button className="btn own" disabled={a.busy} onClick={async () => { const p = (await a.run(api.syncStart)) as PairingView | undefined; if (p) setPairing(p); }}>
-            Показать QR-код
-          </button>
-        ) : (
-          <button className="btn ghost" onClick={async () => { await a.run(api.syncStop); setPairing(null); setStatus(null); }}>
-            Перестать ждать
-          </button>
-        )}
-        {mobile && (
-          <button className="btn" disabled={a.busy} onClick={async () => { const text = (await a.run(scanQr)) as string | undefined; if (text) await connect(text); }}>
-            Сканировать QR-код
-          </button>
-        )}
-      </div>
-      {pairing && (
-        <>
-          <div className="qr" dangerouslySetInnerHTML={{ __html: pairing.qr_svg }} aria-label="QR-код для связи" role="img" />
-          <p className="note">
-            Жду подключения: {pairing.hosts.map((h) => `${h}:${pairing.port}`).join(', ')}. Если камеры нет, передайте другому устройству
-            ссылку: <span style={{ overflowWrap: 'anywhere' }}>{pairing.uri}</span>
-          </p>
-          {status && status.log.length > 0 && <Checks items={status.log} />}
-        </>
-      )}
-      <textarea className="field" rows={2} placeholder="Или вставьте ссылку karman://pair… с другого устройства" value={uri} onChange={(e) => setUri(e.target.value)} />
-      <div className="actions">
-        <button className="btn ghost" disabled={a.busy || !uri.trim()} onClick={() => connect(uri.trim())}>
-          {a.busy ? 'Связываюсь…' : 'Подключиться по ссылке'}
-        </button>
-      </div>
-      <ErrorText text={a.error} />
-      {result && <Checks items={[{ ok: true, text: `Обмен с «${result.peer_name}»: отправлено ${result.sent}, получено ${result.received}` }]} />}
-
-      <h2 style={{ marginTop: 6 }}>Тестовые операции</h2>
-      <p className="note">Добавьте операцию на одном устройстве и обменяйтесь — она появится на втором.</p>
-      <div className="actions">
-        <input className="field num" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} aria-label="Сумма, рублей" style={{ width: 120 }} />
-        <button className="btn ghost" disabled={a.busy} onClick={async () => { const r = (await a.run(() => api.opAddTest(amount))) as OpView[] | undefined; if (r) { setOps(r); onChange(); } }}>
-          Добавить операцию
-        </button>
-      </div>
-      <div>
-        {ops.length === 0 && <p className="note">Операций пока нет.</p>}
-        {ops.map((o) => (
-          <div className="op" key={o.id}>
-            <span>
-              {o.title}
-              <small>{o.date}</small>
-            </span>
-            <span className="num">{o.amount}</span>
-            <button className="link" onClick={async () => { const r = (await a.run(() => api.opDelete(o.id))) as OpView[] | undefined; if (r) { setOps(r); onChange(); } }}>
-              Удалить
-            </button>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function ReceiptCard({ mobile }: { mobile: boolean }) {
-  const [text, setText] = useState('t=20261031T1532&s=600.00&fn=7380440700076549&i=41218&fp=2489764517&n=1');
-  const [res, setRes] = useState<ReceiptView | null>(null);
-  const a = useAction<ReceiptView>();
-  const parse = async (t: string) => {
-    const r = await a.run(() => api.receiptParse(t));
-    if (r) setRes(r);
-  };
-  return (
-    <section className="card">
-      <h2>Чек по QR-коду</h2>
-      <p className="note">QR-код на кассовом чеке даёт дату, сумму и данные для проверки в ФНС.</p>
-      <div className="actions">
-        {mobile && (
-          <button className="btn" disabled={a.busy} onClick={async () => { try { const t = await scanQr(); setText(t); await parse(t); } catch (e) { a.setError(message(e)); } }}>
-            Сканировать чек
-          </button>
-        )}
-      </div>
-      <textarea className="field" rows={2} value={text} onChange={(e) => setText(e.target.value)} aria-label="Текст QR-кода чека" />
-      <div className="actions">
-        <button className="btn ghost" disabled={a.busy || !text.trim()} onClick={() => parse(text)}>
-          Разобрать
-        </button>
-      </div>
-      <ErrorText text={a.error} />
-      {res && (
-        <div className="rows">
-          {(
-            [
-              ['Дата и время', `${res.date}, ${res.time}`],
-              ['Сумма', res.sum],
-              ['Тип', res.kind],
-              ['ФН', res.fn_number],
-              ['ФД', res.fd],
-              ['ФП', res.fp],
-            ] as [string, string][]
-          ).map(([k, v]) => (
-            <div className="row" key={k}>
-              <span>{k}</span>
-              <span className={k === 'Сумма' ? 'num' : undefined}>{v}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
+type Toast = { text: string; undo?: () => void; key: number };
 
 export default function App() {
+  const isPhone = usePhone();
+  const [snap, setSnap] = useState<Snapshot | null>(null);
+  const [fatal, setFatal] = useState<string | null>(null);
   const [info, setInfo] = useState<DeviceInfo | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [screen, setScreen] = useState<Screen>('overview');
+  const [tripId, setTripId] = useState<string | null>(null);
+  const [tripTab, setTripTab] = useState<TripTab>('summary');
+  const [reportPart, setReportPart] = useState<'plan' | 'fact' | null>(null);
+  const [tripFrom, setTripFrom] = useState<Tab>('trips');
+  const [formId, setFormId] = useState<string | null>(null);
+  const [entry, setEntry] = useState<{ draft: EntryDraft; key: number; editing: Op | null } | null>(null);
+  const [toast, setToast] = useState<Toast | null>(null);
+  const [theme, setTheme] = useState<ThemeState>(loadTheme);
+  const [dark, setDark] = useState(false);
+  const mainRef = useRef<HTMLElement>(null);
+  const firstLoad = useRef(true);
+
+  // ——— Тема ———
+  useEffect(() => {
+    const apply = () => setDark(applyTheme(theme.scheme, theme.mode) === 'dark');
+    apply();
+    try {
+      localStorage.setItem('karman.scheme', theme.scheme);
+      localStorage.setItem('karman.mode', theme.mode);
+    } catch {
+      /* без сохранения темы */
+    }
+    if (theme.mode !== 'system') return;
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    mq.addEventListener('change', apply);
+    return () => mq.removeEventListener('change', apply);
+  }, [theme]);
+
+  // ——— Данные ———
   const refresh = useCallback(() => {
-    api.deviceInfo().then(setInfo, (e) => setError(message(e)));
+    api.snapshot().then(
+      (s) => {
+        setSnap(s);
+        setFatal(null);
+      },
+      (e) => setFatal(message(e)),
+    );
   }, []);
   useEffect(() => {
-    if (inApp) refresh();
+    if (!inApp) {
+      setFatal('Эта страница работает внутри приложения «Карман».');
+      return;
+    }
+    refresh();
+    api.deviceInfo().then(setInfo, () => undefined);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
   }, [refresh]);
+
+  const flash = useCallback((text: string, undo?: () => void) => setToast({ text, undo, key: Date.now() }), []);
+  useEffect(() => {
+    if (!toast) return;
+    const id = window.setTimeout(() => setToast(null), toast.undo ? 6000 : 3500);
+    return () => window.clearTimeout(id);
+  }, [toast]);
+
+  const run = useCallback(
+    async (p: Promise<Snapshot>, ok?: string): Promise<Snapshot | null> => {
+      try {
+        const s = await p;
+        setSnap(s);
+        if (ok) flash(ok);
+        return s;
+      } catch (e) {
+        flash(message(e));
+        return null;
+      }
+    },
+    [flash],
+  );
+
+  // ——— Кнопка «Назад» на Android: каждый шаг вглубь — запись в истории ———
+  const depth = useRef(0);
+  const skip = useRef(0);
+  const backRef = useRef<() => void>(() => undefined);
+  const pushHistory = () => {
+    try {
+      window.history.pushState({ karman: depth.current + 1 }, '');
+      depth.current++;
+    } catch {
+      /* без истории */
+    }
+  };
+  const clearHistory = () => {
+    if (depth.current > 0) {
+      skip.current++;
+      const n = depth.current;
+      depth.current = 0;
+      window.history.go(-n);
+    }
+  };
+  const back = () => {
+    if (depth.current > 0) window.history.back();
+    else backRef.current();
+  };
+  useEffect(() => {
+    const onPop = () => {
+      if (skip.current > 0) {
+        skip.current--;
+        return;
+      }
+      depth.current = Math.max(0, depth.current - 1);
+      backRef.current();
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+  backRef.current = () => {
+    if (entry && isPhone) setEntry(null);
+    else if (screen === 'trip-form') {
+      if (formId) setScreen('trip');
+      else setScreen(tripFrom);
+    } else if (screen === 'trip') setScreen(tripFrom);
+  };
+
+  const toTop = () => mainRef.current?.scrollTo(0, 0);
+  const currentTab = (): Tab => (screen === 'trip' || screen === 'trip-form' ? tripFrom : screen);
+
+  const openEntry = (draft?: EntryDraft, editing?: Op) => {
+    if (!snap) return;
+    if (isPhone && !entry) pushHistory();
+    if (isPhone) setToast(null);
+    setEntry({ draft: draft ?? defaultDraft(snap), key: Date.now(), editing: editing ?? null });
+  };
+  const closeEntry = () => {
+    if (isPhone) back();
+    else setEntry(null);
+  };
+
+  const nav: Nav = {
+    go: (tab) => {
+      clearHistory();
+      setScreen(tab);
+      if (isPhone || (tab !== 'overview' && tab !== 'feed')) setEntry(null);
+      toTop();
+    },
+    openTrip: (id) => {
+      pushHistory();
+      setTripFrom(currentTab());
+      setTripId(id);
+      setTripTab('summary');
+      setReportPart(null);
+      setScreen('trip');
+      if (!isPhone) setEntry(null);
+      toTop();
+    },
+    newTrip: () => {
+      pushHistory();
+      setTripFrom(currentTab());
+      setFormId(null);
+      setScreen('trip-form');
+      if (!isPhone) setEntry(null);
+      toTop();
+    },
+    editTrip: (id) => {
+      pushHistory();
+      setFormId(id);
+      setScreen('trip-form');
+      toTop();
+    },
+    openEntry: () => openEntry(),
+  };
+
+  // На широком экране панель ввода открыта сразу.
+  useEffect(() => {
+    if (snap && firstLoad.current) {
+      firstLoad.current = false;
+      if (!isPhone && window.innerWidth >= 1280) setEntry({ draft: defaultDraft(snap), key: Date.now(), editing: null });
+    }
+  }, [snap, isPhone]);
+
+  const addDoc = (op: Op) => run(api.opSave({ ...op, doc: 'photo' }), 'Документ отмечен, расход вошёл в отчёт');
+  const deleteOp = async (op: Op) => {
+    const s = await run(api.opDelete(op.id));
+    if (s) flash('Операция удалена', () => run(api.opSave(op), 'Операция возвращена'));
+  };
+  const opAct: OpActions = {
+    addDoc: (op) => {
+      addDoc(op);
+    },
+    remove: (op) => {
+      deleteOp(op);
+    },
+    edit: (op) => openEntry(draftFromOp(op), op),
+  };
+
+  const tripAct: TripActions = {
+    advance: async (id) => {
+      const s = await run(api.tripAdvance(id));
+      const tv = s?.trips.find((t) => t.trip.id === id);
+      if (!tv) return;
+      if (tv.trip.status === 'advance_received') flash('Аванс записан на рабочий счёт: ' + rub(tv.s.issued));
+      else flash(ADVANCED[tv.trip.status] || 'Готово');
+    },
+    settle: async (id) => {
+      const before = snap?.trips.find((t) => t.trip.id === id)?.s.balance ?? 0;
+      await run(api.tripSettle(id), before < 0 ? 'Возмещение записано на личный счёт' : 'Возврат компании записан');
+    },
+    save: (trip) => {
+      run(api.tripSave(trip), 'Сохранено');
+    },
+    remove: async (id) => {
+      const s = await run(api.tripDelete(id), `Поездка ${id} удалена`);
+      if (s) {
+        clearHistory();
+        setScreen('trips');
+      }
+    },
+    addDoc: (op) => {
+      addDoc(op);
+    },
+    toggleSent: (op) => {
+      run(api.opSave({ ...op, sent: !op.sent }));
+    },
+    addOp: (id) => {
+      const tv = snap?.trips.find((t) => t.trip.id === id);
+      if (snap && tv) openEntry(tripDraft(snap, tv));
+    },
+    copy: (text, label) => {
+      copyText(text).then(
+        () => flash('Скопировано: ' + label),
+        () => flash('Не удалось скопировать'),
+      );
+    },
+  };
+
+  if (!snap) {
+    return (
+      <div className="app">
+        <main className="main" style={{ display: 'grid', placeItems: 'center', padding: 24 }}>
+          {fatal ? (
+            <div className="stack gap12" style={{ maxWidth: 420 }}>
+              <h1 className="h1">Карман</h1>
+              <p className="error">{fatal}</p>
+            </div>
+          ) : (
+            <p className="note">Открываю базу…</p>
+          )}
+        </main>
+      </div>
+    );
+  }
+
   const mobile = info ? info.os === 'android' || info.os === 'ios' : false;
+  let body = null;
+  if (screen === 'overview') body = <Overview snap={snap} nav={nav} act={opAct} />;
+  else if (screen === 'feed') body = <Feed snap={snap} act={opAct} />;
+  else if (screen === 'trips') body = <Trips snap={snap} nav={nav} />;
+  else if (screen === 'settings') body = <Settings snap={snap} info={info} mobile={mobile} run={run} refresh={refresh} theme={theme} setTheme={setTheme} dark={dark} />;
+  else if (screen === 'trip' && tripId)
+    body = (
+      <TripScreen
+        snap={snap}
+        tripId={tripId}
+        nav={nav}
+        act={tripAct}
+        tab={tripTab}
+        setTab={setTripTab}
+        part={reportPart}
+        setPart={setReportPart}
+        isPhone={isPhone}
+        onBack={back}
+        opAct={opAct}
+      />
+    );
+  else if (screen === 'trip-form')
+    body = (
+      <TripForm
+        key={formId ?? 'new'}
+        snap={snap}
+        tripId={formId}
+        onCancel={back}
+        onSave={async (trip, isNew) => {
+          const s = await run(api.tripSave(trip), isNew ? `Поездка ${trip.id} создана` : 'Поездка сохранена');
+          if (!s) return false;
+          if (isNew) {
+            // Форма сменяется карточкой поездки на том же шаге истории.
+            setTripId(trip.id);
+            setTripTab('summary');
+            setReportPart(null);
+            setScreen('trip');
+            toTop();
+          } else back();
+          return true;
+        }}
+      />
+    );
+
+  const tab = currentTab();
+  const entryEl = entry && (
+    <Entry key={entry.key} snap={snap} initial={entry.draft} editing={entry.editing} isPhone={isPhone} mobile={mobile} onSave={(op) => run(api.opSave(op))} onClose={closeEntry} flash={flash} />
+  );
 
   return (
-    <main className="page">
-      <header>
-        <p className="brand">Карман</p>
-        <p className="lead">Этап 0: проверяем на ваших устройствах базу, расчёты и связь по Wi-Fi.</p>
-      </header>
-      {!inApp && <p className="error">Эта страница работает внутри приложения «Карман». В обычном браузере команды недоступны.</p>}
-      <ErrorText text={error} />
-      <div className="grid">
-        <DeviceCard info={info} />
-        <DbCard onDone={refresh} />
-        <CalcCard />
-        <SyncCard mobile={mobile} onChange={refresh} />
-        <ReceiptCard mobile={mobile} />
-        <section className="card">
-          <h2>Облако и свой сервер</h2>
-          <p className="note">
-            Яндекс Диск и Google Drive подключим после регистрации приложений у Яндекса и Google — это следующий шаг. Сервер для VPS или NAS
-            появится вместе с приглашениями для семьи и коллег.
-          </p>
-        </section>
-      </div>
-    </main>
+    <div className={'app ' + (isPhone ? 'phone' : 'desktop')}>
+      {!isPhone && (
+        <aside className="side">
+          <p className="logo">Карман</p>
+          <button type="button" className="newop" aria-expanded={!!entry} onClick={() => (entry ? setEntry(null) : openEntry())}>
+            <Icon name={entry ? 'x' : 'plus'} size={20} stroke={2} />
+            Новая операция
+          </button>
+          {TABS.map((t) => (
+            <button key={t.id} type="button" className={'navitem' + (tab === t.id ? ' on' : '')} aria-current={tab === t.id ? 'page' : undefined} onClick={() => nav.go(t.id)}>
+              <Icon name={t.icon} size={20} />
+              {t.label}
+            </button>
+          ))}
+        </aside>
+      )}
+      <main className="main" ref={mainRef}>
+        <div className={'inner' + (screen === 'trip' ? '' : ' narrow')}>{body}</div>
+      </main>
+      {!isPhone && entryEl}
+      {isPhone && (
+        <nav className="bottomnav" aria-label="Разделы">
+          {TABS.map((t) => (
+            <button key={t.id} type="button" className={tab === t.id ? 'on' : ''} aria-current={tab === t.id ? 'page' : undefined} onClick={() => nav.go(t.id)}>
+              <Icon name={t.icon} size={22} stroke={tab === t.id ? 2 : 1.75} />
+              {t.label}
+            </button>
+          ))}
+        </nav>
+      )}
+      {isPhone && !entry && (screen === 'overview' || screen === 'feed' || screen === 'trips') && (
+        <button type="button" className="fab" aria-label="Записать операцию" onClick={() => openEntry()}>
+          <Icon name="plus" size={26} stroke={2} />
+        </button>
+      )}
+      {isPhone && entry && (
+        <>
+          <button type="button" className="scrim" aria-label="Закрыть ввод" onClick={closeEntry} />
+          {entryEl}
+        </>
+      )}
+      {toast && (
+        <div key={toast.key} className="toast" role="status">
+          <span>{toast.text}</span>
+          {toast.undo && (
+            <button
+              type="button"
+              onClick={() => {
+                toast.undo?.();
+                setToast(null);
+              }}
+            >
+              Вернуть
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

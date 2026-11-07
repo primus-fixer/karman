@@ -1,40 +1,135 @@
 import { invoke } from '@tauri-apps/api/core';
+import { todayIso } from './format';
 
-export type Check = { ok: boolean; text: string };
+// Типы повторяют ответы ядра (karman-core, serde).
 
-export type DeviceInfo = {
+export type OpKind = 'work' | 'food' | 'personal' | 'income' | 'advance' | 'reimbursement' | 'return' | 'debt';
+export type DocKind = 'photo' | 'qr' | 'file';
+
+export type Op = {
   id: string;
-  name: string;
-  os: string;
-  arch: string;
-  data_dir: string;
-  encrypted: boolean;
-  cipher: string;
-  events: number;
-  ops: number;
+  date: string;
+  kind: OpKind;
+  cat: string;
+  title: string;
+  amount: number;
+  account: string;
+  trip: string | null;
+  doc: DocKind | null;
+  sent: boolean;
+  family: boolean;
+  debt: string | null;
+  inflow: boolean;
+  orig: number | null;
+  cur: string | null;
+  note: string;
 };
 
-export type DbCheck = { rows: number; write_ms: number; read_ms: number; checks: Check[] };
+export const STATUSES = ['request', 'advance_received', 'in_trip', 'awaiting_report', 'review', 'closed'] as const;
+export type TripStatus = (typeof STATUSES)[number];
 
-export type TripRow = { name: string; status: string; headline: string; per_diem: string; fact: string; over_note: string };
-export type CalcCheck = { rate: string; trips: TripRow[]; checks: Check[] };
+export type Trip = {
+  id: string;
+  city: string;
+  start: string;
+  end: string;
+  plan_start: string;
+  plan_end: string;
+  status: TripStatus;
+  plan: number[];
+  fixed_rate: number | null;
+  own_rate: number | null;
+  req_no: string;
+  req_date: string | null;
+  goal: string;
+  region: string;
+  plan_notes: string[];
+  notes: string[];
+  deadline: string | null;
+  just: string | null;
+};
 
-export type OpView = { id: string; date: string; title: string; amount: string };
+export type Settlement = {
+  days: number;
+  plan_days: number;
+  elapsed: number;
+  finished: boolean;
+  rate: number;
+  per_diem: number;
+  per_diem_full: number;
+  issued: number;
+  reimbursed: number;
+  returned: number;
+  confirmed: number;
+  no_doc: number;
+  no_doc_count: number;
+  food: number;
+  tagged: number;
+  balance: number;
+  leftover: number;
+  debt: number;
+  debt_due: number;
+  lost: number;
+  days_left: number;
+};
+
+export type ReportRow = { code: string; name: string; plan: number; fact: number; over: number };
+
+export type TripView = {
+  trip: Trip;
+  rate: number;
+  rate_source: 'own' | 'fixed' | 'settings';
+  s: Settlement;
+  rows: ReportRow[];
+  over_total: number;
+  auto_just: string;
+};
+
+export type Account = { id: string; name: string; short: string; currency: string; opening: number; kind: string; order: number; archived: boolean };
+export type AccountView = { account: Account; balance: number; balance_rub: number };
+
+export type Snapshot = {
+  today: string;
+  device: string;
+  rate: number;
+  fx: Record<string, number>;
+  accounts: AccountView[];
+  total: number;
+  held: number;
+  due: number;
+  owed: number;
+  debt_due: number;
+  mine: number;
+  trips: TripView[];
+  ops: Op[];
+  settings: Record<string, string>;
+};
+
+export type Check = { ok: boolean; text: string };
+export type DeviceInfo = { id: string; name: string; os: string; arch: string; version: string; data_dir: string; encrypted: boolean; cipher: string; events: number };
 export type PairingView = { uri: string; qr_svg: string; hosts: string[]; port: number };
 export type SyncStatus = { running: boolean; log: Check[] };
-export type SyncResult = { peer_name: string; sent: number; received: number; ops: OpView[] };
-export type ReceiptView = { date: string; time: string; sum: string; fn_number: string; fd: string; fp: string; kind: string };
+export type SyncResult = { peer_name: string; sent: number; received: number };
+export type ReceiptView = { date: string; time: string; sum: number; fn_number: string; fd: string; fp: string; kind: string };
 
 /** Приложение открыто внутри Tauri, а не в обычном браузере. */
 export const inApp = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
+const today = () => todayIso();
+
 export const api = {
+  snapshot: () => invoke<Snapshot>('snapshot', { today: today() }),
+  opSave: (op: Op) => invoke<Snapshot>('op_save', { today: today(), op }),
+  opDelete: (id: string) => invoke<Snapshot>('op_delete', { today: today(), id }),
+  tripSave: (trip: Trip) => invoke<Snapshot>('trip_save', { today: today(), trip }),
+  tripDelete: (id: string) => invoke<Snapshot>('trip_delete', { today: today(), id }),
+  tripAdvance: (id: string) => invoke<Snapshot>('trip_advance', { today: today(), id }),
+  tripSettle: (id: string) => invoke<Snapshot>('trip_settle', { today: today(), id }),
+  accountSave: (account: Account) => invoke<Snapshot>('account_save', { today: today(), account }),
+  settingSet: (key: string, value: string) => invoke<Snapshot>('setting_set', { today: today(), key, value }),
   deviceInfo: () => invoke<DeviceInfo>('device_info'),
-  dbCheck: () => invoke<DbCheck>('db_check'),
-  calcCheck: () => invoke<CalcCheck>('calc_check'),
-  opsList: () => invoke<OpView[]>('ops_list'),
-  opAddTest: (amount: string) => invoke<OpView[]>('op_add_test', { amount }),
-  opDelete: (id: string) => invoke<OpView[]>('op_delete', { id }),
+  dbCheck: () => invoke<Check[]>('db_check'),
+  calcCheck: () => invoke<Check[]>('calc_check'),
   syncStart: () => invoke<PairingView>('sync_start'),
   syncStatus: () => invoke<SyncStatus>('sync_status'),
   syncStop: () => invoke<void>('sync_stop'),
@@ -42,7 +137,7 @@ export const api = {
   receiptParse: (text: string) => invoke<ReceiptView>('receipt_parse', { text }),
 };
 
-/** Сканирование QR-кода камерой телефона. На компьютере не используется. */
+/** Сканирование QR-кода камерой телефона. */
 export async function scanQr(): Promise<string> {
   const scanner = await import('@tauri-apps/plugin-barcode-scanner');
   let perm = await scanner.checkPermissions();

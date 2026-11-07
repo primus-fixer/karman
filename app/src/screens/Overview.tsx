@@ -1,0 +1,178 @@
+import { useState } from 'react';
+import type { Snapshot } from '../api';
+import { NB, fmt, rub, weekdayLabel } from '../format';
+import { isSpend, statusIndex, tripRow } from '../logic';
+import { Dots, Icon, OpRow, type OpActions } from '../ui';
+import type { Nav } from '../App';
+
+export function Figures({ snap, nav, big = true }: { snap: Snapshot; nav: Nav; big?: boolean }) {
+  const items: { label: string; value: string; note?: string; mark: string; go: () => void }[] = [];
+  if (snap.held > 0) items.push({ label: 'Подотчётные', value: rub(snap.held), mark: 'mark fill', go: () => nav.go('trips') });
+  if (snap.owed > 0) items.push({ label: 'Компания должна', value: rub(snap.owed), mark: 'mark', go: () => nav.go('trips') });
+  if (snap.due > 0)
+    items.push({ label: 'Вернуть компании', value: rub(snap.due), note: snap.debt_due > 0 ? 'в т. ч. долг ' + rub(snap.debt_due) : '', mark: 'mark due', go: () => nav.go('trips') });
+  if (!items.length) return null;
+  return (
+    <div className="figures">
+      {items.map((f) => (
+        <button key={f.label} type="button" className="figure" onClick={f.go}>
+          <span className="lab">
+            <span className={f.mark} />
+            {f.label}
+          </span>
+          <span className="val" style={big ? undefined : { fontSize: 22, lineHeight: '28px' }}>
+            {f.value}
+          </span>
+          {f.note && <span className="note warn">{f.note}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function TripList({ snap, nav, closed = false }: { snap: Snapshot; nav: Nav; closed?: boolean }) {
+  const rows = snap.trips.map((tv) => tripRow(tv)).filter((r) => r.closed === closed);
+  return (
+    <div className={closed ? 'closedtrips' : ''}>
+      {rows.map((r) =>
+        closed ? (
+          <button key={r.tv.trip.id} type="button" className="triprow" style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }} onClick={() => nav.openTrip(r.tv.trip.id)}>
+            <span className="stack">
+              <span style={{ fontWeight: 500 }}>{r.name}</span>
+              <span className="note">{r.dates}</span>
+            </span>
+            <span className="note">{r.balanceNote}</span>
+          </button>
+        ) : (
+          <button key={r.tv.trip.id} type="button" className="triprow" onClick={() => nav.openTrip(r.tv.trip.id)}>
+            <span className="between">
+              <span style={{ fontWeight: 500 }}>{r.name}</span>
+              <span className={'num' + (r.balanceWarn ? ' warn' : '')} style={{ flex: 'none', fontWeight: 500 }}>
+                {r.balanceText}
+              </span>
+            </span>
+            <span className="between" style={{ alignItems: 'center' }}>
+              <Dots statusIdx={r.statusIdx} label={r.statusText} />
+              <span className="note" style={{ textAlign: 'right' }}>
+                {r.balanceNote}
+              </span>
+            </span>
+            <span className="note">
+              {r.dates}. {r.statusNote}
+            </span>
+            {r.docWarn && (
+              <span className="note warn" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <Icon name="alert" size={14} stroke={2} />
+                {r.docWarn}
+              </span>
+            )}
+          </button>
+        ),
+      )}
+    </div>
+  );
+}
+
+export default function Overview({ snap, nav, act }: { snap: Snapshot; nav: Nav; act: OpActions }) {
+  const [accountsOpen, setAccountsOpen] = useState(false);
+  const mine = fmt(snap.mine);
+  const comma = mine.indexOf(',');
+  const todayOps = snap.ops.filter((o) => o.date === snap.today);
+  const todaySpend = todayOps.filter(isSpend).reduce((s, o) => s + o.amount, 0);
+  const openTrips = snap.trips.filter((t) => statusIndex(t.trip.status) < 5);
+  const empty = snap.trips.length === 0 && snap.ops.length === 0;
+  return (
+    <div className="stack gap26">
+      <p className="note" style={{ fontSize: 15, lineHeight: '21px', margin: '-4px 0 -14px' }}>
+        {weekdayLabel(snap.today)}
+      </p>
+      <section className="stack gap16">
+        <div>
+          <h1 className="note" style={{ fontSize: 15, lineHeight: '20px', fontWeight: 500 }}>
+            Мои деньги
+          </h1>
+          <p className="big">
+            {comma < 0 ? mine : mine.slice(0, comma)}
+            <small>
+              {comma < 0 ? '' : mine.slice(comma)}
+              {NB}₽
+            </small>
+          </p>
+        </div>
+        <Figures snap={snap} nav={nav} />
+        <div>
+          <button type="button" className="collapse" aria-expanded={accountsOpen} onClick={() => setAccountsOpen(!accountsOpen)}>
+            <span>На счетах</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span className="num" style={{ color: 'var(--ink)' }}>
+                {rub(snap.total)}
+              </span>
+              <Icon name={accountsOpen ? 'up' : 'down'} size={18} stroke={2} />
+            </span>
+          </button>
+          {accountsOpen && (
+            <div className="stack" style={{ paddingBottom: 6 }}>
+              {snap.accounts
+                .filter((a) => !a.account.archived)
+                .map((a) => (
+                  <div key={a.account.id} className="between" style={{ padding: '5px 0' }}>
+                    <span className="note" style={{ fontSize: 15 }}>
+                      {a.account.name}
+                    </span>
+                    <span className="num" style={{ textAlign: 'right' }}>
+                      {rub(a.balance, a.account.currency)}
+                      {a.account.currency !== 'RUB' && <span className="note faint" style={{ display: 'block' }}>≈{NB + rub(a.balance_rub)}</span>}
+                    </span>
+                  </div>
+                ))}
+              <button type="button" className="btn link" style={{ alignSelf: 'flex-start', color: 'var(--own)', fontWeight: 500, padding: 0 }} onClick={() => nav.go('settings')}>
+                Остатки и счета — в настройках
+              </button>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {empty && (
+        <section className="card stack gap10">
+          <h2 className="h2">С чего начать</h2>
+          <p className="note">
+            Заведите поездку по заявке из 1С — аванс, суточные и отчёт посчитаются сами. Личные расходы можно записывать сразу кнопкой «+».
+            Остатки по счетам укажите в настройках.
+          </p>
+          <div className="wrap">
+            <button type="button" className="btn work" onClick={() => nav.newTrip()}>
+              Новая поездка
+            </button>
+            <button type="button" className="btn ghost" onClick={() => nav.openEntry()}>
+              Записать расход
+            </button>
+          </div>
+        </section>
+      )}
+
+      {openTrips.length > 0 && (
+        <section className="stack">
+          <h2 className="h2" style={{ marginBottom: 8 }}>
+            Открытые поездки
+          </h2>
+          <TripList snap={snap} nav={nav} />
+        </section>
+      )}
+
+      {todayOps.length > 0 && (
+        <section className="stack">
+          <div className="between" style={{ marginBottom: 8 }}>
+            <h2 className="h2">Сегодня</h2>
+            <span className="num note" style={{ fontSize: 15 }}>
+              {todaySpend ? '−' + rub(todaySpend) : ''}
+            </span>
+          </div>
+          {todayOps.map((o) => (
+            <OpRow key={o.id} snap={snap} op={o} act={act} />
+          ))}
+        </section>
+      )}
+    </div>
+  );
+}
