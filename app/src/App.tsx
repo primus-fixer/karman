@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, inApp, message, type DeviceInfo, type Op, type Snapshot, type TripStatus } from './api';
+import { api, inApp, LOCKED, message, onLocked, type DeviceInfo, type LockStatus, type Op, type Snapshot, type TripStatus } from './api';
 import Entry, { defaultDraft, draftFromOp, tripDraft, type EntryDraft } from './Entry';
 import { rub } from './format';
+import { bioLabel, LockScreen, PinFlow, type PinMode } from './Lock';
 import Feed from './screens/Feed';
 import Overview from './screens/Overview';
 import Settings, { type ThemeState } from './screens/Settings';
@@ -76,7 +77,7 @@ async function copyText(text: string): Promise<void> {
   if (!ok) throw new Error('copy');
 }
 
-type Toast = { text: string; undo?: () => void; key: number };
+type Toast = { text: string; undo?: () => void; long?: boolean; key: number };
 
 export default function App() {
   const isPhone = usePhone();
@@ -93,8 +94,13 @@ export default function App() {
   const [toast, setToast] = useState<Toast | null>(null);
   const [theme, setTheme] = useState<ThemeState>(loadTheme);
   const [dark, setDark] = useState(false);
+  const [lock, setLock] = useState<LockStatus | null>(null);
+  const [locked, setLocked] = useState(false);
+  const [lockKey, setLockKey] = useState(0);
+  const [pinFlow, setPinFlow] = useState<PinMode | null>(null);
   const mainRef = useRef<HTMLElement>(null);
   const firstLoad = useRef(true);
+  const notice = useRef<string | null>(null);
 
   // ——— Тема ———
   useEffect(() => {
@@ -112,6 +118,28 @@ export default function App() {
     return () => mq.removeEventListener('change', apply);
   }, [theme]);
 
+  const flash = useCallback((text: string, undo?: () => void, long?: boolean) => setToast({ text, undo, long, key: Date.now() }), []);
+  useEffect(() => {
+    if (!toast) return;
+    const id = window.setTimeout(() => setToast(null), toast.long ? 10000 : toast.undo ? 6000 : 3500);
+    return () => window.clearTimeout(id);
+  }, [toast]);
+
+  // ——— Вход ———
+  /** «Карман» заблокирован: показываем экран входа с актуальным состоянием. */
+  const goLocked = useCallback(() => {
+    api.lockStatus().then(
+      (st) => {
+        setLock(st);
+        if (st.locked) {
+          setLockKey((k) => k + 1);
+          setLocked(true);
+        }
+      },
+      () => setLocked(true),
+    );
+  }, []);
+
   // ——— Данные ———
   const refresh = useCallback(() => {
     api.snapshot().then(
@@ -119,29 +147,63 @@ export default function App() {
         setSnap(s);
         setFatal(null);
       },
-      (e) => setFatal(message(e)),
+      (e) => (message(e) === LOCKED ? goLocked() : setFatal(message(e))),
     );
-  }, []);
+    api.deviceInfo().then(setInfo, () => undefined);
+  }, [goLocked]);
+  const showNotice = useCallback(() => {
+    if (notice.current) flash(notice.current, undefined, true);
+    notice.current = null;
+  }, [flash]);
   useEffect(() => {
     if (!inApp) {
       setFatal('Эта страница работает внутри приложения «Карман».');
       return;
     }
-    refresh();
-    api.deviceInfo().then(setInfo, () => undefined);
+    api.lockStatus().then(
+      (st) => {
+        setLock(st);
+        notice.current = st.notice;
+        if (st.locked) {
+          setLockKey((k) => k + 1);
+          setLocked(true);
+        } else {
+          refresh();
+          showNotice();
+        }
+      },
+      (e) => setFatal(message(e)),
+    );
     const onVisible = () => {
-      if (document.visibilityState === 'visible') refresh();
+      const visible = document.visibilityState === 'visible';
+      api.appVisible(visible).then(
+        (st) => {
+          setLock(st);
+          if (st.locked) {
+            if (visible) goLocked();
+          } else if (visible) refresh();
+        },
+        () => undefined,
+      );
     };
     document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [refresh]);
+    const unlisten = onLocked(goLocked).catch(() => () => undefined);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      unlisten.then((f) => f());
+    };
+  }, [refresh, goLocked, showNotice]);
 
-  const flash = useCallback((text: string, undo?: () => void) => setToast({ text, undo, key: Date.now() }), []);
-  useEffect(() => {
-    if (!toast) return;
-    const id = window.setTimeout(() => setToast(null), toast.undo ? 6000 : 3500);
-    return () => window.clearTimeout(id);
-  }, [toast]);
+  const onUnlocked = useCallback(
+    (st: LockStatus) => {
+      setLock(st);
+      setLocked(false);
+      refresh();
+      showNotice();
+      if (st.recovery) setPinFlow('reset');
+    },
+    [refresh, showNotice],
+  );
 
   const run = useCallback(
     async (p: Promise<Snapshot>, ok?: string): Promise<Snapshot | null> => {
@@ -151,12 +213,38 @@ export default function App() {
         if (ok) flash(ok);
         return s;
       } catch (e) {
-        flash(message(e));
+        if (message(e) === LOCKED) goLocked();
+        else flash(message(e));
         return null;
       }
     },
-    [flash],
+    [flash, goLocked],
   );
+
+  const security = {
+    lock,
+    onPin: (mode: PinMode) => setPinFlow(mode),
+    onBio: async (on: boolean) => {
+      try {
+        const st = await api.bioSet(on);
+        setLock(st);
+        const name = bioLabel(st.bio_kind, info?.os ?? '').name;
+        if (st.error) flash(st.error);
+        else if (st.bio === on) flash(on ? `Вход: ${name} включён` : `Вход: ${name} выключен`);
+      } catch (e) {
+        if (message(e) === LOCKED) goLocked();
+        else flash(message(e));
+      }
+    },
+    onLockNow: async () => {
+      const st = await api.lockNow();
+      setLock(st);
+      if (st.locked) {
+        setLockKey((k) => k + 1);
+        setLocked(true);
+      }
+    },
+  };
 
   // ——— Кнопка «Назад» на Android: каждый шаг вглубь — запись в истории ———
   const depth = useRef(0);
@@ -313,20 +401,38 @@ export default function App() {
     },
   };
 
+  const overlay =
+    locked && lock ? (
+      <LockScreen key={lockKey} status={lock} os={info?.os ?? ''} onUnlocked={onUnlocked} />
+    ) : pinFlow ? (
+      <PinFlow
+        mode={pinFlow}
+        onClose={() => setPinFlow(null)}
+        onDone={(st, text) => {
+          setLock(st);
+          setPinFlow(null);
+          flash(text);
+        }}
+      />
+    ) : null;
+
   if (!snap) {
     return (
-      <div className="app">
-        <main className="main" style={{ display: 'grid', placeItems: 'center', padding: 24 }}>
-          {fatal ? (
-            <div className="stack gap12" style={{ maxWidth: 420 }}>
-              <h1 className="h1">Карман</h1>
-              <p className="error">{fatal}</p>
-            </div>
-          ) : (
-            <p className="note">Открываю базу…</p>
-          )}
-        </main>
-      </div>
+      <>
+        <div className="app" inert={!!overlay}>
+          <main className="main" style={{ display: 'grid', placeItems: 'center', padding: 24 }}>
+            {fatal ? (
+              <div className="stack gap12" style={{ maxWidth: 420 }}>
+                <h1 className="h1">Карман</h1>
+                <p className="error">{fatal}</p>
+              </div>
+            ) : (
+              <p className="note">{locked ? '' : 'Открываю базу…'}</p>
+            )}
+          </main>
+        </div>
+        {overlay}
+      </>
     );
   }
 
@@ -335,7 +441,7 @@ export default function App() {
   if (screen === 'overview') body = <Overview snap={snap} nav={nav} act={opAct} />;
   else if (screen === 'feed') body = <Feed snap={snap} act={opAct} />;
   else if (screen === 'trips') body = <Trips snap={snap} nav={nav} />;
-  else if (screen === 'settings') body = <Settings snap={snap} info={info} mobile={mobile} run={run} refresh={refresh} theme={theme} setTheme={setTheme} dark={dark} />;
+  else if (screen === 'settings') body = <Settings snap={snap} info={info} mobile={mobile} run={run} refresh={refresh} theme={theme} setTheme={setTheme} dark={dark} security={security} />;
   else if (screen === 'trip' && tripId)
     body = (
       <TripScreen
@@ -381,7 +487,8 @@ export default function App() {
   );
 
   return (
-    <div className={'app ' + (isPhone ? 'phone' : 'desktop')}>
+    <>
+    <div className={'app ' + (isPhone ? 'phone' : 'desktop')} inert={!!overlay}>
       {!isPhone && (
         <aside className="side">
           <p className="logo">Карман</p>
@@ -439,5 +546,7 @@ export default function App() {
         </div>
       )}
     </div>
+    {overlay}
+    </>
   );
 }

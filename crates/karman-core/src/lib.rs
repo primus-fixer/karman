@@ -11,6 +11,7 @@ pub mod demo;
 pub mod error;
 pub mod money;
 pub mod pairing;
+pub mod pin;
 pub mod receipt;
 pub mod sync;
 pub mod trip;

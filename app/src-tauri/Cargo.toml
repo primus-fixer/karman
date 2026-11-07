@@ -17,6 +17,7 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 karman-core = { path = "../../crates/karman-core" }
+karman-secure = { path = "../../crates/karman-secure" }
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 if-addrs = "0.13"
 getrandom = "0.3"
@@ -24,3 +25,4 @@ base64 = "0.22"
 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-barcode-scanner = "2"
+tauri-plugin-biometric = "2"

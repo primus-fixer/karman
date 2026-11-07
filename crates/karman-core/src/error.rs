@@ -16,6 +16,8 @@ pub enum Error {
     Format(String),
     #[error("генератор случайных чисел: {0}")]
     Random(String),
+    #[error("PIN-код: {0}")]
+    Pin(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
