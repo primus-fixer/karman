@@ -66,6 +66,14 @@ pub struct Op {
     pub debt: Option<String>,
     #[serde(default)]
     pub inflow: bool,
+    /// Сумма в валюте счёта, если счёт не в рублях.
+    #[serde(default)]
+    pub orig: Option<Kop>,
+    #[serde(default)]
+    pub cur: Option<String>,
+    /// Комментарий к операции.
+    #[serde(default)]
+    pub note: String,
 }
 
 impl Op {
@@ -135,6 +143,31 @@ pub struct Trip {
     /// Ставка, зафиксированная в сданном отчёте.
     #[serde(default)]
     pub fixed_rate: Option<Kop>,
+    /// Своя ставка поездки — важнее настроек и зафиксированной.
+    #[serde(default)]
+    pub own_rate: Option<Kop>,
+    /// Номер заявки в 1С.
+    #[serde(default)]
+    pub req_no: String,
+    #[serde(default)]
+    pub req_date: Option<Date>,
+    /// «Описание цели» из заявки.
+    #[serde(default)]
+    pub goal: String,
+    /// Регион для статьи «Проживание».
+    #[serde(default)]
+    pub region: String,
+    /// Примечания заявки и авансового отчёта по статьям.
+    #[serde(default)]
+    pub plan_notes: [String; 5],
+    #[serde(default)]
+    pub notes: [String; 5],
+    /// Срок сдачи отчёта.
+    #[serde(default)]
+    pub deadline: Option<Date>,
+    /// Своё обоснование сверхбюджета вместо подставленного.
+    #[serde(default)]
+    pub just: Option<String>,
 }
 
 impl Trip {
@@ -146,13 +179,36 @@ impl Trip {
 /// Какая ставка суточных действует для поездки: своя у поездки, затем
 /// зафиксированная в сданном отчёте, затем ставка из настроек.
 pub fn effective_rate(trip: &Trip, status: TripStatus, settings_rate: Kop, own_rate: Option<Kop>) -> Kop {
+    rate_with_source(trip, status, settings_rate, own_rate).0
+}
+
+/// Ставка и откуда она: «own» — своя у поездки, «fixed» — из сданного отчёта, «settings» — из настроек.
+pub fn rate_with_source(trip: &Trip, status: TripStatus, settings_rate: Kop, own_rate: Option<Kop>) -> (Kop, &'static str) {
     if let Some(r) = own_rate {
-        return r;
+        return (r, "own");
     }
     if status >= TripStatus::Review {
-        return trip.fixed_rate.unwrap_or(DEFAULT_RATE);
+        return (trip.fixed_rate.unwrap_or(DEFAULT_RATE), "fixed");
     }
-    settings_rate
+    (settings_rate, "settings")
+}
+
+impl TripStatus {
+    pub fn from_index(i: u8) -> Option<TripStatus> {
+        Some(match i {
+            0 => TripStatus::Request,
+            1 => TripStatus::AdvanceReceived,
+            2 => TripStatus::InTrip,
+            3 => TripStatus::AwaitingReport,
+            4 => TripStatus::Review,
+            5 => TripStatus::Closed,
+            _ => return None,
+        })
+    }
+
+    pub fn next(self) -> Option<TripStatus> {
+        TripStatus::from_index(self as u8 + 1)
+    }
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]

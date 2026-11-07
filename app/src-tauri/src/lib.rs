@@ -1,18 +1,19 @@
-//! «Карман», этап 0: проверки на настоящих устройствах.
+//! «Карман»: мост между экранами и ядром.
 //!
-//! Экран проверок вызывает эти команды: зашифрованная база, расчёт поездок,
-//! связь устройств по QR и обмен по Wi-Fi, разбор QR-кода чека.
+//! Экраны получают одну сводку (`snapshot`) и после каждого изменения — новую.
+//! Вся логика расчётов — в ядре `karman-core`.
 
+use karman_core::book::{self, Account, Snapshot};
 use karman_core::db::{is_plaintext_sqlite, Store};
-use karman_core::money::{fmt2, parse as parse_amount, rub_text};
+use karman_core::money::{fmt2, rub_text};
 use karman_core::pairing::{random_key, Pairing};
 use karman_core::receipt::parse_fiscal_qr;
-use karman_core::sync::{self, Server};
-use karman_core::trip::{self, Op, OpKind, DEFAULT_RATE};
+use karman_core::sync::{self, EventBody, Server};
+use karman_core::trip::{self, Op, Trip, DEFAULT_RATE};
 use karman_core::{demo, Date};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 use tauri::{Manager, State};
 
@@ -27,6 +28,12 @@ struct AppState {
     server: Mutex<Option<(Server, Pairing)>>,
 }
 
+impl AppState {
+    fn store(&self) -> Res<MutexGuard<'_, Store>> {
+        self.store.lock().map_err(err)
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 struct Identity {
     id: String,
@@ -39,10 +46,8 @@ fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
-fn random_hex(n: usize) -> Res<String> {
-    let mut b = vec![0u8; n];
-    getrandom::fill(&mut b).map_err(err)?;
-    Ok(b.iter().map(|x| format!("{x:02x}")).collect())
+fn day(s: &str) -> Res<Date> {
+    Date::parse(s).ok_or_else(|| format!("неверная дата «{s}»"))
 }
 
 fn default_name() -> String {
@@ -64,13 +69,13 @@ fn load_identity(dir: &Path) -> Res<Identity> {
             return Ok(id);
         }
     }
-    let id = Identity { id: random_hex(8)?, name: default_name() };
+    let id = Identity { id: book::new_id().map_err(err)?, name: default_name() };
     std::fs::write(&path, serde_json::to_string_pretty(&id).map_err(err)?).map_err(err)?;
     Ok(id)
 }
 
-/// Этап 0: ключ базы лежит рядом с ней. В этапе 1 он переедет в хранилище
-/// ключей системы (Android Keystore, защита данных Windows) и будет закрыт PIN-кодом.
+/// Пока ключ базы лежит рядом с ней. Следующий шаг этапа 1 — хранилище ключей
+/// системы (Android Keystore, защита данных Windows) и PIN-код.
 fn load_key(dir: &Path) -> Res<[u8; 32]> {
     let path = dir.join("key.bin");
     if let Ok(bytes) = std::fs::read(&path) {
@@ -82,6 +87,123 @@ fn load_key(dir: &Path) -> Res<[u8; 32]> {
     std::fs::write(&path, k).map_err(err)?;
     Ok(k)
 }
+
+/// Тестовые операции этапа 0 больше не нужны: удаляем их один раз.
+fn cleanup_stage0(store: &mut Store) -> Res<()> {
+    if store.meta("cleanup-stage0").map_err(err)?.is_some() {
+        return Ok(());
+    }
+    let old: Vec<EventBody> = store
+        .ops()
+        .map_err(err)?
+        .into_iter()
+        .filter(|o| o.title.starts_with("Проверка с устройства"))
+        .map(|o| EventBody::OpDelete { id: o.id })
+        .collect();
+    if !old.is_empty() {
+        store.append_all(old).map_err(err)?;
+    }
+    store.set_meta("cleanup-stage0", "1").map_err(err)
+}
+
+fn snap(st: &Store, today: &str) -> Res<Snapshot> {
+    book::snapshot(st, day(today)?).map_err(err)
+}
+
+// ——— Сводка и изменения ———
+
+#[tauri::command]
+fn snapshot(state: State<AppState>, today: String) -> Res<Snapshot> {
+    let st = state.store()?;
+    snap(&st, &today)
+}
+
+#[tauri::command]
+fn op_save(state: State<AppState>, today: String, mut op: Op) -> Res<Snapshot> {
+    if op.amount <= 0 {
+        return Err("Введите сумму".into());
+    }
+    if op.id.is_empty() {
+        op.id = book::new_id().map_err(err)?;
+    }
+    let mut st = state.store()?;
+    st.put_op(op).map_err(err)?;
+    snap(&st, &today)
+}
+
+#[tauri::command]
+fn op_delete(state: State<AppState>, today: String, id: String) -> Res<Snapshot> {
+    let mut st = state.store()?;
+    st.delete_op(&id).map_err(err)?;
+    snap(&st, &today)
+}
+
+#[tauri::command]
+fn trip_save(state: State<AppState>, today: String, trip: Trip) -> Res<Snapshot> {
+    if trip.id.trim().is_empty() || trip.city.trim().is_empty() {
+        return Err("Нужны номер поездки и город".into());
+    }
+    if trip.end < trip.start || trip.plan_end < trip.plan_start {
+        return Err("Дата окончания раньше начала".into());
+    }
+    let mut st = state.store()?;
+    st.append(EventBody::TripPut { trip }).map_err(err)?;
+    snap(&st, &today)
+}
+
+#[tauri::command]
+fn trip_delete(state: State<AppState>, today: String, id: String) -> Res<Snapshot> {
+    let mut st = state.store()?;
+    let mut bodies: Vec<EventBody> = st
+        .ops()
+        .map_err(err)?
+        .into_iter()
+        .filter(|o| o.trip.as_deref() == Some(id.as_str()))
+        .map(|o| EventBody::OpDelete { id: o.id })
+        .collect();
+    bodies.push(EventBody::TripDelete { id });
+    st.append_all(bodies).map_err(err)?;
+    snap(&st, &today)
+}
+
+#[tauri::command]
+fn trip_advance(state: State<AppState>, today: String, id: String) -> Res<Snapshot> {
+    let mut st = state.store()?;
+    book::advance_trip(&mut st, &id, day(&today)?).map_err(err)?;
+    snap(&st, &today)
+}
+
+#[tauri::command]
+fn trip_settle(state: State<AppState>, today: String, id: String) -> Res<Snapshot> {
+    let mut st = state.store()?;
+    book::settle_trip(&mut st, &id, day(&today)?).map_err(err)?;
+    snap(&st, &today)
+}
+
+#[tauri::command]
+fn account_save(state: State<AppState>, today: String, mut account: Account) -> Res<Snapshot> {
+    if account.name.trim().is_empty() {
+        return Err("Нужно название счёта".into());
+    }
+    if account.currency.trim().is_empty() {
+        return Err("Нужна валюта счёта".into());
+    }
+    if account.id.is_empty() {
+        account.id = format!("acc-{}", book::new_id().map_err(err)?);
+    }
+    let mut st = state.store()?;
+    st.append(EventBody::AccountPut { account }).map_err(err)?;
+    snap(&st, &today)
+}
+
+#[tauri::command]
+fn setting_set(state: State<AppState>, today: String, key: String, value: String) -> Res<Snapshot> {
+    let mut st = state.store()?;
+    st.append(EventBody::SettingPut { key, value }).map_err(err)?;
+    snap(&st, &today)
+}
+
+// ——— Устройство и проверки ———
 
 #[derive(Serialize)]
 struct Check {
@@ -99,40 +221,32 @@ struct DeviceInfo {
     name: String,
     os: String,
     arch: String,
+    version: String,
     data_dir: String,
     encrypted: bool,
     cipher: String,
     events: u64,
-    ops: usize,
 }
 
 #[tauri::command]
 fn device_info(state: State<AppState>) -> Res<DeviceInfo> {
-    let st = state.store.lock().map_err(err)?;
+    let st = state.store()?;
     Ok(DeviceInfo {
         id: state.me.id.clone(),
         name: state.me.name.clone(),
         os: std::env::consts::OS.into(),
         arch: std::env::consts::ARCH.into(),
+        version: env!("CARGO_PKG_VERSION").into(),
         data_dir: state.data_dir.display().to_string(),
         encrypted: !is_plaintext_sqlite(&state.db_path).unwrap_or(true),
         cipher: st.cipher_version().map_err(err)?,
         events: st.event_count().map_err(err)?,
-        ops: st.ops().map_err(err)?.len(),
     })
-}
-
-#[derive(Serialize)]
-struct DbCheck {
-    rows: usize,
-    write_ms: u128,
-    read_ms: u128,
-    checks: Vec<Check>,
 }
 
 /// Отдельная проверочная база: запись, чтение, шифрование файла, отказ без ключа.
 #[tauri::command]
-fn db_check(state: State<AppState>) -> Res<DbCheck> {
+fn db_check(state: State<AppState>) -> Res<Vec<Check>> {
     let path = state.data_dir.join("check.db");
     let remove = |p: &Path| {
         for suffix in ["", "-wal", "-shm"] {
@@ -160,119 +274,33 @@ fn db_check(state: State<AppState>) -> Res<DbCheck> {
     ];
     drop(wrong);
     remove(&path);
-    let main_plain = is_plaintext_sqlite(&state.db_path).unwrap_or(true);
-    checks.push(check(!main_plain, "Основная база приложения тоже зашифрована"));
-    Ok(DbCheck { rows, write_ms, read_ms, checks })
+    checks.push(check(!is_plaintext_sqlite(&state.db_path).unwrap_or(true), "Основная база приложения тоже зашифрована"));
+    Ok(checks)
 }
 
-#[derive(Serialize)]
-struct TripRow {
-    name: String,
-    status: String,
-    headline: String,
-    per_diem: String,
-    fact: String,
-    over_note: String,
-}
-
-#[derive(Serialize)]
-struct CalcCheck {
-    rate: String,
-    trips: Vec<TripRow>,
-    checks: Vec<Check>,
-}
-
-/// Расчёт поездок из макета на устройстве: должен совпасть с 1С до копейки.
+/// Расчёт поездок из макета: должен совпасть с 1С до копейки.
 #[tauri::command]
-fn calc_check() -> CalcCheck {
+fn calc_check() -> Vec<Check> {
     let ops = demo::ops();
-    let today = demo::today();
     let mut checks = Vec::new();
-    let trips = demo::trips()
-        .into_iter()
-        .map(|t| {
-            let rate = trip::effective_rate(&t, t.status, DEFAULT_RATE, None);
-            let s = trip::settle(&t, t.status, &ops, rate, today);
-            let rows = trip::report(&t, &s, &ops);
-            let fact: i64 = rows.iter().map(|r| r.fact).sum();
-            if t.id == "573" {
-                checks.push(check(s.issued == t.plan_total() && s.issued == 12_200_000, "573: аванс равен заявке, 122 000,00"));
-                let same = |ok: bool, in_1c: &str| if ok { "совпадает с 1С".to_string() } else { format!("в 1С {in_1c}") };
-                checks.push(check(fact == 5_564_110, format!("573: израсходовано {} — {}", fmt2(fact), same(fact == 5_564_110, "55 641,10"))));
-                checks.push(check(s.balance == 6_635_890, format!("573: вернуть {} — {}", fmt2(s.balance), same(s.balance == 6_635_890, "66 358,90"))));
-                checks.push(check(rows[3].over == 70_000, "573: сверх бюджета 700,00 по суточным"));
-            }
-            if t.id == "552" {
-                checks.push(check(
-                    s.debt_due == 860_000 && s.balance == 950_000,
-                    "552: траты без документов сначала из суточных, остальное — долг 8 600 ₽",
-                ));
-            }
-            TripRow {
-                name: format!("{} {}", t.id, t.city),
-                status: t.status.title().into(),
-                headline: trip::headline(&s),
-                per_diem: trip::per_diem_line(&s),
-                fact: fmt2(fact),
-                over_note: trip::over_budget_note(&t, &s, &rows),
-            }
-        })
-        .collect();
-    CalcCheck { rate: rub_text(DEFAULT_RATE) + " в день", trips, checks }
+    for t in demo::trips() {
+        let rate = trip::effective_rate(&t, t.status, DEFAULT_RATE, None);
+        let s = trip::settle(&t, t.status, &ops, rate, demo::today());
+        let rows = trip::report(&t, &s, &ops);
+        let fact: i64 = rows.iter().map(|r| r.fact).sum();
+        if t.id == "573" {
+            checks.push(check(fact == 5_564_110, format!("573: израсходовано {} — в 1С 55 641,10", fmt2(fact))));
+            checks.push(check(s.balance == 6_635_890, format!("573: вернуть {} — в 1С 66 358,90", fmt2(s.balance))));
+            checks.push(check(rows[3].over == 70_000, "573: сверх бюджета 700,00 по суточным"));
+        }
+        if t.id == "552" {
+            checks.push(check(s.debt_due == 860_000, format!("552: долг перед компанией {}", rub_text(s.debt_due))));
+        }
+    }
+    checks
 }
 
-#[derive(Serialize)]
-struct OpView {
-    id: String,
-    date: String,
-    title: String,
-    amount: String,
-}
-
-fn op_views(store: &Store) -> Res<Vec<OpView>> {
-    Ok(store
-        .ops()
-        .map_err(err)?
-        .into_iter()
-        .map(|o| OpView { id: o.id, date: o.date.day_month(), title: o.title, amount: format!("−{}", rub_text(o.amount)) })
-        .collect())
-}
-
-#[tauri::command]
-fn ops_list(state: State<AppState>) -> Res<Vec<OpView>> {
-    let st = state.store.lock().map_err(err)?;
-    op_views(&st)
-}
-
-#[tauri::command]
-fn op_add_test(state: State<AppState>, amount: String) -> Res<Vec<OpView>> {
-    let a = parse_amount(&amount).filter(|a| *a > 0).ok_or("Введите сумму, например 350")?;
-    let op = Op {
-        id: random_hex(8)?,
-        date: Date::today_utc(),
-        kind: OpKind::Personal,
-        cat: "other".into(),
-        title: format!("Проверка с устройства «{}»", state.me.name),
-        amount: a,
-        account: "personal".into(),
-        trip: None,
-        doc: None,
-        sent: false,
-        family: false,
-        debt: None,
-        inflow: false,
-    };
-    let mut st = state.store.lock().map_err(err)?;
-    st.put_op(op).map_err(err)?;
-    op_views(&st)
-}
-
-#[tauri::command]
-fn op_delete(state: State<AppState>, id: String) -> Res<Vec<OpView>> {
-    let mut st = state.store.lock().map_err(err)?;
-    st.delete_op(&id).map_err(err)?;
-    op_views(&st)
-}
+// ——— Связь устройств ———
 
 #[derive(Serialize)]
 struct PairingView {
@@ -373,7 +401,6 @@ struct SyncResult {
     peer_name: String,
     sent: usize,
     received: usize,
-    ops: Vec<OpView>,
 }
 
 /// Подключается к устройству по QR-коду (или вставленной ссылке) и обменивается данными.
@@ -389,16 +416,16 @@ async fn sync_connect(state: State<'_, AppState>, uri: String) -> Res<SyncResult
         .await
         .map_err(err)?
         .map_err(|e| format!("Не удалось связаться: {e}. Устройства должны быть в одной сети Wi-Fi"))?;
-    let st = state.store.lock().map_err(err)?;
-    let ops = op_views(&st)?;
-    Ok(SyncResult { peer_name: report.peer_name, sent: report.sent, received: report.received, ops })
+    Ok(SyncResult { peer_name: report.peer_name, sent: report.sent, received: report.received })
 }
+
+// ——— Чек ———
 
 #[derive(Serialize)]
 struct ReceiptView {
     date: String,
     time: String,
-    sum: String,
+    sum: i64,
     fn_number: String,
     fd: String,
     fp: String,
@@ -409,9 +436,9 @@ struct ReceiptView {
 fn receipt_parse(text: String) -> Res<ReceiptView> {
     let r = parse_fiscal_qr(&text).map_err(err)?;
     Ok(ReceiptView {
-        date: r.date.dotted(),
+        date: r.date.to_string(),
         time: r.time.clone(),
-        sum: rub_text(r.sum),
+        sum: r.sum,
         fn_number: r.fn_number.clone(),
         fd: r.fd.clone(),
         fp: r.fp.clone(),
@@ -434,17 +461,25 @@ pub fn run() {
             let me = load_identity(&dir)?;
             let key = load_key(&dir)?;
             let db_path = dir.join("karman.db");
-            let store = Store::open(&db_path, &key, &me.id)?;
+            let mut store = Store::open(&db_path, &key, &me.id)?;
+            cleanup_stage0(&mut store)?;
+            book::ensure_defaults(&mut store)?;
             app.manage(AppState { store: Arc::new(Mutex::new(store)), me, data_dir: dir, db_path, server: Mutex::new(None) });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            snapshot,
+            op_save,
+            op_delete,
+            trip_save,
+            trip_delete,
+            trip_advance,
+            trip_settle,
+            account_save,
+            setting_set,
             device_info,
             db_check,
             calc_check,
-            ops_list,
-            op_add_test,
-            op_delete,
             sync_start,
             sync_status,
             sync_stop,
