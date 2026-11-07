@@ -359,7 +359,9 @@ pub fn tray(app: &AppHandle) -> Res<()> {
     Ok(())
 }
 
-/// Показать окно «Кармана» (из трея или при повторном запуске).
+/// Показать окно «Кармана» (из трея или при повторном запуске). Только на компьютере:
+/// на телефоне у окна нет «свернуть и развернуть».
+#[cfg(desktop)]
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
