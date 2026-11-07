@@ -12,9 +12,10 @@ export function Icon({ name, size = 20, stroke = 1.75, d }: { name?: string; siz
   );
 }
 
-export function Seg<T extends string>({ items, value, onPick, label }: { items: { id: T; label: string; tone?: 'own' | 'work' }[]; value: T; onPick: (id: T) => void; label: string }) {
+/** Переключатель; `fit` — колонки по длине подписей (когда подписи разной длины и их много). */
+export function Seg<T extends string>({ items, value, onPick, label, fit = false }: { items: { id: T; label: string; tone?: 'own' | 'work' }[]; value: T; onPick: (id: T) => void; label: string; fit?: boolean }) {
   return (
-    <div className="seg" role="group" aria-label={label} style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
+    <div className={'seg' + (fit ? ' fit' : '')} role="group" aria-label={label} style={fit ? undefined : { gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
       {items.map((it) => (
         <button key={it.id} type="button" aria-pressed={it.id === value} className={(it.id === value ? 'on ' : '') + (it.tone || '')} onClick={() => onPick(it.id)}>
           {it.label}

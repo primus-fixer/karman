@@ -48,6 +48,26 @@ export type Budget = { id: 'personal' | 'family'; total: number | null; cats: Re
 export type CatView = { cat: string; limit: number | null; spent: number };
 export type BudgetView = { id: 'personal' | 'family'; start: string; end: string; total: number | null; spent: number; cats: CatView[]; days_left: number };
 
+export type StatSpan = 'month' | 'quarter' | 'year';
+export type CatStat = { cat: string; amount: number; prev: number };
+export type MonthStat = { month: string; income: number; spent: number; saved: number };
+export type TripStat = { id: string; city: string; start: string; end: string; days: number; per_diem: number; left: number; debt: number; confirmed: number; finished: boolean };
+export type TripsYear = { year: number; count: number; days: number; per_diem: number; left: number; debt: number; confirmed: number; items: TripStat[] };
+/** Статистика периода; пока он идёт (`partial`), сравнение — с теми же днями прошлого. */
+export type Stats = {
+  from: string;
+  to: string;
+  prev_from: string;
+  prev_to: string;
+  partial: boolean;
+  spent: number;
+  prev_spent: number;
+  income: number;
+  cats: CatStat[];
+  months: MonthStat[];
+  trips: TripsYear;
+};
+
 export type DebtDir = 'i_owe' | 'owed_to_me';
 export type Debt = { id: string; who: string; dir: DebtDir; amount: number; date: string; due: string | null; note: string; closed: boolean };
 export type DebtView = { debt: Debt; repaid: number; left: number; overdue: boolean; plan: string | null; next: string | null };
@@ -250,6 +270,8 @@ export const api = {
   /** «Отложить» на цель или, с take, «Взять из цели». */
   goalMove: (id: string, amount: number, account: string, date: string, take: boolean) => invoke<Snapshot>('goal_move', { today: today(), id, amount, account, date, take }),
   budgetSave: (budget: Budget) => invoke<Snapshot>('budget_save', { today: today(), budget }),
+  stats: (span: StatSpan, anchor: string) => invoke<Stats>('stats', { today: today(), span, anchor }),
+  exportXlsx: (span: StatSpan, anchor: string) => invoke<string>('export_xlsx', { today: today(), span, anchor }),
   remindStatus: (ask: boolean) => invoke<RemindStatus>('remind_status', { ask }),
   remindDesktop: (mode: 'open' | 'windows') => invoke<string>('remind_desktop', { mode }),
   lockStatus: () => invoke<LockStatus>('lock_status'),
