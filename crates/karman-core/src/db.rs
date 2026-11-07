@@ -17,7 +17,7 @@ use std::path::Path;
 
 /// Версия схемы. Меняется вместе с новыми видами событий: при открытии таблица
 /// записей собирается заново, и события, которые прежняя версия не понимала, оживают.
-const SCHEMA: &str = "3";
+const SCHEMA: &str = "4";
 
 /// Вложения: не больше 15 МБ, только снимки и PDF.
 pub const MAX_BLOB: usize = 15 * 1024 * 1024;
@@ -115,6 +115,11 @@ impl Store {
             out.push(Event { device, seq: seq as u64, lamport: lamport as u64, body: serde_json::from_str(&body)? });
         }
         Ok(out)
+    }
+
+    /// Сколько событий пришло из более новой версии и пока не показывается.
+    pub fn unknown_events(&self) -> Result<usize> {
+        Ok(self.all_events()?.iter().filter(|e| e.parsed().is_none()).count())
     }
 
     pub fn device(&self) -> &str {

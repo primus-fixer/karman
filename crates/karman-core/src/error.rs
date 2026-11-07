@@ -18,6 +18,9 @@ pub enum Error {
     Random(String),
     #[error("PIN-код: {0}")]
     Pin(String),
+    /// Другое устройство не смогло принять записи (старая версия).
+    #[error("{0}")]
+    Peer(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

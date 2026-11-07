@@ -1,17 +1,22 @@
 import { useEffect, useState, type CSSProperties, type FormEvent } from 'react';
-import { api, message, scanQr, type Attachment, type DocKind, type Op, type Snapshot, type TripView } from './api';
+import { api, inApp, message, scanQr, type Account, type Attachment, type DocKind, type FxQuote, type Op, type Snapshot, type TripView } from './api';
 import { NB, SIGN, amountText, dMon, fmt, parseAmount, plural, rub } from './format';
 import { attachFile, pickFiles } from './media';
-import { CATS, OWN_IN, OWN_OUT, TRIP_IN, TRIP_OUT, isIn, kindFor, statusIndex } from './logic';
+import { CATS, OWN_IN, OWN_OUT, TRIP_IN, TRIP_OUT, isFamily, isIn, kindFor, statusIndex } from './logic';
 import { Icon, Seg, Thumbs } from './ui';
 
 export type EntryDraft = {
-  dir: 'out' | 'in';
+  /** Расход, доход или перевод между своими счетами. */
+  dir: 'out' | 'in' | 'move';
   amount: string;
-  /** 'own' — личное, 'trip:573' — расход поездки, 'tag:573' — личное с меткой поездки. */
+  /** 'own' — личное, 'family' — семейное, 'trip:573' — расход поездки, 'tag:573' — личное с меткой поездки. */
   scope: string;
   cat: string;
   acc: string;
+  /** Перевод: счёт, на который ушли деньги. */
+  to: string;
+  /** Перевод между валютами: сколько пришло на счёт «Куда». */
+  toAmount: string;
   receipt: DocKind | null;
   receiptNote: string;
   /** Снимки и файлы чеков. */
@@ -58,6 +63,8 @@ export function defaultDraft(snap: Snapshot): EntryDraft {
     scope: t ? 'trip:' + t.trip.id : 'own',
     cat: t ? 'taxi' : 'groceries',
     acc: accountByKind(snap, t ? 'work' : 'personal'),
+    to: '',
+    toAmount: '',
     receipt: null,
     receiptNote: '',
     att: [],
@@ -66,17 +73,52 @@ export function defaultDraft(snap: Snapshot): EntryDraft {
   };
 }
 
+/** Куда обычно переводят: с карты — в наличные, с наличных — на личную карту. */
+function defaultTo(snap: Snapshot, from: string): string {
+  const live = snap.accounts.filter((a) => !a.account.archived && a.account.id !== from);
+  const want = snap.accounts.find((a) => a.account.id === from)?.account.kind === 'cash' ? 'personal' : 'cash';
+  return (live.find((a) => a.account.kind === want) || live[0])?.account.id ?? '';
+}
+
+const TRANSFER_TITLES = ['Перевод между счетами', 'Снятие наличных', 'Наличные на карту', 'Обмен валюты'];
+
+function transferTitle(from?: Account, to?: Account): string {
+  if (from && to && from.currency !== to.currency) return 'Обмен валюты';
+  if (to?.kind === 'cash' && from?.kind !== 'cash') return 'Снятие наличных';
+  if (from?.kind === 'cash' && to && to.kind !== 'cash') return 'Наличные на карту';
+  return 'Перевод между счетами';
+}
+
 /** Черновик из записанной операции — чтобы её поправить. */
 export function draftFromOp(o: Op): EntryDraft {
+  if (o.kind === 'transfer') {
+    return {
+      dir: 'move',
+      amount: amountText(o.orig ?? o.amount),
+      scope: 'own',
+      cat: 'transfer',
+      acc: o.account,
+      to: o.to ?? '',
+      // Из валюты в рубли пришло столько, сколько записано в рублях.
+      toAmount: o.to_amount != null ? amountText(o.to_amount) : o.orig != null ? amountText(o.amount) : '',
+      receipt: null,
+      receiptNote: '',
+      att: [],
+      comment: TRANSFER_TITLES.includes(o.title) ? '' : o.title,
+      date: o.date,
+    };
+  }
   const tripKind = o.kind === 'work' || o.kind === 'food' || o.kind === 'advance' || o.kind === 'reimbursement';
   const cat = o.kind === 'advance' ? 'advance' : o.kind === 'reimbursement' ? 'reimb' : o.cat;
   const catName = (CATS[cat] || CATS.other).n;
   return {
     dir: isIn(o) ? 'in' : 'out',
     amount: amountText(o.orig ?? o.amount),
-    scope: o.trip ? (tripKind ? 'trip:' : 'tag:') + o.trip : 'own',
+    scope: o.trip ? (tripKind ? 'trip:' : 'tag:') + o.trip : isFamily(o) ? 'family' : 'own',
     cat,
     acc: o.account,
+    to: '',
+    toAmount: '',
     receipt: o.doc,
     receiptNote: o.doc === 'qr' ? o.note : '',
     att: o.att ?? [],
@@ -86,11 +128,57 @@ export function draftFromOp(o: Op): EntryDraft {
 }
 
 const isTripScope = (s: string) => s.startsWith('trip:');
-const scopeTrip = (s: string) => (s === 'own' ? null : s.slice(s.indexOf(':') + 1));
+const scopeTrip = (s: string) => (s.includes(':') ? s.slice(s.indexOf(':') + 1) : null);
 
-function catList(dir: 'out' | 'in', scope: string): string[] {
+function catList(dir: EntryDraft['dir'], scope: string): string[] {
+  if (dir === 'move') return ['transfer'];
   if (isTripScope(scope)) return dir === 'out' ? TRIP_OUT : TRIP_IN;
   return dir === 'in' ? OWN_IN : OWN_OUT;
+}
+
+/** Курсы на дату, уже полученные в этом сеансе. */
+const quotes = new Map<string, FxQuote>();
+
+/**
+ * Курс валюты на дату операции: курс ЦБ (с сайта ЦБ или сохранённый), а без него — из настроек.
+ * Пока курс на дату загружается, — последний известный.
+ */
+function useRate(snap: Snapshot, cur: string, date: string): FxQuote {
+  const key = cur + '|' + date;
+  const auto = snap.fx_auto && cur !== 'RUB';
+  const [got, setGot] = useState<{ key: string; q: FxQuote } | null>(null);
+  useEffect(() => {
+    if (!auto || !inApp || quotes.has(key)) return;
+    let alive = true;
+    api.fxRate(cur, date).then(
+      (q) => {
+        // Курс на эту дату больше не изменится; последние сохранённые (без связи) — не запоминаем.
+        if (q.source === 'cbr' && q.date && !q.fallback) quotes.set(key, q);
+        if (alive) setGot({ key, q });
+      },
+      () => undefined,
+    );
+    return () => {
+      alive = false;
+    };
+  }, [auto, key, cur, date]);
+  if (cur === 'RUB') return { rate: 1, source: 'cbr', date: null };
+  const manual: FxQuote = snap.fx_manual[cur] ? { rate: snap.fx_manual[cur], source: 'manual', date: null } : { rate: 0, source: 'none', date: null };
+  if (!auto) return manual;
+  if (got && got.key === key) return got.q;
+  const cached = quotes.get(key);
+  if (cached) return cached;
+  return snap.fx_date && snap.fx[cur] ? { rate: snap.fx[cur], source: 'cbr', date: snap.fx_date } : manual;
+}
+
+function rateSource(q: FxQuote): string {
+  return q.source === 'cbr' ? 'по курсу ЦБ' + (q.date ? ' на ' + dMon(q.date) : '') : 'по курсу из настроек';
+}
+
+/** «≈ 2 774,40 ₽ по курсу ЦБ на 6 ноября» */
+function rubNote(q: FxQuote, cur: string, rubAmount: number): string {
+  if (!q.rate) return `Нет курса для ${cur}: укажите его в настройках`;
+  return `≈${NB}${rub(rubAmount)} ${rateSource(q)}`;
 }
 
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', ',', '0', 'back'];
@@ -135,12 +223,17 @@ export default function Entry({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const accounts = snap.accounts.filter((a) => !a.account.archived || a.account.id === e.acc);
+  const accounts = snap.accounts.filter((a) => !a.account.archived || a.account.id === e.acc || a.account.id === e.to);
   const acc = accounts.find((a) => a.account.id === e.acc) || null;
   const cur = acc ? acc.account.currency : 'RUB';
   const sign = SIGN[cur] || cur;
-  const isTrip = isTripScope(e.scope);
-  const tripId = scopeTrip(e.scope);
+  const move = e.dir === 'move';
+  const toAcc = move ? accounts.find((a) => a.account.id === e.to) || null : null;
+  const toCur = toAcc ? toAcc.account.currency : 'RUB';
+  const toSign = SIGN[toCur] || toCur;
+  const isTrip = !move && isTripScope(e.scope);
+  const tripId = move ? null : scopeTrip(e.scope);
+  const family = !move && e.dir === 'out' && e.scope === 'family';
   const tv = isTrip ? snap.trips.find((t) => t.trip.id === tripId) || null : null;
   const active = activeTrip(snap);
 
@@ -154,7 +247,14 @@ export default function Entry({
     if (!isTripScope(scope)) patch.receipt = null;
     set(patch);
   };
-  const pickDir = (dir: 'out' | 'in') => set({ dir, cat: catList(dir, e.scope)[0], receipt: dir === 'out' ? e.receipt : null });
+  const pickDir = (dir: EntryDraft['dir']) => {
+    if (dir === 'move') return set({ dir, cat: 'transfer', receipt: null, to: e.to && e.to !== e.acc ? e.to : defaultTo(snap, e.acc) });
+    // Семейные бывают только расходы.
+    const scope = dir === 'in' && e.scope === 'family' ? 'own' : e.scope;
+    set({ dir, scope, cat: catList(dir, scope)[0], receipt: dir === 'out' ? e.receipt : null });
+  };
+  /** Перевод: счёт «Откуда». Тот же счёт в «Куда» меняется местами с прежним. */
+  const pickFrom = (id: string) => set(id === e.to ? { acc: id, to: e.acc, toAmount: '' } : { acc: id, toAmount: '' });
   const pressKey = (key: string) => {
     let s = e.amount;
     if (key === 'back') s = s.slice(0, -1);
@@ -170,7 +270,7 @@ export default function Entry({
   };
   const onDate = (date: string) => {
     const d = date || snap.today;
-    if (e.scope.startsWith('tag:')) return set({ date: d });
+    if (move || e.scope.startsWith('tag:') || e.scope === 'family') return set({ date: d });
     const hit = openTrips(snap).find((t) => within(t, d));
     const sc = hit ? 'trip:' + hit.trip.id : 'own';
     if (sc === e.scope) return set({ date: d });
@@ -219,17 +319,30 @@ export default function Entry({
     }
   };
 
+  // Курсы на дату операции: для счёта в валюте и для счёта, куда идёт перевод.
+  const qFrom = useRate(snap, cur, e.date || snap.today);
+  const qTo = useRate(snap, move ? toCur : 'RUB', e.date || snap.today);
+  const fx = qFrom.rate;
+
   // Подсказки под суммой и под чеком.
   const amt = parseAmount(e.amount) ?? 0;
-  const fx = cur === 'RUB' ? 1 : snap.fx[cur] || 0;
   const amtRub = Math.round(amt * fx);
+  // Перевод между валютами: сколько пришло (если не указано — по курсу).
+  const cross = move && !!toAcc && toCur !== cur;
+  const toAmt = cross ? parseAmount(e.toAmount) : null;
+  const estTo = cross && qFrom.rate && qTo.rate ? Math.round((amt * qFrom.rate) / qTo.rate) : null;
   let note = '';
   if (error) note = error;
   else if (e.receipt === 'qr' && e.receiptNote) note = e.receiptNote.split('.')[0];
-  else if (cur !== 'RUB' && amt > 0) note = fx ? `≈${NB}${rub(amtRub)} по курсу ${String(fx).replace('.', ',')}${NB}₽ из настроек` : `Нет курса для ${cur}: укажите его в настройках`;
+  else if (cross) {
+    // Из рублей — курс валюты «Куда», в рубли — курс валюты «Откуда», между двумя валютами — оба.
+    const q: FxQuote = cur === 'RUB' ? qTo : toCur === 'RUB' ? qFrom : qFrom.source === 'cbr' && qTo.source === 'cbr' ? qFrom : { ...qFrom, source: 'manual' };
+    if (amt > 0 && !toAmt) note = estTo != null ? `Придёт ≈${NB}${fmt(estTo)}${NB}${toSign} ${rateSource(q)}` : `Укажите, сколько пришло, ${toSign}`;
+  } else if (cur !== 'RUB' && amt > 0) note = rubNote(qFrom, cur, amtRub);
+  else if (move) note = '«Мои деньги» не меняются: деньги переходят между вашими счетами';
 
   const room = tv ? Math.max(0, tv.s.leftover) : 0;
-  const showDocs = e.dir === 'out' && isTrip && e.cat !== 'food';
+  const showDocs = !move && e.dir === 'out' && isTrip && e.cat !== 'food';
   let docNote = '';
   let docWarn = true;
   if (filesBusy) {
@@ -252,13 +365,24 @@ export default function Entry({
   if (e.dir === 'out' && isTrip && e.cat === 'food')
     foodNote = 'Питание идёт из суточных, чек не нужен. ' + (room === 0 ? 'Суточные закончились: сумма станет долгом перед компанией.' : amtRub > room ? `Сверх остатка ${rub(room)} — долг перед компанией.` : `Осталось ${rub(room)}.`);
 
-  const submitLabel = editing ? 'Сохранить изменения' : isTrip ? (e.dir === 'out' ? 'Записать в поездку ' : 'Записать доход в поездку ') + tripId : e.dir === 'out' ? 'Записать в личное' : 'Записать доход в личное';
+  const submitLabel = editing
+    ? 'Сохранить изменения'
+    : move
+      ? 'Записать перевод'
+      : isTrip
+        ? (e.dir === 'out' ? 'Записать в поездку ' : 'Записать доход в поездку ') + tripId
+        : family
+          ? 'Записать в семейные траты'
+          : e.dir === 'out'
+            ? 'Записать в личное'
+            : 'Записать доход в личное';
 
   // Сначала текущая поездка, личное и метка; предстоящие поездки — сразу, сданные на отчёт — по кнопке.
   const tripLabel = (t: TripView) => `${t.trip.id} ${t.trip.city}`;
   const scopes: { id: string; label: string }[] = [];
   if (active) scopes.push({ id: 'trip:' + active.trip.id, label: tripLabel(active) });
   scopes.push({ id: 'own', label: 'Личное' });
+  if (e.dir === 'out') scopes.push({ id: 'family', label: 'Семья' });
   if (active) scopes.push({ id: 'tag:' + active.trip.id, label: 'Личное, метка ' + active.trip.id });
   const others = openTrips(snap).filter((t) => !active || t.trip.id !== active.trip.id);
   let hidden = 0;
@@ -272,27 +396,77 @@ export default function Entry({
   const parts = e.amount.split(',');
   const amountShown = (parts[0] || '0').replace(/\B(?=(\d{3})+(?!\d))/g, NB) + (parts.length > 1 ? ',' + parts[1] : '');
 
+  /** Перевод между своими счетами. */
+  const saveMove = async () => {
+    const orig = parseAmount(e.amount);
+    if (!orig || orig <= 0) return setError('Введите сумму');
+    if (!acc || !toAcc) return setError('Выберите, откуда и куда');
+    if (acc.account.id === toAcc.account.id) return setError('Счета «Откуда» и «Куда» должны быть разными');
+    const got = cross ? (toAmt ?? estTo) : null;
+    if (cross && (!got || got <= 0)) return setError(`Укажите, сколько пришло, ${toSign}`);
+    // В рублях: из рублей — сколько ушло, в рубли — сколько пришло, между валютами — по курсу (при правке без изменений — как было).
+    const keep = !!editing && editing.kind === 'transfer' && editing.orig === orig && editing.date === (e.date || snap.today) && editing.account === acc.account.id && editing.to === toAcc.account.id;
+    const amount = cur === 'RUB' ? orig : toCur === 'RUB' && got ? got : keep && editing ? editing.amount : Math.round(orig * fx);
+    if (!amount) return setError(`Нет курса для ${cur}: укажите его в настройках`);
+    const op: Op = {
+      id: editing ? editing.id : '',
+      date: e.date || snap.today,
+      kind: 'transfer',
+      cat: 'transfer',
+      title: e.comment.trim() || transferTitle(acc.account, toAcc.account),
+      amount,
+      account: acc.account.id,
+      trip: null,
+      doc: null,
+      sent: false,
+      family: false,
+      debt: null,
+      inflow: false,
+      orig: cur === 'RUB' ? null : orig,
+      cur: cur === 'RUB' ? null : cur,
+      note: editing ? editing.note : '',
+      to: toAcc.account.id,
+      to_amount: toCur === 'RUB' ? null : toCur === cur ? orig : got,
+    };
+    setBusy(true);
+    const next = await onSave(op);
+    setBusy(false);
+    if (!next) return;
+    const where = `${acc.account.name} → ${toAcc.account.name}`;
+    flash((editing ? 'Изменено: ' : 'Перевод записан: ') + `${fmt(orig)}${NB}${sign}, ${where}`);
+    if (isPhone || editing) onClose();
+    else {
+      // На компьютере панель остаётся открытой для следующего перевода.
+      setE({ ...defaultDraft(next), dir: 'move', cat: 'transfer', acc: op.account, to: op.to ?? '' });
+      setError(null);
+    }
+  };
+
   const save = async (ev?: FormEvent) => {
     ev?.preventDefault();
     if (busy) return;
+    if (move) return saveMove();
     const orig = parseAmount(e.amount);
     if (!orig || orig <= 0) return setError('Введите сумму');
     if (!acc) return setError('Выберите счёт');
     if (cur !== 'RUB' && !fx) return setError(`Нет курса для ${cur}: укажите его в настройках`);
-    const kind = kindFor(e.dir, isTrip, e.cat);
+    const kind = kindFor(e.dir === 'in' ? 'in' : 'out', isTrip, e.cat);
     const doc = kind === 'work' ? e.receipt : null;
+    // Сумма в рублях: при правке без изменений — как была, иначе по курсу на дату операции.
+    const same = !!editing && editing.orig === (cur === 'RUB' ? null : orig) && editing.date === (e.date || snap.today) && editing.account === acc.account.id;
+    const amount = cur === 'RUB' ? orig : same && editing ? editing.amount : Math.round(orig * fx);
     const op: Op = {
       id: editing ? editing.id : '',
       date: e.date || snap.today,
       kind,
       cat: e.cat,
       title: e.comment.trim() || (CATS[e.cat] || CATS.other).n,
-      amount: cur === 'RUB' ? orig : Math.round(orig * fx),
+      amount,
       account: acc.account.id,
       trip: tripId,
       doc,
       sent: !!editing && editing.sent && !!doc,
-      family: editing ? editing.family : false,
+      family: family && kind === 'personal',
       debt: editing ? editing.debt : null,
       inflow: editing ? editing.inflow : false,
       orig: cur === 'RUB' ? null : orig,
@@ -304,7 +478,7 @@ export default function Entry({
     const next = await onSave(op);
     setBusy(false);
     if (!next) return;
-    let toast = `Записано: ${fmt(orig)}${NB}${sign}, ` + (isTrip ? 'поездка ' + tripId : e.scope.startsWith('tag:') ? 'личное, метка ' + tripId : 'личное');
+    let toast = `Записано: ${fmt(orig)}${NB}${sign}, ` + (isTrip ? 'поездка ' + tripId : e.scope.startsWith('tag:') ? 'личное, метка ' + tripId : family ? 'семья' : 'личное');
     if (kind === 'work' && !doc) {
       const c = next.trips.find((t) => t.trip.id === tripId)?.s;
       if (c) toast = c.debt > 0 ? 'Без чека: суточных не хватает, долг перед компанией ' + rub(c.debt_due || c.debt) : 'Без чека: вычтено из суточных, осталось ' + rub(Math.max(0, c.leftover));
@@ -334,6 +508,7 @@ export default function Entry({
             items={[
               { id: 'out', label: 'Расход' },
               { id: 'in', label: 'Доход' },
+              { id: 'move', label: 'Перевод' },
             ]}
           />
         </div>
@@ -374,33 +549,78 @@ export default function Entry({
         </>
       )}
 
-      <div className="chips scroll" role="group" aria-label="Чьи деньги">
-        {scopes.map((s) => (
-          <button key={s.id} type="button" aria-pressed={s.id === e.scope} className={'chip scope' + (isTripScope(s.id) ? ' trip' : '') + (s.id === e.scope ? ' sel' : '')} onClick={() => pickScope(s.id)}>
-            {s.label}
-          </button>
-        ))}
-        {hidden > 0 && (
-          <button type="button" className="chip" onClick={() => setMoreTrips(true)}>
-            Другие поездки: {hidden}
-          </button>
-        )}
-      </div>
-      <div className="chips scroll" role="group" aria-label="Категория">
-        {catList(e.dir, e.scope).map((c) => (
-          <button key={c} type="button" aria-pressed={c === e.cat} className={'chip' + (c === e.cat ? ' sel' : '')} onClick={() => set({ cat: c })}>
-            {CATS[c].s}
-          </button>
-        ))}
-      </div>
-      <div className="chips scroll" role="group" aria-label="Счёт">
-        {accounts.map((a) => (
-          <button key={a.account.id} type="button" aria-pressed={a.account.id === e.acc} className={'chip' + (a.account.id === e.acc ? ' sel' : '')} style={{ minWidth: 44, padding: '0 10px' }} onClick={() => set({ acc: a.account.id })}>
-            {a.account.short || a.account.name}
-          </button>
-        ))}
-        {accounts.length === 0 && <p className="note warn">Нет счетов. Добавьте счёт в настройках.</p>}
-      </div>
+      {move ? (
+        <>
+          <div className="label">
+            <span>Откуда</span>
+            <div className="chips scroll" role="group" aria-label="Откуда">
+              {accounts.map((a) => (
+                <button key={a.account.id} type="button" aria-pressed={a.account.id === e.acc} className={'chip' + (a.account.id === e.acc ? ' sel' : '')} style={{ minWidth: 44, padding: '0 10px' }} onClick={() => pickFrom(a.account.id)}>
+                  {a.account.short || a.account.name}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="label">
+            <span>Куда</span>
+            <div className="chips scroll" role="group" aria-label="Куда">
+              {accounts
+                .filter((a) => a.account.id !== e.acc)
+                .map((a) => (
+                  <button key={a.account.id} type="button" aria-pressed={a.account.id === e.to} className={'chip' + (a.account.id === e.to ? ' sel' : '')} style={{ minWidth: 44, padding: '0 10px' }} onClick={() => set({ to: a.account.id, toAmount: '' })}>
+                    {a.account.short || a.account.name}
+                  </button>
+                ))}
+            </div>
+            {accounts.length < 2 && <p className="note warn">Для перевода нужно два счёта. Добавьте счёт в настройках.</p>}
+          </div>
+          {cross && (
+            <label className="label">
+              <span>Пришло, {toSign}</span>
+              <input
+                className="field num"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                value={e.toAmount}
+                onChange={(ev) => set({ toAmount: ev.target.value.replace(/\./g, ',').replace(/[^\d,]/g, '') })}
+                placeholder={estTo ? amountText(estTo) : '0'}
+                style={{ height: 44, fontSize: 18 }}
+              />
+            </label>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="chips scroll" role="group" aria-label="Чьи деньги">
+            {scopes.map((s) => (
+              <button key={s.id} type="button" aria-pressed={s.id === e.scope} className={'chip scope' + (isTripScope(s.id) ? ' trip' : '') + (s.id === e.scope ? ' sel' : '')} onClick={() => pickScope(s.id)}>
+                {s.label}
+              </button>
+            ))}
+            {hidden > 0 && (
+              <button type="button" className="chip" onClick={() => setMoreTrips(true)}>
+                Другие поездки: {hidden}
+              </button>
+            )}
+          </div>
+          <div className="chips scroll" role="group" aria-label="Категория">
+            {catList(e.dir, e.scope).map((c) => (
+              <button key={c} type="button" aria-pressed={c === e.cat} className={'chip' + (c === e.cat ? ' sel' : '')} onClick={() => set({ cat: c })}>
+                {CATS[c].s}
+              </button>
+            ))}
+          </div>
+          <div className="chips scroll" role="group" aria-label="Счёт">
+            {accounts.map((a) => (
+              <button key={a.account.id} type="button" aria-pressed={a.account.id === e.acc} className={'chip' + (a.account.id === e.acc ? ' sel' : '')} style={{ minWidth: 44, padding: '0 10px' }} onClick={() => set({ acc: a.account.id })}>
+                {a.account.short || a.account.name}
+              </button>
+            ))}
+            {accounts.length === 0 && <p className="note warn">Нет счетов. Добавьте счёт в настройках.</p>}
+          </div>
+        </>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '138px minmax(0,1fr)', gap: 6 }}>
         <input className="field" type="date" aria-label="Дата" value={e.date} onChange={(ev) => onDate(ev.target.value)} style={{ height: 44, padding: '0 8px', fontSize: 14 }} />

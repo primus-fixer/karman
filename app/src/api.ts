@@ -3,7 +3,7 @@ import { todayIso } from './format';
 
 // Типы повторяют ответы ядра (karman-core, serde).
 
-export type OpKind = 'work' | 'food' | 'personal' | 'income' | 'advance' | 'reimbursement' | 'return' | 'debt';
+export type OpKind = 'work' | 'food' | 'personal' | 'income' | 'advance' | 'reimbursement' | 'return' | 'debt' | 'transfer';
 export type DocKind = 'photo' | 'qr' | 'file';
 
 export type Attachment = { id: string; mime: string; name: string; size: number };
@@ -27,6 +27,10 @@ export type Op = {
   note: string;
   /** Снимки и файлы чеков; в ответе ядра поля нет, если вложений нет. */
   att?: Attachment[];
+  /** Перевод: счёт, на который ушли деньги. */
+  to?: string | null;
+  /** Перевод: сколько пришло в валюте счёта-получателя, если она не рубли. */
+  to_amount?: number | null;
 };
 
 export const STATUSES = ['request', 'advance_received', 'in_trip', 'awaiting_report', 'review', 'closed'] as const;
@@ -96,7 +100,14 @@ export type Snapshot = {
   today: string;
   device: string;
   rate: number;
+  /** Курсы для пересчёта: ЦБ, если включены и загружены, иначе из настроек. */
   fx: Record<string, number>;
+  /** Курс ЦБ на дату операции (настройка fx.auto, по умолчанию да). */
+  fx_auto: boolean;
+  /** Дата загруженных курсов ЦБ. */
+  fx_date: string | null;
+  /** Курсы из настроек — запасные. */
+  fx_manual: Record<string, number>;
   accounts: AccountView[];
   total: number;
   held: number;
@@ -110,10 +121,12 @@ export type Snapshot = {
 };
 
 export type Check = { ok: boolean; text: string };
-export type DeviceInfo = { id: string; name: string; os: string; arch: string; version: string; data_dir: string; encrypted: boolean; cipher: string; events: number };
+export type DeviceInfo = { id: string; name: string; os: string; arch: string; version: string; data_dir: string; encrypted: boolean; cipher: string; events: number; unknown: number };
 export type PairingView = { uri: string; qr_svg: string; hosts: string[]; port: number };
 export type SyncStatus = { running: boolean; log: Check[] };
-export type SyncResult = { peer_name: string; sent: number; received: number; files_sent: number; files_received: number };
+export type SyncResult = { peer_name: string; sent: number; received: number; files_sent: number; files_received: number; hint: string };
+/** Курс валюты на дату: cbr — ЦБ, manual — из настроек, none — курса нет; fallback — сайт ЦБ не ответил, это последние сохранённые курсы. */
+export type FxQuote = { rate: number; source: 'cbr' | 'manual' | 'none'; date: string | null; fallback?: boolean };
 export type ReceiptView = { date: string; time: string; sum: number; fn_number: string; fd: string; fp: string; kind: string };
 export type LockStatus = {
   pin: boolean;
@@ -159,6 +172,7 @@ export const api = {
   blobPut: (mime: string, data: string) => invoke<{ id: string; size: number }>('blob_put', { mime, data }),
   blobUrl: (id: string) => invoke<string | null>('blob_url', { id }),
   receiptsZip: (trip: string) => invoke<string>('receipts_zip', { trip }),
+  fxRate: (cur: string, date: string) => invoke<FxQuote>('fx_rate', { today: today(), cur, date }),
   lockStatus: () => invoke<LockStatus>('lock_status'),
   pinUnlock: (code: string) => invoke<LockStatus>('pin_unlock', { code }),
   pinSet: (code: string, current: string | null) => invoke<LockStatus>('pin_set', { code, current }),
@@ -174,6 +188,12 @@ export const api = {
 export async function onLocked(cb: () => void): Promise<() => void> {
   const { listen } = await import('@tauri-apps/api/event');
   return listen('locked', cb);
+}
+
+/** Загрузились свежие курсы ЦБ — остатки на счетах в валюте пересчитаны. */
+export async function onFx(cb: () => void): Promise<() => void> {
+  const { listen } = await import('@tauri-apps/api/event');
+  return listen('fx', cb);
 }
 
 /** Сканирование QR-кода камерой телефона. */

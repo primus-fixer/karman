@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, message, scanQr, type Account, type AccountView, type Check, type DeviceInfo, type LockStatus, type PairingView, type Snapshot, type SyncResult } from '../api';
 import type { PinMode } from '../Lock';
-import { SIGN, amountText, parseAmount, rub } from '../format';
+import { SIGN, amountText, dMon, parseAmount, rateText as fxText, rub } from '../format';
 import { SCHEMES, type ThemeMode } from '../theme';
 import { Checks, ErrorText, Icon, Seg } from '../ui';
 
@@ -321,6 +321,7 @@ function SyncWifi({ mobile, onSynced }: { mobile: boolean; onSynced: () => void 
           ]}
         />
       )}
+      {result?.hint && <p className="note warn">{result.hint}</p>}
     </div>
   );
 }
@@ -482,11 +483,41 @@ export default function Settings({
         <h2 className="h2" style={{ marginBottom: 6 }}>
           Курсы валют
         </h2>
-        <p className="note" style={{ marginBottom: 8 }}>
-          Сколько рублей за единицу валюты. Пока курсы задаются вручную.
+        <label className="setrow" style={{ cursor: 'pointer' }}>
+          <span>
+            <span>Курс ЦБ на дату операции</span>
+            <span className="note">
+              {snap.fx_auto
+                ? (snap.fx_date ? `Загружены курсы на ${dMon(snap.fx_date)}. ` : 'Курсы загрузятся, когда появится интернет. ') + 'С сайта ЦБ запрашивается только дата.'
+                : 'Выключено: валюта пересчитывается по курсам из настроек.'}
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            aria-label="Курс ЦБ на дату операции"
+            checked={snap.fx_auto}
+            onChange={(e) => run(api.settingSet('fx.auto', e.target.checked ? '1' : '0'), e.target.checked ? 'Курс ЦБ на дату операции включён' : 'Курсы ЦБ выключены, считаю по курсам из настроек')}
+            style={{ flex: 'none', width: 20, height: 20, margin: 0, accentColor: 'var(--own)' }}
+          />
+        </label>
+        {snap.fx_auto &&
+          snap.fx_date &&
+          fxCurrencies
+            .filter((c) => snap.fx[c])
+            .map((c) => (
+              <div className="rule" key={c}>
+                <span>
+                  1 {c} {SIGN[c] ? `(${SIGN[c]})` : ''}, ЦБ
+                </span>
+                <span className="num">{fxText(snap.fx[c])} ₽</span>
+              </div>
+            ))}
+        <p className="note" style={{ margin: '10px 0 4px' }}>
+          {snap.fx_auto ? 'Запасные курсы — если курс ЦБ не загрузился. Сколько рублей за единицу валюты:' : 'Сколько рублей за единицу валюты:'}
         </p>
         {fxCurrencies.map((c) => (
-          <FxRow key={c} cur={c} value={snap.fx[c]} save={(v) => run(api.settingSet('fx.' + c, v), `Курс ${c} сохранён`)} />
+          <FxRow key={c} cur={c} value={snap.fx_manual[c]} save={(v) => run(api.settingSet('fx.' + c, v), `Курс ${c} сохранён`)} />
         ))}
       </section>
 
@@ -580,6 +611,12 @@ export default function Settings({
               <span>Записей в журнале</span>
               <span>{info.events.toLocaleString('ru-RU')}</span>
             </div>
+            {info.unknown > 0 && (
+              <div className="row">
+                <span>Из более новой версии</span>
+                <span className="warn">{info.unknown.toLocaleString('ru-RU')} — видны после обновления «Кармана»</span>
+              </div>
+            )}
             <p className="note" style={{ overflowWrap: 'anywhere', marginTop: 6 }}>
               Папка данных: {info.data_dir}
             </p>

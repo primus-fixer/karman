@@ -5,6 +5,7 @@
 //! и разбор QR-кодов (связь устройств и кассовые чеки).
 
 pub mod book;
+pub mod cbr;
 pub mod date;
 pub mod db;
 pub mod demo;

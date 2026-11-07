@@ -8,7 +8,10 @@ type Scope = 'all' | 'own' | 'trips';
 
 export default function Feed({ snap, act }: { snap: Snapshot; act: OpActions }) {
   const [scope, setScope] = useState<Scope>('all');
-  const ops = snap.ops.filter((o) => (scope === 'all' ? true : scope === 'own' ? isOwn(o) : !isOwn(o)));
+  // Перевод с рабочей карты (например, снял аванс наличными) виден и среди поездок.
+  const work = new Set(snap.accounts.filter((a) => a.account.kind === 'work').map((a) => a.account.id));
+  const workMove = (o: Op) => o.kind === 'transfer' && (work.has(o.account) || work.has(o.to ?? ''));
+  const ops = snap.ops.filter((o) => (scope === 'all' ? true : scope === 'own' ? isOwn(o) : !isOwn(o) || workMove(o)));
   const groups: { date: string; ops: Op[]; out: number }[] = [];
   for (const o of ops) {
     let g = groups[groups.length - 1];

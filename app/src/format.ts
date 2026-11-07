@@ -73,6 +73,12 @@ export function diffDays(a: string, b: string): number {
   return Math.round((toDate(b).getTime() - toDate(a).getTime()) / 86400000);
 }
 
+/** Курс валюты: «81,23», «0,1735». */
+export function rateText(r: number): string {
+  const digits = r >= 10 ? 2 : r >= 1 ? 3 : 4;
+  return r.toFixed(digits).replace(/\.?0+$/, '').replace('.', ',');
+}
+
 /** «31 октября» */
 export function dMon(iso: string): string {
   const [, m, d] = parts(iso);

@@ -128,6 +128,8 @@ pub fn ops() -> Vec<Op> {
             cur: None,
             note: String::new(),
             att: Vec::new(),
+            to: None,
+            to_amount: None,
             extra: Default::default(),
         })
         .collect()
@@ -152,6 +154,8 @@ fn own_op(id: &str, date: &str, kind: OpKind, cat: &str, title: &str, amount: f6
         cur: None,
         note: String::new(),
         att: Vec::new(),
+        to: None,
+        to_amount: None,
         extra: Default::default(),
     }
 }
