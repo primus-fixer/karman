@@ -3,7 +3,7 @@ import type { Op, Snapshot, Trip, TripView } from '../api';
 import type { Nav } from '../App';
 import { daysText, dMon, dNum, dRange, fmt2, parseAmount, plain, plural, rub } from '../format';
 import { DOC_LABEL, NEXT, statusIndex, tripControls, tripSummary } from '../logic';
-import { Icon, OpRow, Rail, Seg, type OpActions } from '../ui';
+import { Icon, OpRow, Rail, Seg, Thumbs, type OpActions } from '../ui';
 
 export type TripTab = 'summary' | 'report' | 'ops' | 'docs';
 
@@ -16,6 +16,8 @@ export type TripActions = {
   toggleSent: (op: Op) => void;
   addOp: (tripId: string) => void;
   copy: (text: string, label: string) => void;
+  /** Архив снимков и файлов чеков поездки (на компьютере). */
+  zip: (tripId: string) => void;
 };
 
 function CopyField({ label, value, copy }: { label: string; value: string; copy: TripActions['copy'] }) {
@@ -571,19 +573,37 @@ export default function TripScreen({
           <p className="note" style={{ margin: '2px 0 10px' }}>
             Отметьте документы, которые отправили в офис. Расход без документа вычитается из суточных, а сверх них становится долгом перед компанией.
           </p>
+          {!isPhone && work.some((o) => o.att?.length) && (
+            <button type="button" className="btn ghost" style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }} onClick={() => act.zip(t.id)}>
+              <Icon name="download" size={18} />
+              Архив чеков в «Загрузки»
+            </button>
+          )}
           {work.length === 0 && <p className="empty">Рабочих расходов пока нет.</p>}
           {work.map((o) =>
             o.doc ? (
-              <label key={o.id} style={{ display: 'grid', gridTemplateColumns: '24px minmax(0,1fr) auto', gap: 12, alignItems: 'center', minHeight: 56, padding: '6px 0', borderTop: '1px solid var(--line)', cursor: 'pointer' }}>
-                <input type="checkbox" checked={o.sent} onChange={() => act.toggleSent(o)} style={{ width: 20, height: 20, margin: 0, accentColor: 'var(--work)' }} />
-                <span className="stack" style={{ minWidth: 0 }}>
-                  <span>{o.title}</span>
-                  <span className="note">
-                    {dMon(o.date)}, {DOC_LABEL[o.doc]}
+              <div key={o.id} style={{ borderTop: '1px solid var(--line)', padding: '6px 0' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '24px minmax(0,1fr) auto', gap: 12, alignItems: 'center', minHeight: 44 }}>
+                  <input type="checkbox" aria-label={`Отправлено в офис: ${o.title}`} checked={o.sent} onChange={() => act.toggleSent(o)} style={{ width: 20, height: 20, margin: 0, accentColor: 'var(--work)' }} />
+                  <span className="stack" style={{ minWidth: 0 }}>
+                    <span>{o.title}</span>
+                    <span className="note">
+                      {dMon(o.date)}, {DOC_LABEL[o.doc]}, {o.att?.length ? `${o.att.length} ${plural(o.att.length, 'вложение', 'вложения', 'вложений')}` : 'снимка нет'}
+                    </span>
                   </span>
-                </span>
-                <span className="num">{rub(o.amount)}</span>
-              </label>
+                  <span className="opright">
+                    <span className="num">{rub(o.amount)}</span>
+                    <button type="button" className="btn link" style={{ minHeight: 32, padding: 0, fontSize: 13, color: 'var(--own)' }} onClick={() => opAct.attach(o)}>
+                      {o.att?.length ? 'Ещё снимок' : 'Добавить снимок'}
+                    </button>
+                  </span>
+                </div>
+                {!!o.att?.length && (
+                  <div style={{ paddingLeft: 36 }}>
+                    <Thumbs items={o.att} onOpen={opAct.view} />
+                  </div>
+                )}
+              </div>
             ) : (
               <div key={o.id} style={{ display: 'grid', gridTemplateColumns: '24px minmax(0,1fr) auto', gap: 12, alignItems: 'center', minHeight: 56, padding: '6px 0', borderTop: '1px solid var(--line)' }}>
                 <span className="warn">
@@ -595,9 +615,14 @@ export default function TripScreen({
                 </span>
                 <span className="opright">
                   <span className="num">{rub(o.amount)}</span>
-                  <button type="button" className="btn warn" style={{ minHeight: 32, padding: '0 8px', fontSize: 13, fontWeight: 400 }} onClick={() => act.addDoc(o)}>
-                    Документ есть
-                  </button>
+                  <span style={{ display: 'flex', gap: 6 }}>
+                    <button type="button" className="btn warn" style={{ minHeight: 32, padding: '0 8px', fontSize: 13, fontWeight: 400 }} onClick={() => opAct.attach(o)}>
+                      Снимок
+                    </button>
+                    <button type="button" className="btn ghost" style={{ minHeight: 32, padding: '0 8px', fontSize: 13, fontWeight: 400 }} onClick={() => act.addDoc(o)}>
+                      Документ есть
+                    </button>
+                  </span>
                 </span>
               </div>
             ),

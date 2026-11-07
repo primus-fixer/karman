@@ -309,7 +309,18 @@ function SyncWifi({ mobile, onSynced }: { mobile: boolean; onSynced: () => void 
         </button>
       </div>
       <ErrorText text={error} />
-      {result && <Checks items={[{ ok: true, text: `Обмен с «${result.peer_name}»: отправлено ${result.sent}, получено ${result.received}` }]} />}
+      {result && (
+        <Checks
+          items={[
+            {
+              ok: true,
+              text:
+                `Обмен с «${result.peer_name}»: отправлено ${result.sent}, получено ${result.received}` +
+                (result.files_sent + result.files_received ? `; снимков чеков: отправлено ${result.files_sent}, получено ${result.files_received}` : ''),
+            },
+          ]}
+        />
+      )}
     </div>
   );
 }

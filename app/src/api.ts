@@ -6,6 +6,8 @@ import { todayIso } from './format';
 export type OpKind = 'work' | 'food' | 'personal' | 'income' | 'advance' | 'reimbursement' | 'return' | 'debt';
 export type DocKind = 'photo' | 'qr' | 'file';
 
+export type Attachment = { id: string; mime: string; name: string; size: number };
+
 export type Op = {
   id: string;
   date: string;
@@ -23,6 +25,8 @@ export type Op = {
   orig: number | null;
   cur: string | null;
   note: string;
+  /** Снимки и файлы чеков; в ответе ядра поля нет, если вложений нет. */
+  att?: Attachment[];
 };
 
 export const STATUSES = ['request', 'advance_received', 'in_trip', 'awaiting_report', 'review', 'closed'] as const;
@@ -109,7 +113,7 @@ export type Check = { ok: boolean; text: string };
 export type DeviceInfo = { id: string; name: string; os: string; arch: string; version: string; data_dir: string; encrypted: boolean; cipher: string; events: number };
 export type PairingView = { uri: string; qr_svg: string; hosts: string[]; port: number };
 export type SyncStatus = { running: boolean; log: Check[] };
-export type SyncResult = { peer_name: string; sent: number; received: number };
+export type SyncResult = { peer_name: string; sent: number; received: number; files_sent: number; files_received: number };
 export type ReceiptView = { date: string; time: string; sum: number; fn_number: string; fd: string; fp: string; kind: string };
 export type LockStatus = {
   pin: boolean;
@@ -152,6 +156,9 @@ export const api = {
   syncStop: () => invoke<void>('sync_stop'),
   syncConnect: (uri: string) => invoke<SyncResult>('sync_connect', { uri }),
   receiptParse: (text: string) => invoke<ReceiptView>('receipt_parse', { text }),
+  blobPut: (mime: string, data: string) => invoke<{ id: string; size: number }>('blob_put', { mime, data }),
+  blobUrl: (id: string) => invoke<string | null>('blob_url', { id }),
+  receiptsZip: (trip: string) => invoke<string>('receipts_zip', { trip }),
   lockStatus: () => invoke<LockStatus>('lock_status'),
   pinUnlock: (code: string) => invoke<LockStatus>('pin_unlock', { code }),
   pinSet: (code: string, current: string | null) => invoke<LockStatus>('pin_set', { code, current }),

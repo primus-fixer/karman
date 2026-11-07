@@ -35,6 +35,7 @@ fn trip(id: &str, city: &str, dates: [&str; 4], status: TripStatus, plan: [f64; 
         notes: Default::default(),
         deadline: None,
         just: None,
+        extra: Default::default(),
     }
 }
 
@@ -126,6 +127,8 @@ pub fn ops() -> Vec<Op> {
             orig: None,
             cur: None,
             note: String::new(),
+            att: Vec::new(),
+            extra: Default::default(),
         })
         .collect()
 }
@@ -148,6 +151,8 @@ fn own_op(id: &str, date: &str, kind: OpKind, cat: &str, title: &str, amount: f6
         orig: None,
         cur: None,
         note: String::new(),
+        att: Vec::new(),
+        extra: Default::default(),
     }
 }
 
@@ -161,7 +166,7 @@ pub fn book_events() -> Vec<EventBody> {
         }
     }
     bodies.push(EventBody::AccountPut {
-        account: Account { id: "acc-kzt".into(), name: "Наличные, тенге".into(), short: "₸".into(), currency: "KZT".into(), opening: rub(18000.0), kind: "cash".into(), order: 4, archived: false },
+        account: Account { id: "acc-kzt".into(), name: "Наличные, тенге".into(), short: "₸".into(), currency: "KZT".into(), opening: rub(18000.0), kind: "cash".into(), order: 4, archived: false, extra: Default::default() },
     });
     bodies.extend(trips().into_iter().map(|trip| EventBody::TripPut { trip }));
     bodies.extend(ops().into_iter().map(|mut op| {
