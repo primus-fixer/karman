@@ -1,7 +1,9 @@
 //! Демо-данные — те же, что в макете. Настоящие здесь только суммы заявки 573 из 1С.
 
+use crate::book::{self, Account};
 use crate::date::Date;
 use crate::money::rub;
+use crate::sync::EventBody;
 use crate::trip::{DocKind, Op, OpKind, Trip, TripStatus, DEFAULT_RATE};
 
 /// «Сегодня» в демо-данных.
@@ -24,6 +26,15 @@ fn trip(id: &str, city: &str, dates: [&str; 4], status: TripStatus, plan: [f64; 
         status,
         plan: plan.map(rub),
         fixed_rate: if fixed { Some(DEFAULT_RATE) } else { None },
+        own_rate: None,
+        req_no: String::new(),
+        req_date: None,
+        goal: String::new(),
+        region: String::new(),
+        plan_notes: Default::default(),
+        notes: Default::default(),
+        deadline: None,
+        just: None,
     }
 }
 
@@ -112,6 +123,58 @@ pub fn ops() -> Vec<Op> {
             family: false,
             debt: None,
             inflow: false,
+            orig: None,
+            cur: None,
+            note: String::new(),
         })
         .collect()
+}
+
+fn own_op(id: &str, date: &str, kind: OpKind, cat: &str, title: &str, amount: f64) -> Op {
+    Op {
+        id: id.into(),
+        date: d(date),
+        kind,
+        cat: cat.into(),
+        title: title.into(),
+        amount: rub(amount),
+        account: "acc-personal".into(),
+        trip: None,
+        doc: None,
+        sent: false,
+        family: false,
+        debt: None,
+        inflow: false,
+        orig: None,
+        cur: None,
+        note: String::new(),
+    }
+}
+
+/// Демо-данные целиком, как события журнала: остатки счетов, счёт в тенге, поездки и операции из макета.
+pub fn book_events() -> Vec<EventBody> {
+    let mut bodies: Vec<EventBody> = Vec::new();
+    for (id, opening) in [("acc-work", 2800.0), ("acc-personal", 61640.5), ("acc-cash", 12400.0)] {
+        if let Some(mut a) = book::default_accounts().into_iter().find(|a| a.id == id) {
+            a.opening = rub(opening);
+            bodies.push(EventBody::AccountPut { account: a });
+        }
+    }
+    bodies.push(EventBody::AccountPut {
+        account: Account { id: "acc-kzt".into(), name: "Наличные, тенге".into(), short: "₸".into(), currency: "KZT".into(), opening: rub(18000.0), kind: "cash".into(), order: 4, archived: false },
+    });
+    bodies.extend(trips().into_iter().map(|trip| EventBody::TripPut { trip }));
+    bodies.extend(ops().into_iter().map(|mut op| {
+        op.account = format!("acc-{}", op.account);
+        EventBody::OpPut { op }
+    }));
+    for op in [
+        own_op("p1", "2026-11-05", OpKind::Personal, "telecom", "Музыка, подписка", 299.0),
+        own_op("p2", "2026-11-02", OpKind::Personal, "groceries", "Супермаркет", 3480.0),
+        own_op("p3", "2026-11-01", OpKind::Personal, "home", "Коммунальные платежи", 7240.0),
+        own_op("p4", "2026-10-30", OpKind::Income, "salary", "Зарплата", 78000.0),
+    ] {
+        bodies.push(EventBody::OpPut { op });
+    }
+    bodies
 }

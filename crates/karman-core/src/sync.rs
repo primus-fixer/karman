@@ -6,7 +6,8 @@
 use crate::db::Store;
 use crate::error::{Error, Result};
 use crate::pairing::Pairing;
-use crate::trip::Op;
+use crate::book::Account;
+use crate::trip::{Op, Trip};
 use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, OsRng};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use serde::{Deserialize, Serialize};
@@ -34,6 +35,26 @@ pub struct Event {
 pub enum EventBody {
     OpPut { op: Op },
     OpDelete { id: String },
+    TripPut { trip: Trip },
+    TripDelete { id: String },
+    AccountPut { account: Account },
+    AccountDelete { id: String },
+    SettingPut { key: String, value: String },
+}
+
+impl EventBody {
+    /// Вид записи, её номер и содержимое (None — удаление).
+    pub fn item(&self) -> crate::Result<(&'static str, String, Option<String>)> {
+        Ok(match self {
+            EventBody::OpPut { op } => ("op", op.id.clone(), Some(serde_json::to_string(op)?)),
+            EventBody::OpDelete { id } => ("op", id.clone(), None),
+            EventBody::TripPut { trip } => ("trip", trip.id.clone(), Some(serde_json::to_string(trip)?)),
+            EventBody::TripDelete { id } => ("trip", id.clone(), None),
+            EventBody::AccountPut { account } => ("account", account.id.clone(), Some(serde_json::to_string(account)?)),
+            EventBody::AccountDelete { id } => ("account", id.clone(), None),
+            EventBody::SettingPut { key, value } => ("setting", key.clone(), Some(serde_json::to_string(value)?)),
+        })
+    }
 }
 
 const MAGIC: &[u8; 4] = b"KRM1";

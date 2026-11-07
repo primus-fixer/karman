@@ -1,14 +1,20 @@
 //! Зашифрованная база (SQLCipher) с журналом событий.
 //!
-//! Каждое изменение — событие с номером от устройства. Таблица операций
-//! собирается из событий: при споре двух устройств побеждает более позднее
-//! изменение (по часам Лэмпорта, при равенстве — по номеру устройства).
+//! Каждое изменение — событие с номером от устройства. Таблица записей
+//! (операции, поездки, счета, настройки) собирается из событий: при споре
+//! двух устройств побеждает более позднее изменение (по часам Лэмпорта,
+//! при равенстве — по номеру устройства).
 
+use crate::book::Account;
 use crate::error::{Error, Result};
 use crate::sync::{Event, EventBody, VersionVector};
-use crate::trip::Op;
+use crate::trip::{Op, Trip};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use serde::de::DeserializeOwned;
+use std::collections::BTreeMap;
 use std::path::Path;
+
+const SCHEMA: &str = "2";
 
 pub struct Store {
     conn: Connection,
@@ -41,11 +47,41 @@ impl Store {
              CREATE TABLE IF NOT EXISTS events(
                device TEXT NOT NULL, seq INTEGER NOT NULL, lamport INTEGER NOT NULL, body TEXT NOT NULL,
                PRIMARY KEY(device, seq));
-             CREATE TABLE IF NOT EXISTS ops(
-               id TEXT PRIMARY KEY, body TEXT, deleted INTEGER NOT NULL DEFAULT 0,
-               lamport INTEGER NOT NULL, device TEXT NOT NULL);",
+             CREATE TABLE IF NOT EXISTS items(
+               kind TEXT NOT NULL, id TEXT NOT NULL, body TEXT, deleted INTEGER NOT NULL DEFAULT 0,
+               lamport INTEGER NOT NULL, device TEXT NOT NULL,
+               PRIMARY KEY(kind, id));",
         )?;
-        Ok(Store { conn, device: device.to_string() })
+        let mut store = Store { conn, device: device.to_string() };
+        if store.meta("schema")?.as_deref() != Some(SCHEMA) {
+            store.rebuild()?;
+            store.conn.execute_batch("DROP TABLE IF EXISTS ops;")?;
+            store.set_meta("schema", SCHEMA)?;
+        }
+        Ok(store)
+    }
+
+    /// Собирает таблицу записей заново из журнала событий.
+    pub fn rebuild(&mut self) -> Result<()> {
+        let events = self.all_events()?;
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM items", [])?;
+        for ev in &events {
+            materialize(&tx, ev)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn all_events(&self) -> Result<Vec<Event>> {
+        let mut st = self.conn.prepare("SELECT device, seq, lamport, body FROM events ORDER BY lamport, device")?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (device, seq, lamport, body) = row?;
+            out.push(Event { device, seq: seq as u64, lamport: lamport as u64, body: serde_json::from_str(&body)? });
+        }
+        Ok(out)
     }
 
     pub fn device(&self) -> &str {
@@ -69,12 +105,25 @@ impl Store {
 
     /// Записывает своё изменение.
     pub fn append(&mut self, body: EventBody) -> Result<Event> {
-        let ev = Event { device: self.device.clone(), seq: self.next_seq()?, lamport: self.max_lamport()? + 1, body };
+        Ok(self.append_all(vec![body])?.remove(0))
+    }
+
+    /// Несколько своих изменений одной транзакцией.
+    pub fn append_all(&mut self, bodies: Vec<EventBody>) -> Result<Vec<Event>> {
+        let mut seq = self.next_seq()?;
+        let mut lamport = self.max_lamport()?;
         let tx = self.conn.transaction()?;
-        insert_event(&tx, &ev)?;
-        materialize(&tx, &ev)?;
+        let mut out = Vec::with_capacity(bodies.len());
+        for body in bodies {
+            lamport += 1;
+            let ev = Event { device: self.device.clone(), seq, lamport, body };
+            seq += 1;
+            insert_event(&tx, &ev)?;
+            materialize(&tx, &ev)?;
+            out.push(ev);
+        }
         tx.commit()?;
-        Ok(ev)
+        Ok(out)
     }
 
     pub fn put_op(&mut self, op: Op) -> Result<Event> {
@@ -132,14 +181,44 @@ impl Store {
         Ok(out)
     }
 
-    pub fn ops(&self) -> Result<Vec<Op>> {
-        let mut st = self.conn.prepare("SELECT body FROM ops WHERE deleted = 0 AND body IS NOT NULL")?;
-        let rows = st.query_map([], |r| r.get::<_, String>(0))?;
+    fn items<T: DeserializeOwned>(&self, kind: &str) -> Result<Vec<T>> {
+        let mut st = self.conn.prepare("SELECT body FROM items WHERE kind = ?1 AND deleted = 0 AND body IS NOT NULL")?;
+        let rows = st.query_map([kind], |r| r.get::<_, String>(0))?;
         let mut out = Vec::new();
         for b in rows {
             out.push(serde_json::from_str(&b?)?);
         }
-        out.sort_by(|a: &Op, b: &Op| b.date.cmp(&a.date).then_with(|| a.id.cmp(&b.id)));
+        Ok(out)
+    }
+
+    /// Операции, новые сверху.
+    pub fn ops(&self) -> Result<Vec<Op>> {
+        let mut out: Vec<Op> = self.items("op")?;
+        out.sort_by(|a, b| b.date.cmp(&a.date).then_with(|| b.id.cmp(&a.id)));
+        Ok(out)
+    }
+
+    /// Поездки, новые сверху.
+    pub fn trips(&self) -> Result<Vec<Trip>> {
+        let mut out: Vec<Trip> = self.items("trip")?;
+        out.sort_by(|a, b| b.start.cmp(&a.start).then_with(|| b.id.cmp(&a.id)));
+        Ok(out)
+    }
+
+    pub fn accounts(&self) -> Result<Vec<Account>> {
+        let mut out: Vec<Account> = self.items("account")?;
+        out.sort_by_key(|a| a.order);
+        Ok(out)
+    }
+
+    pub fn settings(&self) -> Result<BTreeMap<String, String>> {
+        let mut st = self.conn.prepare("SELECT id, body FROM items WHERE kind = 'setting' AND deleted = 0 AND body IS NOT NULL")?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut out = BTreeMap::new();
+        for row in rows {
+            let (k, v) = row?;
+            out.insert(k, serde_json::from_str::<String>(&v)?);
+        }
         Ok(out)
     }
 
@@ -156,7 +235,7 @@ impl Store {
         Ok(())
     }
 
-    /// Для проверки скорости: пачка строк в одной транзакции во временной таблице.
+    /// Для проверки скорости: пачка строк в одной транзакции в отдельной таблице.
     pub fn bench_rows(&mut self, n: usize) -> Result<usize> {
         let tx = self.conn.transaction()?;
         tx.execute_batch("CREATE TABLE IF NOT EXISTS bench(id INTEGER PRIMARY KEY, title TEXT NOT NULL, amount INTEGER NOT NULL)")?;
@@ -180,22 +259,20 @@ fn insert_event(tx: &Transaction, ev: &Event) -> Result<bool> {
 }
 
 fn materialize(tx: &Transaction, ev: &Event) -> Result<()> {
-    let (id, body, deleted) = match &ev.body {
-        EventBody::OpPut { op } => (op.id.clone(), Some(serde_json::to_string(op)?), 0),
-        EventBody::OpDelete { id } => (id.clone(), None, 1),
-    };
+    let (kind, id, body) = ev.body.item()?;
     let cur: Option<(i64, String)> = tx
-        .query_row("SELECT lamport, device FROM ops WHERE id = ?1", [&id], |r| Ok((r.get(0)?, r.get(1)?)))
+        .query_row("SELECT lamport, device FROM items WHERE kind = ?1 AND id = ?2", params![kind, id], |r| Ok((r.get(0)?, r.get(1)?)))
         .optional()?;
     let newer = match cur {
         None => true,
         Some((l, d)) => (ev.lamport as i64, ev.device.as_str()) > (l, d.as_str()),
     };
     if newer {
+        let deleted = body.is_none() as i64;
         tx.execute(
-            "INSERT INTO ops(id, body, deleted, lamport, device) VALUES(?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT(id) DO UPDATE SET body = excluded.body, deleted = excluded.deleted, lamport = excluded.lamport, device = excluded.device",
-            params![id, body, deleted, ev.lamport as i64, ev.device],
+            "INSERT INTO items(kind, id, body, deleted, lamport, device) VALUES(?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(kind, id) DO UPDATE SET body = excluded.body, deleted = excluded.deleted, lamport = excluded.lamport, device = excluded.device",
+            params![kind, id, body, deleted, ev.lamport as i64, ev.device],
         )?;
     }
     Ok(())
@@ -241,5 +318,30 @@ mod tests {
         s.delete_op(&op.id).unwrap();
         assert!(s.ops().unwrap().is_empty());
         assert_eq!(s.version_vector().unwrap().get("dev-a"), Some(&3));
+    }
+
+    #[test]
+    fn trips_accounts_settings_and_rebuild() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("b.db");
+        let key = [3u8; 32];
+        {
+            let mut s = Store::open(&path, &key, "dev-a").unwrap();
+            let trips = demo::trips();
+            let bodies: Vec<EventBody> = trips.iter().cloned().map(|trip| EventBody::TripPut { trip }).collect();
+            s.append_all(bodies).unwrap();
+            s.append(EventBody::SettingPut { key: "rate".into(), value: "80000".into() }).unwrap();
+            s.append(EventBody::TripDelete { id: "540".into() }).unwrap();
+            crate::book::ensure_defaults(&mut s).unwrap();
+            assert_eq!(s.trips().unwrap().len(), 4);
+            assert_eq!(s.settings().unwrap().get("rate").map(String::as_str), Some("80000"));
+            assert_eq!(s.accounts().unwrap().len(), 3);
+            // Таблица записей собирается из журнала один в один.
+            s.rebuild().unwrap();
+            assert_eq!(s.trips().unwrap().len(), 4);
+        }
+        let s = Store::open(&path, &key, "dev-a").unwrap();
+        assert_eq!(s.trips().unwrap()[0].id, "588", "новые поездки сверху");
+        assert_eq!(s.accounts().unwrap()[0].id, "acc-work");
     }
 }
