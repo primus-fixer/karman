@@ -90,6 +90,9 @@ pub struct Op {
     pub plan: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_date: Option<Date>,
+    /// Перевод на цель (или с неё): какая цель.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
     /// Поля из более новых версий: сохраняются как есть и не теряются при правке.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,

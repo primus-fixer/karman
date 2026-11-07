@@ -341,6 +341,29 @@ export default function Entry({
   } else if (cur !== 'RUB' && amt > 0) note = rubNote(qFrom, cur, amtRub);
   else if (move) note = '«Мои деньги» не меняются: деньги переходят между вашими счетами';
 
+  // Бюджет месяца: сколько останется в лимите категории (или в общем) после этой покупки.
+  let budgetNote = '';
+  let budgetWarn = false;
+  if (!move && e.dir === 'out' && !isTrip) {
+    const day = e.date || snap.today;
+    const bv = snap.budgets.find((b) => b.id === (family ? 'family' : 'personal'));
+    if (bv && day >= bv.start && day <= bv.end) {
+      // При правке прежняя сумма этой операции уже в «потрачено».
+      const back = editing && editing.kind === 'personal' && (editing.family ? 'family' : 'personal') === bv.id && editing.date >= bv.start && editing.date <= bv.end ? editing : null;
+      const cv = bv.cats.find((c) => c.cat === e.cat);
+      const left = (limit: number, spent: number) => (spent <= limit ? 'останется ' + rub(limit - spent) : 'сверх лимита на ' + rub(spent - limit)) + ' из ' + rub(limit);
+      if (cv && cv.limit != null) {
+        const spent = cv.spent - (back && back.cat === e.cat ? back.amount : 0) + amtRub;
+        budgetNote = `${(CATS[e.cat] || CATS.other).n}: ${left(cv.limit, spent)}`;
+        budgetWarn = spent > cv.limit;
+      } else if (bv.total) {
+        const spent = bv.spent - (back ? back.amount : 0) + amtRub;
+        budgetNote = `${family ? 'Семейный бюджет' : 'Бюджет месяца'}: ${left(bv.total, spent)}`;
+        budgetWarn = spent > bv.total;
+      }
+    }
+  }
+
   const room = tv ? Math.max(0, tv.s.leftover) : 0;
   const showDocs = !move && e.dir === 'out' && isTrip && e.cat !== 'food';
   let docNote = '';
@@ -625,6 +648,11 @@ export default function Entry({
             ))}
             {accounts.length === 0 && <p className="note warn">Нет счетов. Добавьте счёт в настройках.</p>}
           </div>
+          {budgetNote && (
+            <p className={'note' + (budgetWarn ? ' warn' : '')} style={{ fontSize: 13, lineHeight: '18px' }}>
+              {budgetNote}
+            </p>
+          )}
         </>
       )}
 

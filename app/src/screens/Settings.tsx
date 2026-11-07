@@ -98,6 +98,8 @@ const KINDS: { id: string; label: string; note: string }[] = [
   { id: 'work', label: 'Рабочий', note: 'Сюда приходит аванс, с него возврат компании' },
   { id: 'personal', label: 'Личный', note: 'Сюда приходит возмещение и зарплата' },
   { id: 'cash', label: 'Наличные', note: 'Деньги в кошельке' },
+  { id: 'savings', label: 'Накопительный', note: 'Копилка или накопительный счёт: идёт в «Отложено», сюда откладывают на цели' },
+  { id: 'deposit', label: 'Вклад', note: 'Ставка и срок: «Карман» покажет прогноз процентов и напомнит о конце срока' },
 ];
 
 const CURRENCIES = ['RUB', 'KZT', 'USD', 'EUR'];
@@ -229,13 +231,24 @@ function AccountEditor({
   const [currency, setCurrency] = useState(base.currency);
   const [kind, setKind] = useState(base.kind);
   const [archived, setArchived] = useState(base.archived);
+  const [rate, setRate] = useState(base.deposit ? String(base.deposit.rate).replace('.', ',') : '');
+  const [opened, setOpened] = useState(base.deposit?.opened ?? snap.today);
+  const [until, setUntil] = useState(base.deposit?.until ?? '');
+  const [capitalize, setCapitalize] = useState(base.deposit?.capitalize ?? true);
   const [bal, setBal] = useState(view ? (view.balance < 0 ? '-' : '') + amountText(view.balance) : '');
   const [error, setError] = useState<string | null>(null);
   const save = async () => {
     if (!name.trim()) return setError('Укажите название счёта');
     const b = bal.trim() ? parseSigned(bal) : 0;
     if (b == null) return setError('Не получается прочитать остаток');
-    const ok = await onSave({ ...base, name: name.trim(), short: short.trim(), currency, kind, archived, opening: b - moved });
+    let deposit = null;
+    if (kind === 'deposit') {
+      const r = Number(rate.trim().replace(',', '.'));
+      if (!rate.trim() || !Number.isFinite(r) || r < 0 || r > 100) return setError('Ставка вклада — процентов годовых, например 16,5');
+      if (until && until <= opened) return setError('Вклад заканчивается раньше, чем открыт');
+      deposit = { rate: r, opened: opened || snap.today, until: until || null, capitalize };
+    }
+    const ok = await onSave({ ...base, name: name.trim(), short: short.trim(), currency, kind, archived, opening: b - moved, deposit });
     if (!ok) setError('Не удалось сохранить');
   };
   return (
@@ -265,10 +278,41 @@ function AccountEditor({
         </label>
       </div>
       {used && <p className="note">Валюту нельзя поменять: по счёту уже есть операции.</p>}
-      <Seg label="Тип счёта" value={kind} onPick={setKind} items={KINDS.map((k) => ({ id: k.id, label: k.label }))} />
+      <div className="chips" role="group" aria-label="Тип счёта">
+        {KINDS.map((k) => (
+          <button key={k.id} type="button" aria-pressed={k.id === kind} className={'chip' + (k.id === kind ? ' sel' : '')} onClick={() => setKind(k.id)}>
+            {k.label}
+          </button>
+        ))}
+      </div>
       <p className="note" style={{ marginTop: -6 }}>
         {KINDS.find((k) => k.id === kind)?.note}
       </p>
+      {kind === 'deposit' && (
+        <div className="stack gap10">
+          <div className="form-grid">
+            <label className="label">
+              <span>Ставка, % годовых</span>
+              <input className="field num" inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} placeholder="Например, 16,5" />
+            </label>
+            <label className="label">
+              <span>Открыт</span>
+              <input className="field" type="date" value={opened} onChange={(e) => setOpened(e.target.value)} />
+            </label>
+            <label className="label">
+              <span>До (пусто — бессрочный)</span>
+              <input className="field" type="date" value={until} onChange={(e) => setUntil(e.target.value)} />
+            </label>
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 44 }}>
+            <input type="checkbox" checked={capitalize} onChange={(e) => setCapitalize(e.target.checked)} style={{ width: 20, height: 20, margin: 0, accentColor: 'var(--own)' }} />
+            <span>Капитализация: проценты каждый месяц прибавляются к вкладу</span>
+          </label>
+          <p className="note" style={{ marginTop: -6 }}>
+            Проценты от банка записывайте доходом «Проценты» на этот счёт — прогноз пересчитается по новому остатку.
+          </p>
+        </div>
+      )}
       {view && (
         <label style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 44 }}>
           <input type="checkbox" checked={archived} onChange={(e) => setArchived(e.target.checked)} style={{ width: 20, height: 20, margin: 0, accentColor: 'var(--own)' }} />
@@ -575,6 +619,22 @@ export default function Settings({
           <button type="button" className="btn ghost" style={{ marginTop: 10, alignSelf: 'flex-start' }} onClick={() => setEditAcc('new')}>
             Добавить счёт
           </button>
+        )}
+        {snap.accounts.some((a) => !a.account.archived && (a.account.kind === 'savings' || a.account.kind === 'deposit')) && (
+          <label className="setrow" style={{ cursor: 'pointer', marginTop: 10 }}>
+            <span>
+              <span>Считать отложенное в «Моих деньгах»</span>
+              <span className="note">Накопительные счета и вклады. Выключено — они отдельной строкой «Отложено»</span>
+            </span>
+            <input
+              type="checkbox"
+              role="switch"
+              aria-label="Считать отложенное в «Моих деньгах»"
+              checked={snap.saved_in_mine}
+              onChange={(e) => run(api.settingSet('savings.in_mine', e.target.checked ? '1' : '0'), e.target.checked ? 'Отложенное входит в «Мои деньги»' : 'Отложенное — отдельно от «Моих денег»')}
+              style={{ flex: 'none', width: 20, height: 20, margin: 0, accentColor: 'var(--own)' }}
+            />
+          </label>
         )}
       </section>
 

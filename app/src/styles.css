@@ -871,6 +871,43 @@ textarea.field {
   font-size: 14px;
 }
 
+/* Строка бюджета, вклада или цели с полоской */
+.budrow {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.budrow > .stack {
+  flex: 1;
+}
+
+/* Полоска «потрачено из лимита» */
+.bar {
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--inset);
+  overflow: hidden;
+}
+
+.bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--own);
+}
+
+.bar.near > i {
+  background: var(--work);
+}
+
+.bar.over > i {
+  background: var(--warn);
+}
+
 .opright {
   display: flex;
   flex-direction: column;

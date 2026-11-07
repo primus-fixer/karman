@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import type { Snapshot } from '../api';
 import { NB, fmt, rub, weekdayLabel } from '../format';
-import { isSpend, statusIndex, tripRow } from '../logic';
+import { CATS, isSpend, statusIndex, tripRow } from '../logic';
 import { Dots, Icon, OpRow, type OpActions } from '../ui';
 import type { Nav } from '../App';
-import { DueRow, type FinanceActions } from './Finance';
+import { DueRow, type FinanceActions, type FinView } from './Finance';
+import { Bar, leftText } from './Budget';
 
 export function Figures({ snap, nav, big = true }: { snap: Snapshot; nav: Nav; big?: boolean }) {
   const items: { label: string; value: string; note?: string; mark: string; go: () => void }[] = [];
@@ -74,7 +75,7 @@ export function TripList({ snap, nav, closed = false }: { snap: Snapshot; nav: N
   );
 }
 
-export default function Overview({ snap, nav, act, fin }: { snap: Snapshot; nav: Nav; act: OpActions; fin: FinanceActions }) {
+export default function Overview({ snap, nav, act, fin, openFinance }: { snap: Snapshot; nav: Nav; act: OpActions; fin: FinanceActions; openFinance: (v: FinView) => void }) {
   const [accountsOpen, setAccountsOpen] = useState(false);
   const mine = fmt(snap.mine);
   const comma = mine.indexOf(',');
@@ -83,6 +84,8 @@ export default function Overview({ snap, nav, act, fin }: { snap: Snapshot; nav:
   const openTrips = snap.trips.filter((t) => statusIndex(t.trip.status) < 5);
   const empty = snap.trips.length === 0 && snap.ops.length === 0;
   const soon = snap.upcoming.filter((u) => u.soon);
+  // Бюджеты, где задан хоть один лимит.
+  const budgets = snap.budgets.filter((b) => b.total || b.cats.some((c) => c.limit != null));
   const debts: string[] = [];
   if (snap.i_owe > 0) debts.push('я должен ' + rub(snap.i_owe));
   if (snap.owed_to_me > 0) debts.push('мне должны ' + rub(snap.owed_to_me));
@@ -135,8 +138,19 @@ export default function Overview({ snap, nav, act, fin }: { snap: Snapshot; nav:
               </button>
             </div>
           )}
+          {snap.saved > 0 && (
+            <button type="button" className="collapse" onClick={() => openFinance('save')}>
+              <span>
+                Отложено
+                {snap.saved_in_mine && <span className="note faint"> — входит в «Мои деньги»</span>}
+              </span>
+              <span className="num" style={{ color: 'var(--ink)' }}>
+                {rub(snap.saved)}
+              </span>
+            </button>
+          )}
           {debts.length > 0 && (
-            <button type="button" className="collapse" onClick={() => nav.go('finance')}>
+            <button type="button" className="collapse" onClick={() => openFinance('pay')}>
               <span>Долги</span>
               <span className="num" style={{ color: 'var(--ink)', textAlign: 'right', padding: '6px 0' }}>
                 {debts.map((t) => (
@@ -150,11 +164,41 @@ export default function Overview({ snap, nav, act, fin }: { snap: Snapshot; nav:
         </div>
       </section>
 
+      {budgets.length > 0 && (
+        <section className="stack">
+          <div className="between" style={{ marginBottom: 8 }}>
+            <h2 className="h2">Бюджет на месяц</h2>
+            <button type="button" className="btn link" style={{ color: 'var(--own)', padding: 0 }} onClick={() => openFinance('budget')}>
+              Подробнее
+            </button>
+          </div>
+          {budgets.map((b) => {
+            const over = b.cats.filter((c) => c.limit != null && c.spent > c.limit);
+            return (
+              <button key={b.id} type="button" className="budrow" style={{ width: '100%', textAlign: 'left', background: 'none', border: 0, borderTop: '1px solid var(--line)', color: 'inherit', font: 'inherit' }} onClick={() => openFinance('budget')}>
+                <span className="stack" style={{ minWidth: 0, gap: 4, width: '100%' }}>
+                  <span className="between">
+                    <span>{b.id === 'family' ? 'Семейный' : 'Личный'}</span>
+                    <span className="num">
+                      {rub(b.spent)}
+                      {b.total ? ' из ' + rub(b.total) : ''}
+                    </span>
+                  </span>
+                  <Bar value={b.spent} limit={b.total} />
+                  {b.total ? <span className={'note' + (b.spent > b.total ? ' warn' : '')}>{leftText(b.spent, b.total)}</span> : null}
+                  {over.length > 0 && <span className="note warn">Сверх лимита: {over.map((c) => (CATS[c.cat] || CATS.other).n.toLowerCase()).join(', ')}</span>}
+                </span>
+              </button>
+            );
+          })}
+        </section>
+      )}
+
       {soon.length > 0 && (
         <section className="stack">
           <div className="between" style={{ marginBottom: 8 }}>
             <h2 className="h2">Скоро платежи</h2>
-            <button type="button" className="btn link" style={{ color: 'var(--own)', padding: 0 }} onClick={() => nav.go('finance')}>
+            <button type="button" className="btn link" style={{ color: 'var(--own)', padding: 0 }} onClick={() => openFinance('pay')}>
               Все в финансах
             </button>
           </div>

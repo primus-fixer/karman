@@ -8,7 +8,9 @@ mod guard;
 mod notify;
 
 use karman_core::book::{self, Account, Snapshot};
+use karman_core::budget::{Budget, FAMILY, PERSONAL};
 use karman_core::finance::{self, Debt, DebtDir, Plan};
+use karman_core::savings::Goal;
 use karman_core::db::{is_plaintext_sqlite, Store};
 use karman_core::money::{fmt2, rub_text};
 use karman_core::pairing::{random_key, Pairing};
@@ -344,6 +346,7 @@ fn debt_op(id: String, date: Date, title: String, amount: i64, account: String, 
         to_amount: None,
         plan: None,
         plan_date: None,
+        goal: None,
         extra: Default::default(),
     }
 }
@@ -436,6 +439,78 @@ fn plan_skip(state: State<AppState>, today: String, id: String, date: String) ->
         plan.skipped.sort();
     }
     st.append(EventBody::PlanPut { plan }).map_err(err)?;
+    snap(&st, &today)
+}
+
+// ——— Цели и бюджет ———
+
+#[tauri::command]
+fn goal_save(state: State<AppState>, today: String, mut goal: Goal) -> Res<Snapshot> {
+    goal.title = goal.title.trim().to_string();
+    if goal.title.is_empty() {
+        return Err("Укажите, на что копите".into());
+    }
+    if goal.target <= 0 {
+        return Err("Введите, сколько нужно".into());
+    }
+    if goal.id.is_empty() {
+        goal.id = format!("goal-{}", book::new_id().map_err(err)?);
+    }
+    let mut st = state.store()?;
+    if !st.accounts().map_err(err)?.iter().any(|a| a.id == goal.account) {
+        return Err("Выберите счёт, куда откладывать".into());
+    }
+    st.append(EventBody::GoalPut { goal }).map_err(err)?;
+    snap(&st, &today)
+}
+
+#[tauri::command]
+fn goal_delete(state: State<AppState>, today: String, id: String) -> Res<Snapshot> {
+    let mut st = state.store()?;
+    st.append(EventBody::GoalDelete { id }).map_err(err)?;
+    snap(&st, &today)
+}
+
+/// «Отложить» — перевод со счёта на счёт цели; `take` — «Взять из цели», обратно.
+#[tauri::command]
+fn goal_move(state: State<AppState>, today: String, id: String, amount: i64, account: String, date: String, take: bool) -> Res<Snapshot> {
+    if amount <= 0 {
+        return Err("Введите сумму".into());
+    }
+    let mut st = state.store()?;
+    let goal = st.goals().map_err(err)?.into_iter().find(|g| g.id == id).ok_or("цель не найдена")?;
+    if account == goal.account {
+        return Err("Выберите другой счёт: этот — счёт цели".into());
+    }
+    let accounts = st.accounts().map_err(err)?;
+    for a in [&account, &goal.account] {
+        match accounts.iter().find(|x| &x.id == a) {
+            None => return Err("Счёт не найден".into()),
+            Some(x) if x.currency != "RUB" => return Err("Цели копятся в рублях: выберите рублёвый счёт".into()),
+            _ => {}
+        }
+    }
+    let (from, to, title) = if take { (goal.account.clone(), account, format!("С цели: {}", goal.title)) } else { (account, goal.account.clone(), format!("На цель: {}", goal.title)) };
+    let op = Op {
+        kind: trip::OpKind::Transfer,
+        cat: "transfer".into(),
+        to: Some(to),
+        goal: Some(goal.id.clone()),
+        ..debt_op(book::new_id().map_err(err)?, day(&date)?, title, amount, from, "", false)
+    };
+    st.put_op(Op { debt: None, ..op }).map_err(err)?;
+    snap(&st, &today)
+}
+
+#[tauri::command]
+fn budget_save(state: State<AppState>, today: String, mut budget: Budget) -> Res<Snapshot> {
+    if budget.id != PERSONAL && budget.id != FAMILY {
+        return Err("неизвестный бюджет".into());
+    }
+    budget.total = budget.total.filter(|t| *t > 0);
+    budget.cats.retain(|_, v| *v > 0);
+    let mut st = state.store()?;
+    st.append(EventBody::BudgetPut { budget }).map_err(err)?;
     snap(&st, &today)
 }
 
@@ -876,6 +951,10 @@ pub fn run() {
             plan_delete,
             plan_pay,
             plan_skip,
+            goal_save,
+            goal_delete,
+            goal_move,
+            budget_save,
             notify::remind_status,
             notify::remind_desktop,
             guard::lock_status,
