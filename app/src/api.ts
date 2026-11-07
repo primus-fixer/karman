@@ -111,6 +111,23 @@ export type PairingView = { uri: string; qr_svg: string; hosts: string[]; port: 
 export type SyncStatus = { running: boolean; log: Check[] };
 export type SyncResult = { peer_name: string; sent: number; received: number };
 export type ReceiptView = { date: string; time: string; sum: number; fn_number: string; fd: string; fp: string; kind: string };
+export type LockStatus = {
+  pin: boolean;
+  locked: boolean;
+  bio: boolean;
+  bio_ready: boolean;
+  bio_kind: '' | 'fingerprint' | 'face' | 'hello';
+  recover: '' | 'device' | 'hello';
+  wait: number;
+  left: number;
+  recovery: boolean;
+  key: string;
+  error: string | null;
+  notice: string | null;
+};
+
+/** Ответ команд с данными, пока «Карман» заблокирован. */
+export const LOCKED = 'locked';
 
 /** Приложение открыто внутри Tauri, а не в обычном браузере. */
 export const inApp = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -135,7 +152,22 @@ export const api = {
   syncStop: () => invoke<void>('sync_stop'),
   syncConnect: (uri: string) => invoke<SyncResult>('sync_connect', { uri }),
   receiptParse: (text: string) => invoke<ReceiptView>('receipt_parse', { text }),
+  lockStatus: () => invoke<LockStatus>('lock_status'),
+  pinUnlock: (code: string) => invoke<LockStatus>('pin_unlock', { code }),
+  pinSet: (code: string, current: string | null) => invoke<LockStatus>('pin_set', { code, current }),
+  pinOff: (current: string | null) => invoke<LockStatus>('pin_off', { current }),
+  bioUnlock: () => invoke<LockStatus>('bio_unlock'),
+  bioSet: (on: boolean) => invoke<LockStatus>('bio_set', { on }),
+  pinRecover: () => invoke<LockStatus>('pin_recover'),
+  lockNow: () => invoke<LockStatus>('lock_now'),
+  appVisible: (visible: boolean) => invoke<LockStatus>('app_visible', { visible }),
 };
+
+/** Ядро сообщает, что «Карман» заблокировался (5 минут в фоне). */
+export async function onLocked(cb: () => void): Promise<() => void> {
+  const { listen } = await import('@tauri-apps/api/event');
+  return listen('locked', cb);
+}
 
 /** Сканирование QR-кода камерой телефона. */
 export async function scanQr(): Promise<string> {

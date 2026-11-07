@@ -1,11 +1,18 @@
 [workspace]
 resolver = "2"
-members = ["crates/karman-core", "app/src-tauri"]
+members = ["crates/karman-core", "crates/karman-secure", "app/src-tauri"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 publish = false
 
 [profile.release]
 strip = true
+
+# Argon2 в отладочной сборке иначе считает PIN по секунде.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

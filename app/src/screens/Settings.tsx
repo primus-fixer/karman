@@ -1,10 +1,89 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, message, scanQr, type Account, type AccountView, type Check, type DeviceInfo, type PairingView, type Snapshot, type SyncResult } from '../api';
+import { api, message, scanQr, type Account, type AccountView, type Check, type DeviceInfo, type LockStatus, type PairingView, type Snapshot, type SyncResult } from '../api';
+import type { PinMode } from '../Lock';
 import { SIGN, amountText, parseAmount, rub } from '../format';
 import { SCHEMES, type ThemeMode } from '../theme';
 import { Checks, ErrorText, Icon, Seg } from '../ui';
 
 export type ThemeState = { scheme: string; mode: ThemeMode };
+
+export type Security = {
+  lock: LockStatus | null;
+  onPin: (mode: PinMode) => void;
+  onBio: (on: boolean) => void;
+  onLockNow: () => void;
+};
+
+function SecuritySection({ sec, os }: { sec: Security; os: string }) {
+  const lock = sec.lock;
+  if (!lock) return null;
+  const win = os === 'windows';
+  const droid = os === 'android';
+  const bioTitle = win ? 'Вход через Windows Hello' : lock.bio_kind === 'face' ? 'Вход по лицу' : 'Вход по отпечатку';
+  let bioNote: string;
+  if (!lock.pin) bioNote = 'Сначала задайте PIN-код — он останется запасным';
+  else if (!lock.bio_ready)
+    bioNote = win ? 'Windows Hello не настроен: Параметры → Учётные записи → Варианты входа' : droid ? 'На телефоне не добавлен отпечаток пальца' : 'На этом устройстве недоступно';
+  else bioNote = win ? 'Отпечаток, лицо или PIN Windows — что настроено в Windows Hello. PIN-код «Кармана» остаётся запасным' : 'PIN-код остаётся запасным';
+  const keyText = lock.key === 'dpapi' ? 'зашифрован учётной записью Windows' : lock.key === 'android-keystore' ? 'в защищённом хранилище телефона' : 'в файле рядом с базой';
+  const recover = win ? 'через Windows Hello' : droid ? 'блокировкой экрана телефона' : 'средствами системы';
+  return (
+    <section className="stack">
+      <h2 className="h2" style={{ marginBottom: 6 }}>
+        Защита
+      </h2>
+      <div className="setrow">
+        <span>
+          <span>Вход по PIN-коду</span>
+          <span className="note">{lock.pin ? 'Спрашивается при запуске и после 5 минут в фоне' : 'Выключен: «Карман» открывается без кода'}</span>
+        </span>
+        {!lock.pin && (
+          <button type="button" className="btn own" style={{ flex: 'none' }} onClick={() => sec.onPin('create')}>
+            Задать PIN
+          </button>
+        )}
+      </div>
+      {lock.pin && (
+        <div className="wrap" style={{ padding: '2px 0 12px' }}>
+          <button type="button" className="btn ghost" onClick={() => sec.onPin('change')}>
+            Сменить PIN
+          </button>
+          <button type="button" className="btn ghost" onClick={() => sec.onPin('off')}>
+            Выключить
+          </button>
+          <button type="button" className="btn ghost" style={{ display: 'flex', alignItems: 'center', gap: 8 }} onClick={sec.onLockNow}>
+            <Icon name="lock" size={18} />
+            Заблокировать сейчас
+          </button>
+        </div>
+      )}
+      <label className="setrow" style={{ opacity: lock.pin && lock.bio_ready ? 1 : 0.65, cursor: lock.pin && lock.bio_ready ? 'pointer' : 'default' }}>
+        <span>
+          <span>{bioTitle}</span>
+          <span className="note">{bioNote}</span>
+        </span>
+        <input
+          type="checkbox"
+          role="switch"
+          aria-label={bioTitle}
+          checked={lock.bio}
+          disabled={!lock.pin || !lock.bio_ready}
+          onChange={(e) => sec.onBio(e.target.checked)}
+          style={{ flex: 'none', width: 20, height: 20, margin: 0, accentColor: 'var(--own)' }}
+        />
+      </label>
+      <div className="rule">
+        <span>Ключ базы</span>
+        <span>{keyText}</span>
+      </div>
+      {lock.pin && (
+        <p className="note" style={{ marginTop: 6 }}>
+          Забыли PIN-код — на экране входа нажмите «Забыли PIN?» и подтвердите себя {recover}. Данные останутся.
+        </p>
+      )}
+    </section>
+  );
+}
 
 const RULES: [string, string][] = [
   ['Аванс', 'равен сумме заявки'],
@@ -275,6 +354,7 @@ export default function Settings({
   theme,
   setTheme,
   dark,
+  security,
 }: {
   snap: Snapshot;
   info: DeviceInfo | null;
@@ -284,6 +364,7 @@ export default function Settings({
   theme: ThemeState;
   setTheme: (t: ThemeState) => void;
   dark: boolean;
+  security: Security;
 }) {
   const [rateText, setRateText] = useState(amountText(snap.rate));
   useEffect(() => setRateText(amountText(snap.rate)), [snap.rate]);
@@ -458,6 +539,8 @@ export default function Settings({
         </div>
       </section>
 
+      <SecuritySection sec={security} os={info?.os ?? ''} />
+
       <section className="stack">
         <h2 className="h2" style={{ marginBottom: 6 }}>
           Это устройство
@@ -493,9 +576,6 @@ export default function Settings({
         ) : (
           <p className="note">Загружаю…</p>
         )}
-        <p className="note" style={{ marginTop: 6 }}>
-          Вход по PIN-коду и отпечатку появится в следующем обновлении.
-        </p>
       </section>
 
       <section className="stack gap10">

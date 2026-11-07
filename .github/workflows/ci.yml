@@ -18,7 +18,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: core
-      - run: cargo test -p karman-core
+      - run: cargo test -p karman-core -p karman-secure
 
   frontend:
     name: Интерфейс — сборка

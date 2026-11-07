@@ -1,7 +1,9 @@
 //! «Карман»: мост между экранами и ядром.
 //!
 //! Экраны получают одну сводку (`snapshot`) и после каждого изменения — новую.
-//! Вся логика расчётов — в ядре `karman-core`.
+//! Вся логика расчётов — в ядре `karman-core`. Вход по PIN-коду и отпечатку — в `guard`.
+
+mod guard;
 
 use karman_core::book::{self, Account, Snapshot};
 use karman_core::db::{is_plaintext_sqlite, Store};
@@ -17,6 +19,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 use tauri::{Manager, State};
 
+use guard::{Guard, LOCKED};
+
 /// Порт для обмена по Wi-Fi. Если занят, берётся любой свободный.
 const SYNC_PORT: u16 = 47_500;
 
@@ -26,10 +30,16 @@ struct AppState {
     data_dir: PathBuf,
     db_path: PathBuf,
     server: Mutex<Option<(Server, Pairing)>>,
+    guard: Mutex<Guard>,
+    notice: Mutex<Option<String>>,
 }
 
 impl AppState {
+    /// База для команд с данными: пока «Карман» заблокирован, ответ — `locked`.
     fn store(&self) -> Res<MutexGuard<'_, Store>> {
+        if self.guard.lock().map_err(err)?.locked {
+            return Err(LOCKED.into());
+        }
         self.store.lock().map_err(err)
     }
 }
@@ -74,18 +84,75 @@ fn load_identity(dir: &Path) -> Res<Identity> {
     Ok(id)
 }
 
-/// Пока ключ базы лежит рядом с ней. Следующий шаг этапа 1 — хранилище ключей
-/// системы (Android Keystore, защита данных Windows) и PIN-код.
+/// Ключ базы. На Windows и Android он хранится зашифрованным средствами системы (key.sec):
+/// DPAPI или Android Keystore. Открытый key.bin прежних версий переносится туда и стирается —
+/// но только после того, как защищённая копия записана и проверена.
+/// На Linux (разработка) ключ остаётся в key.bin.
 fn load_key(dir: &Path) -> Res<[u8; 32]> {
-    let path = dir.join("key.bin");
-    if let Ok(bytes) = std::fs::read(&path) {
-        if let Ok(k) = <[u8; 32]>::try_from(bytes.as_slice()) {
-            return Ok(k);
+    let sec = dir.join("key.sec");
+    let plain = dir.join("key.bin");
+    if let Ok(blob) = std::fs::read(&sec) {
+        let k = karman_secure::unprotect(&blob).map_err(|e| format!("ключ базы не достать из хранилища системы: {e}"))?;
+        return <[u8; 32]>::try_from(k.as_slice()).map_err(|_| "ключ базы повреждён".to_string());
+    }
+    let key = match std::fs::read(&plain).ok().and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok()) {
+        Some(k) => k,
+        None => random_key().map_err(err)?,
+    };
+    if karman_secure::supported() {
+        match protect_key(&sec, &key) {
+            Ok(()) => wipe(&plain),
+            Err(e) => {
+                // Хранилище системы не сработало — ключ остаётся в файле, попробуем при следующем запуске.
+                eprintln!("ключ базы не сохранён в хранилище системы: {e}");
+                if !plain.exists() {
+                    std::fs::write(&plain, key).map_err(err)?;
+                }
+            }
+        }
+    } else if !plain.exists() {
+        std::fs::write(&plain, key).map_err(err)?;
+    }
+    Ok(key)
+}
+
+fn protect_key(path: &Path, key: &[u8; 32]) -> Res<()> {
+    let blob = karman_secure::protect(key).map_err(err)?;
+    if karman_secure::unprotect(&blob).map_err(err)?.as_slice() != key {
+        return Err("проверка защищённого ключа не сошлась".into());
+    }
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, &blob).map_err(err)?;
+    std::fs::rename(&tmp, path).map_err(err)
+}
+
+/// Затирает файл нулями и удаляет.
+fn wipe(path: &Path) {
+    if let Ok(meta) = std::fs::metadata(path) {
+        let _ = std::fs::write(path, vec![0u8; meta.len() as usize]);
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// Открывает базу. Если ключ или база не открываются, прежние файлы откладываются в сторону
+/// (не удаляются) и начинается чистая база — данные можно вернуть синхронизацией.
+fn open_store(dir: &Path, db_path: &Path, device: &str) -> Res<(Store, Option<String>)> {
+    let opened = load_key(dir).and_then(|k| Store::open(db_path, &k, device).map_err(err));
+    match opened {
+        Ok(s) => Ok((s, None)),
+        Err(e) => {
+            let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            for name in ["karman.db", "karman.db-wal", "karman.db-shm", "key.sec", "key.bin"] {
+                let p = dir.join(name);
+                if p.exists() {
+                    let _ = std::fs::rename(&p, dir.join(format!("{name}.{stamp}.old")));
+                }
+            }
+            let k = load_key(dir)?;
+            let s = Store::open(db_path, &k, device).map_err(err)?;
+            Ok((s, Some(format!("Прежнюю базу открыть не удалось ({e}). Её файлы сохранены рядом, с пометкой .old. Данные можно вернуть синхронизацией с другого устройства."))))
         }
     }
-    let k = random_key().map_err(err)?;
-    std::fs::write(&path, k).map_err(err)?;
-    Ok(k)
 }
 
 /// Тестовые операции этапа 0 больше не нужны: удаляем их один раз.
@@ -345,6 +412,7 @@ fn pairing_view(p: &Pairing) -> Res<PairingView> {
 /// Начинает ждать подключения и отдаёт QR-код для другого устройства.
 #[tauri::command]
 fn sync_start(state: State<AppState>) -> Res<PairingView> {
+    drop(state.store()?);
     let mut slot = state.server.lock().map_err(err)?;
     if let Some((_, p)) = slot.as_ref() {
         return pairing_view(p);
@@ -406,6 +474,7 @@ struct SyncResult {
 /// Подключается к устройству по QR-коду (или вставленной ссылке) и обменивается данными.
 #[tauri::command]
 async fn sync_connect(state: State<'_, AppState>, uri: String) -> Res<SyncResult> {
+    drop(state.store()?);
     let p = Pairing::from_uri(&uri).map_err(err)?;
     if p.device == state.me.id {
         return Err("Это QR-код этого же устройства. Отсканируйте его другим устройством".into());
@@ -452,20 +521,33 @@ pub fn run() {
     let mut builder = tauri::Builder::default();
     #[cfg(mobile)]
     {
-        builder = builder.plugin(tauri_plugin_barcode_scanner::init());
+        builder = builder.plugin(tauri_plugin_barcode_scanner::init()).plugin(tauri_plugin_biometric::init());
     }
     builder
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             let me = load_identity(&dir)?;
-            let key = load_key(&dir)?;
             let db_path = dir.join("karman.db");
-            let mut store = Store::open(&db_path, &key, &me.id)?;
+            let (mut store, notice) = open_store(&dir, &db_path, &me.id)?;
             cleanup_stage0(&mut store)?;
             book::ensure_defaults(&mut store)?;
-            app.manage(AppState { store: Arc::new(Mutex::new(store)), me, data_dir: dir, db_path, server: Mutex::new(None) });
+            let guard = Guard::new(guard::has_pin(&store));
+            app.manage(AppState {
+                store: Arc::new(Mutex::new(store)),
+                me,
+                data_dir: dir,
+                db_path,
+                server: Mutex::new(None),
+                guard: Mutex::new(guard),
+                notice: Mutex::new(notice),
+            });
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Focused(focused) = event {
+                guard::on_focus(window.app_handle(), *focused);
+            }
         })
         .invoke_handler(tauri::generate_handler![
             snapshot,
@@ -484,7 +566,16 @@ pub fn run() {
             sync_status,
             sync_stop,
             sync_connect,
-            receipt_parse
+            receipt_parse,
+            guard::lock_status,
+            guard::pin_unlock,
+            guard::pin_set,
+            guard::pin_off,
+            guard::bio_unlock,
+            guard::bio_set,
+            guard::pin_recover,
+            guard::lock_now,
+            guard::app_visible
         ])
         .run(tauri::generate_context!())
         .expect("не удалось запустить «Карман»");
