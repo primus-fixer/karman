@@ -4,6 +4,7 @@ import { NB, fmt, rub, weekdayLabel } from '../format';
 import { isSpend, statusIndex, tripRow } from '../logic';
 import { Dots, Icon, OpRow, type OpActions } from '../ui';
 import type { Nav } from '../App';
+import { DueRow, type FinanceActions } from './Finance';
 
 export function Figures({ snap, nav, big = true }: { snap: Snapshot; nav: Nav; big?: boolean }) {
   const items: { label: string; value: string; note?: string; mark: string; go: () => void }[] = [];
@@ -73,7 +74,7 @@ export function TripList({ snap, nav, closed = false }: { snap: Snapshot; nav: N
   );
 }
 
-export default function Overview({ snap, nav, act }: { snap: Snapshot; nav: Nav; act: OpActions }) {
+export default function Overview({ snap, nav, act, fin }: { snap: Snapshot; nav: Nav; act: OpActions; fin: FinanceActions }) {
   const [accountsOpen, setAccountsOpen] = useState(false);
   const mine = fmt(snap.mine);
   const comma = mine.indexOf(',');
@@ -81,6 +82,10 @@ export default function Overview({ snap, nav, act }: { snap: Snapshot; nav: Nav;
   const todaySpend = todayOps.filter(isSpend).reduce((s, o) => s + o.amount, 0);
   const openTrips = snap.trips.filter((t) => statusIndex(t.trip.status) < 5);
   const empty = snap.trips.length === 0 && snap.ops.length === 0;
+  const soon = snap.upcoming.filter((u) => u.soon);
+  const debts: string[] = [];
+  if (snap.i_owe > 0) debts.push('я должен ' + rub(snap.i_owe));
+  if (snap.owed_to_me > 0) debts.push('мне должны ' + rub(snap.owed_to_me));
   return (
     <div className="stack gap26">
       <p className="note" style={{ fontSize: 15, lineHeight: '21px', margin: '-4px 0 -14px' }}>
@@ -130,8 +135,34 @@ export default function Overview({ snap, nav, act }: { snap: Snapshot; nav: Nav;
               </button>
             </div>
           )}
+          {debts.length > 0 && (
+            <button type="button" className="collapse" onClick={() => nav.go('finance')}>
+              <span>Долги</span>
+              <span className="num" style={{ color: 'var(--ink)', textAlign: 'right', padding: '6px 0' }}>
+                {debts.map((t) => (
+                  <span key={t} style={{ display: 'block' }}>
+                    {t}
+                  </span>
+                ))}
+              </span>
+            </button>
+          )}
         </div>
       </section>
+
+      {soon.length > 0 && (
+        <section className="stack">
+          <div className="between" style={{ marginBottom: 8 }}>
+            <h2 className="h2">Скоро платежи</h2>
+            <button type="button" className="btn link" style={{ color: 'var(--own)', padding: 0 }} onClick={() => nav.go('finance')}>
+              Все в финансах
+            </button>
+          </div>
+          {soon.slice(0, 3).map((u) => (
+            <DueRow key={u.kind + u.id + u.date} snap={snap} due={u} act={fin} compact />
+          ))}
+        </section>
+      )}
 
       {empty && (
         <section className="card stack gap10">

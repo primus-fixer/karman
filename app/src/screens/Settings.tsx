@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, message, scanQr, type Account, type AccountView, type Check, type DeviceInfo, type LockStatus, type PairingView, type Snapshot, type SyncResult } from '../api';
+import { api, message, scanQr, type Account, type AccountView, type Check, type DeviceInfo, type LockStatus, type PairingView, type RemindStatus, type Snapshot, type SyncResult } from '../api';
 import type { PinMode } from '../Lock';
 import { SIGN, amountText, dMon, parseAmount, rateText as fxText, rub } from '../format';
 import { SCHEMES, type ThemeMode } from '../theme';
@@ -101,6 +101,105 @@ const KINDS: { id: string; label: string; note: string }[] = [
 ];
 
 const CURRENCIES = ['RUB', 'KZT', 'USD', 'EUR'];
+
+const LEADS = [
+  { id: '0', label: 'В день' },
+  { id: '1', label: 'За 1 день' },
+  { id: '3', label: 'За 3 дня' },
+  { id: '7', label: 'За неделю' },
+];
+
+/** Напоминания о платежах и сроках долгов: за сколько дней, во сколько, как на этом устройстве. */
+function Reminders({ snap, run }: { snap: Snapshot; run: (p: Promise<Snapshot>, ok?: string) => Promise<Snapshot | null> }) {
+  const [st, setSt] = useState<RemindStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    api.remindStatus(false).then(setSt, () => undefined);
+  }, []);
+  const time = snap.settings['remind.time'] || '10:00';
+  const [t, setT] = useState(time);
+  useEffect(() => setT(time), [time]);
+  const lead = LEADS.some((l) => l.id === String(snap.remind_days)) ? String(snap.remind_days) : '3';
+  const pickDesktop = async (mode: 'open' | 'windows') => {
+    if (!st) return;
+    try {
+      await api.remindDesktop(mode);
+      setSt({ ...st, desktop: mode });
+      setError(null);
+    } catch (e) {
+      setError(message(e));
+    }
+  };
+  return (
+    <section className="stack">
+      <h2 className="h2" style={{ marginBottom: 6 }}>
+        Напоминания
+      </h2>
+      <p className="note" style={{ marginBottom: 8 }}>
+        О регулярных платежах и сроках долгов: заранее и ещё раз в сам день. В уведомлении только название, без суммы.
+      </p>
+      <Seg label="За сколько дней напоминать" value={lead} onPick={(v) => run(api.settingSet('remind.days', v), v === '0' ? 'Напоминания в день платежа' : `Напоминания ${LEADS.find((l) => l.id === v)?.label.toLowerCase()} и в день платежа`)} items={LEADS} />
+      <label className="setrow" style={{ marginTop: 8 }}>
+        <span>
+          <span>Время напоминаний</span>
+          <span className="note">У отдельного платежа «за сколько дней» можно поставить своё</span>
+        </span>
+        <input
+          className="field num"
+          type="time"
+          aria-label="Время напоминаний"
+          value={t}
+          onChange={(e) => {
+            // Поле времени сообщает об изменении, только когда время введено целиком.
+            const v = e.target.value;
+            setT(v);
+            if (/^\d\d:\d\d$/.test(v) && v !== time) run(api.settingSet('remind.time', v), 'Напоминания в ' + v);
+          }}
+          style={{ flex: 'none', width: 112, height: 40, fontSize: 16 }}
+        />
+      </label>
+      {st?.platform === 'android' && (
+        <div className="setrow">
+          <span>
+            <span>Уведомления</span>
+            <span className={'note' + (st.permission === 'denied' ? ' warn' : '')}>
+              {st.permission === 'granted'
+                ? 'Разрешены: напомнит, даже если «Карман» закрыт'
+                : st.permission === 'denied'
+                  ? 'Запрещены. Разрешите в настройках телефона: Приложения → Карман → Уведомления'
+                  : 'Ещё не разрешены'}
+            </span>
+          </span>
+          {st.permission !== 'granted' && (
+            <button type="button" className="btn ghost" style={{ flex: 'none' }} onClick={() => api.remindStatus(true).then(setSt, (e) => setError(message(e)))}>
+              Разрешить
+            </button>
+          )}
+        </div>
+      )}
+      {st && st.platform !== 'android' && (
+        <div className="stack gap6" style={{ marginTop: 10 }}>
+          <span className="note">На этом компьютере</span>
+          <Seg
+            label="Напоминания на компьютере"
+            value={st.desktop}
+            onPick={pickDesktop}
+            items={[
+              { id: 'open', label: 'При открытии' },
+              { id: 'windows', label: 'Уведомлением Windows' },
+            ]}
+          />
+          <p className="note">
+            {st.desktop === 'windows'
+              ? '«Карман» запускается вместе с Windows и работает в трее: крестик прячет окно, выйти — в меню значка. В назначенное время придёт уведомление Windows.'
+              : 'Напоминания покажет сам «Карман», когда вы его откроете.'}
+          </p>
+        </div>
+      )}
+      <ErrorText text={error} />
+    </section>
+  );
+}
 
 function parseSigned(s: string): number | null {
   const t = s.trim();
@@ -520,6 +619,8 @@ export default function Settings({
           <FxRow key={c} cur={c} value={snap.fx_manual[c]} save={(v) => run(api.settingSet('fx.' + c, v), `Курс ${c} сохранён`)} />
         ))}
       </section>
+
+      <Reminders snap={snap} run={run} />
 
       <section className="stack">
         <h2 className="h2" style={{ marginBottom: 6 }}>

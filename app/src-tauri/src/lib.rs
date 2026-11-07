@@ -5,8 +5,10 @@
 
 mod fx;
 mod guard;
+mod notify;
 
 use karman_core::book::{self, Account, Snapshot};
+use karman_core::finance::{self, Debt, DebtDir, Plan};
 use karman_core::db::{is_plaintext_sqlite, Store};
 use karman_core::money::{fmt2, rub_text};
 use karman_core::pairing::{random_key, Pairing};
@@ -177,14 +179,25 @@ fn cleanup_stage0(store: &mut Store) -> Res<()> {
 }
 
 fn snap(st: &Store, today: &str) -> Res<Snapshot> {
-    book::snapshot(st, day(today)?).map_err(err)
+    let s = book::snapshot(st, day(today)?).map_err(err)?;
+    // Изменились платежи или долги — перепланировать уведомления телефона.
+    notify::after_snapshot(&s);
+    Ok(s)
 }
 
 // ——— Сводка и изменения ———
 
+/// Сводка для экранов. Заодно записывает автосписания, чей день настал;
+/// `tz` — смещение местного времени от UTC в минутах, для напоминаний.
 #[tauri::command]
-fn snapshot(state: State<AppState>, today: String) -> Res<Snapshot> {
-    let st = state.store()?;
+fn snapshot(state: State<AppState>, today: String, tz: Option<i32>) -> Res<Snapshot> {
+    let mut st = state.store()?;
+    if let Some(tz) = tz {
+        notify::set_tz(&st, tz);
+    }
+    if let Err(e) = finance::auto_pay(&mut st, day(&today)?) {
+        eprintln!("автосписания не записаны: {e}");
+    }
     snap(&st, &today)
 }
 
@@ -270,6 +283,159 @@ fn account_save(state: State<AppState>, today: String, mut account: Account) -> 
 fn setting_set(state: State<AppState>, today: String, key: String, value: String) -> Res<Snapshot> {
     let mut st = state.store()?;
     st.append(EventBody::SettingPut { key, value }).map_err(err)?;
+    snap(&st, &today)
+}
+
+// ——— Долги и регулярные платежи ———
+
+/// Деньги прошли через счёт, когда долг появился: получил в долг или дал в долг.
+#[derive(Deserialize)]
+struct DebtMoney {
+    account: String,
+}
+
+#[tauri::command]
+fn debt_save(state: State<AppState>, today: String, mut debt: Debt, money: Option<DebtMoney>) -> Res<Snapshot> {
+    debt.who = debt.who.trim().to_string();
+    if debt.who.is_empty() {
+        return Err("Укажите, кто должен или кому".into());
+    }
+    if debt.amount <= 0 {
+        return Err("Введите сумму долга".into());
+    }
+    if debt.id.is_empty() {
+        debt.id = format!("debt-{}", book::new_id().map_err(err)?);
+    }
+    let mut st = state.store()?;
+    // Номер нового долга может прийти с экрана (чтобы сразу связать с ним график платежей).
+    let new = !st.debts().map_err(err)?.iter().any(|d| d.id == debt.id);
+    let mut bodies = Vec::new();
+    if let (true, Some(m)) = (new, money) {
+        // «Я должен» — деньги пришли на счёт, «мне должны» — ушли со счёта.
+        let i_owe = debt.dir == DebtDir::IOwe;
+        let title = if i_owe { format!("В долг от — {}", debt.who) } else { format!("В долг — {}", debt.who) };
+        bodies.push(EventBody::OpPut { op: debt_op(format!("{}-start", debt.id), debt.date, title, debt.amount, m.account, &debt.id, i_owe) });
+    }
+    bodies.insert(0, EventBody::DebtPut { debt });
+    st.append_all(bodies).map_err(err)?;
+    snap(&st, &today)
+}
+
+fn debt_op(id: String, date: Date, title: String, amount: i64, account: String, debt: &str, inflow: bool) -> Op {
+    Op {
+        id,
+        date,
+        kind: trip::OpKind::Debt,
+        cat: "debt".into(),
+        title,
+        amount,
+        account,
+        trip: None,
+        doc: None,
+        sent: false,
+        family: false,
+        debt: Some(debt.into()),
+        inflow,
+        orig: None,
+        cur: None,
+        note: String::new(),
+        att: Vec::new(),
+        to: None,
+        to_amount: None,
+        plan: None,
+        plan_date: None,
+        extra: Default::default(),
+    }
+}
+
+/// Удаляет долг и его график платежей. Записанные операции остаются в истории.
+#[tauri::command]
+fn debt_delete(state: State<AppState>, today: String, id: String) -> Res<Snapshot> {
+    let mut st = state.store()?;
+    let mut bodies: Vec<EventBody> = st.plans().map_err(err)?.into_iter().filter(|p| p.debt.as_deref() == Some(id.as_str())).map(|p| EventBody::PlanDelete { id: p.id }).collect();
+    bodies.push(EventBody::DebtDelete { id });
+    st.append_all(bodies).map_err(err)?;
+    snap(&st, &today)
+}
+
+/// Возврат долга: я отдаю (я должен) или мне отдают (мне должны).
+#[tauri::command]
+fn debt_pay(state: State<AppState>, today: String, id: String, amount: i64, account: String, date: String) -> Res<Snapshot> {
+    if amount <= 0 {
+        return Err("Введите сумму".into());
+    }
+    let mut st = state.store()?;
+    let d = st.debts().map_err(err)?.into_iter().find(|d| d.id == id).ok_or("долг не найден")?;
+    let op = debt_op(book::new_id().map_err(err)?, day(&date)?, format!("Возврат долга — {}", d.who), amount, account, &d.id, d.dir == DebtDir::OwedToMe);
+    st.put_op(op).map_err(err)?;
+    snap(&st, &today)
+}
+
+#[tauri::command]
+fn plan_save(state: State<AppState>, today: String, mut plan: Plan) -> Res<Snapshot> {
+    plan.title = plan.title.trim().to_string();
+    if plan.title.is_empty() {
+        return Err("Укажите название платежа".into());
+    }
+    if plan.amount <= 0 {
+        return Err("Введите сумму платежа".into());
+    }
+    if plan.until.is_some_and(|u| u < plan.start) {
+        return Err("Последний платёж раньше первого".into());
+    }
+    if plan.id.is_empty() {
+        plan.id = book::new_id().map_err(err)?;
+    }
+    let mut st = state.store()?;
+    if !st.accounts().map_err(err)?.iter().any(|a| a.id == plan.account) {
+        return Err("Выберите счёт".into());
+    }
+    st.append(EventBody::PlanPut { plan }).map_err(err)?;
+    // Автоплатёж с датой в прошлом или сегодня записывается сразу.
+    if let Err(e) = finance::auto_pay(&mut st, day(&today)?) {
+        eprintln!("автосписания не записаны: {e}");
+    }
+    snap(&st, &today)
+}
+
+#[tauri::command]
+fn plan_delete(state: State<AppState>, today: String, id: String) -> Res<Snapshot> {
+    let mut st = state.store()?;
+    st.append(EventBody::PlanDelete { id }).map_err(err)?;
+    snap(&st, &today)
+}
+
+/// «Оплачено»: записывает платёж за эту дату. Сумму и счёт можно поправить.
+#[tauri::command]
+fn plan_pay(state: State<AppState>, today: String, id: String, date: String, amount: Option<i64>, account: Option<String>) -> Res<Snapshot> {
+    let mut st = state.store()?;
+    let mut plan = st.plans().map_err(err)?.into_iter().find(|p| p.id == id).ok_or("платёж не найден")?;
+    if let Some(a) = amount.filter(|a| *a > 0) {
+        plan.amount = a;
+    }
+    if let Some(acc) = account.filter(|a| !a.is_empty()) {
+        plan.account = acc;
+    }
+    let fx = book::fx_now(&st).map_err(err)?;
+    let op = finance::plan_op(&plan, day(&date)?, &st.accounts().map_err(err)?, &fx, &st.debts().map_err(err)?);
+    if op.amount <= 0 {
+        return Err("Нет курса валюты счёта: укажите его в настройках".into());
+    }
+    st.put_op(op).map_err(err)?;
+    snap(&st, &today)
+}
+
+/// «Пропустить»: в этот раз платежа нет.
+#[tauri::command]
+fn plan_skip(state: State<AppState>, today: String, id: String, date: String) -> Res<Snapshot> {
+    let d = day(&date)?;
+    let mut st = state.store()?;
+    let mut plan = st.plans().map_err(err)?.into_iter().find(|p| p.id == id).ok_or("платёж не найден")?;
+    if !plan.skipped.contains(&d) {
+        plan.skipped.push(d);
+        plan.skipped.sort();
+    }
+    st.append(EventBody::PlanPut { plan }).map_err(err)?;
     snap(&st, &today)
 }
 
@@ -623,11 +789,19 @@ fn receipt_parse(text: String) -> Res<ReceiptView> {
 pub fn run() {
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default();
+    // Второй запуск (например, из меню «Пуск», пока «Карман» в трее) открывает уже работающий.
+    #[cfg(windows)]
+    {
+        builder = builder
+            .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| notify::show_main(app)))
+            .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--hidden"])));
+    }
     #[cfg(mobile)]
     {
         builder = builder.plugin(tauri_plugin_barcode_scanner::init()).plugin(tauri_plugin_biometric::init());
     }
     builder
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -650,12 +824,28 @@ pub fn run() {
                 notice: Mutex::new(notice),
             });
             fx::refresh_on_start(app.handle().clone(), today);
+            notify::init(app.handle());
+            notify::start_desktop_loop(app.handle().clone());
+            if notify::TRAY.load(std::sync::atomic::Ordering::Relaxed) {
+                #[cfg(windows)]
+                notify::tray(app.handle())?;
+                // Запуск вместе с Windows — сразу в трей, без окна.
+                if std::env::args().any(|a| a == "--hidden") {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.hide();
+                    }
+                }
+            }
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Focused(focused) = event {
-                guard::on_focus(window.app_handle(), *focused);
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::Focused(focused) => guard::on_focus(window.app_handle(), *focused),
+            // В режиме «уведомлением Windows» крестик прячет окно в трей: напоминания продолжают работать.
+            tauri::WindowEvent::CloseRequested { api, .. } if notify::TRAY.load(std::sync::atomic::Ordering::Relaxed) => {
+                api.prevent_close();
+                let _ = window.hide();
             }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             snapshot,
@@ -679,6 +869,15 @@ pub fn run() {
             blob_url,
             receipts_zip,
             fx::fx_rate,
+            debt_save,
+            debt_delete,
+            debt_pay,
+            plan_save,
+            plan_delete,
+            plan_pay,
+            plan_skip,
+            notify::remind_status,
+            notify::remind_desktop,
             guard::lock_status,
             guard::pin_unlock,
             guard::pin_set,

@@ -10,6 +10,7 @@ pub mod date;
 pub mod db;
 pub mod demo;
 pub mod error;
+pub mod finance;
 pub mod money;
 pub mod pairing;
 pub mod pin;

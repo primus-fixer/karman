@@ -2,6 +2,7 @@
 
 use crate::book::{self, Account};
 use crate::date::Date;
+use crate::finance::{Debt, DebtDir, Every, Plan};
 use crate::money::rub;
 use crate::sync::EventBody;
 use crate::trip::{DocKind, Op, OpKind, Trip, TripStatus, DEFAULT_RATE};
@@ -130,6 +131,8 @@ pub fn ops() -> Vec<Op> {
             att: Vec::new(),
             to: None,
             to_amount: None,
+            plan: None,
+            plan_date: None,
             extra: Default::default(),
         })
         .collect()
@@ -156,6 +159,8 @@ fn own_op(id: &str, date: &str, kind: OpKind, cat: &str, title: &str, amount: f6
         att: Vec::new(),
         to: None,
         to_amount: None,
+        plan: None,
+        plan_date: None,
         extra: Default::default(),
     }
 }
@@ -185,5 +190,45 @@ pub fn book_events() -> Vec<EventBody> {
     ] {
         bodies.push(EventBody::OpPut { op });
     }
+    bodies.extend(finance_events());
     bodies
+}
+
+/// Долги и регулярные платежи для макета: кредит с автоплатежом, долг мне со сроком, два платежа.
+pub fn finance_events() -> Vec<EventBody> {
+    let debt = |id: &str, who: &str, dir: DebtDir, amount: f64, date: &str, due: Option<&str>| Debt {
+        id: id.into(),
+        who: who.into(),
+        dir,
+        amount: rub(amount),
+        date: d(date),
+        due: due.map(d),
+        note: String::new(),
+        closed: false,
+        extra: Default::default(),
+    };
+    let plan = |id: &str, title: &str, amount: f64, cat: &str, start: &str, auto: bool, debt: Option<&str>| Plan {
+        id: id.into(),
+        title: title.into(),
+        amount: rub(amount),
+        account: "acc-personal".into(),
+        cat: cat.into(),
+        every: Every::Month,
+        start: d(start),
+        until: None,
+        auto,
+        remind: None,
+        debt: debt.map(String::from),
+        skipped: Vec::new(),
+        paused: false,
+        note: String::new(),
+        extra: Default::default(),
+    };
+    vec![
+        EventBody::DebtPut { debt: debt("debt-sber", "Сбербанк, кредит", DebtDir::IOwe, 240000.0, "2026-03-01", None) },
+        EventBody::DebtPut { debt: debt("debt-andrey", "Андрей", DebtDir::OwedToMe, 5000.0, "2026-10-20", Some("2026-11-08")) },
+        EventBody::PlanPut { plan: plan("plan-sber", "Кредит Сбербанк", 12400.0, "", "2026-11-15", true, Some("debt-sber")) },
+        EventBody::PlanPut { plan: plan("plan-net", "Интернет и телефон", 890.0, "telecom", "2026-11-09", false, None) },
+        EventBody::PlanPut { plan: plan("plan-garage", "Аренда гаража", 3000.0, "home", "2026-11-25", false, None) },
+    ]
 }

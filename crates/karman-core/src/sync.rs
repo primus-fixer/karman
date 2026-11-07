@@ -7,6 +7,7 @@ use crate::db::Store;
 use crate::error::{Error, Result};
 use crate::pairing::Pairing;
 use crate::book::Account;
+use crate::finance::{Debt, Plan};
 use crate::trip::{Op, Trip};
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
@@ -55,6 +56,10 @@ pub enum EventBody {
     AccountPut { account: Account },
     AccountDelete { id: String },
     SettingPut { key: String, value: String },
+    DebtPut { debt: Debt },
+    DebtDelete { id: String },
+    PlanPut { plan: Plan },
+    PlanDelete { id: String },
 }
 
 impl EventBody {
@@ -68,6 +73,10 @@ impl EventBody {
             EventBody::AccountPut { account } => ("account", account.id.clone(), Some(serde_json::to_string(account)?)),
             EventBody::AccountDelete { id } => ("account", id.clone(), None),
             EventBody::SettingPut { key, value } => ("setting", key.clone(), Some(serde_json::to_string(value)?)),
+            EventBody::DebtPut { debt } => ("debt", debt.id.clone(), Some(serde_json::to_string(debt)?)),
+            EventBody::DebtDelete { id } => ("debt", id.clone(), None),
+            EventBody::PlanPut { plan } => ("plan", plan.id.clone(), Some(serde_json::to_string(plan)?)),
+            EventBody::PlanDelete { id } => ("plan", id.clone(), None),
         })
     }
 }

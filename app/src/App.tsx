@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, inApp, LOCKED, message, onFx, onLocked, type Attachment, type DeviceInfo, type LockStatus, type Op, type Snapshot, type TripStatus } from './api';
 import Entry, { defaultDraft, draftFromOp, tripDraft, type EntryDraft } from './Entry';
 import { rub } from './format';
+import { dueText } from './logic';
 import { bioLabel, LockScreen, PinFlow, type PinMode } from './Lock';
 import { attachFile, pickFiles } from './media';
 import Feed from './screens/Feed';
+import Finance, { type FinanceActions } from './screens/Finance';
 import Overview from './screens/Overview';
 import Settings, { type ThemeState } from './screens/Settings';
 import TripScreen, { type TripActions, type TripTab } from './screens/Trip';
@@ -13,7 +15,7 @@ import Trips from './screens/Trips';
 import { applyTheme, type ThemeMode } from './theme';
 import { Icon, Viewer, type OpActions } from './ui';
 
-export type Tab = 'overview' | 'feed' | 'trips' | 'settings';
+export type Tab = 'overview' | 'feed' | 'trips' | 'finance' | 'settings';
 type Screen = Tab | 'trip' | 'trip-form';
 
 export type Nav = {
@@ -28,6 +30,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'overview', label: 'Обзор', icon: 'overview' },
   { id: 'feed', label: 'Лента', icon: 'feed' },
   { id: 'trips', label: 'Поездки', icon: 'trips' },
+  { id: 'finance', label: 'Финансы', icon: 'finance' },
   { id: 'settings', label: 'Настройки', icon: 'settings' },
 ];
 
@@ -78,7 +81,8 @@ async function copyText(text: string): Promise<void> {
   if (!ok) throw new Error('copy');
 }
 
-type Toast = { text: string; undo?: () => void; long?: boolean; key: number };
+/** Сообщение внизу; `undo` — кнопка (по умолчанию «Вернуть», иначе `label`). */
+type Toast = { text: string; undo?: () => void; long?: boolean; label?: string; key: number };
 
 export default function App() {
   const isPhone = usePhone();
@@ -120,7 +124,7 @@ export default function App() {
     return () => mq.removeEventListener('change', apply);
   }, [theme]);
 
-  const flash = useCallback((text: string, undo?: () => void, long?: boolean) => setToast({ text, undo, long, key: Date.now() }), []);
+  const flash = useCallback((text: string, undo?: () => void, long?: boolean, label?: string) => setToast({ text, undo, long, label, key: Date.now() }), []);
   useEffect(() => {
     if (!toast) return;
     const id = window.setTimeout(() => setToast(null), toast.long ? 10000 : toast.undo ? 6000 : 3500);
@@ -225,6 +229,48 @@ export default function App() {
     },
     [flash, goLocked],
   );
+
+  /** Первый платёж или долг со сроком: на Android попросить разрешение на уведомления. */
+  const ensureNotify = useCallback(() => {
+    api.remindStatus(false).then(
+      (st) => {
+        if (st.platform !== 'android' || st.permission !== 'prompt') return;
+        api.remindStatus(true).then(
+          (after) => {
+            if (after.permission === 'granted') refresh();
+            else flash('Уведомления выключены: напоминания будут только в приложении. Включить — в настройках телефона', undefined, true);
+          },
+          () => undefined,
+        );
+      },
+      () => undefined,
+    );
+  }, [flash, refresh]);
+  const finAct: FinanceActions = { run, saved: ensureNotify };
+
+  // Напоминание при открытии: что пора оплатить и какие сроки близко (один раз за запуск).
+  const reminded = useRef(false);
+  useEffect(() => {
+    if (!snap || reminded.current) return;
+    reminded.current = true;
+    const soon = snap.upcoming.filter((u) => u.soon);
+    if (!soon.length) return;
+    const first = soon[0];
+    const what = first.kind === 'plan' ? (first.auto ? 'автосписание' : 'платёж') : 'срок долга';
+    let one: string;
+    if (first.days < 0) one = (first.kind === 'plan' && first.auto ? 'Просрочено автосписание' : first.kind === 'plan' ? 'Просрочен платёж' : 'Прошёл срок долга') + ': ' + first.title;
+    else {
+      const when = dueText(first.days);
+      one = `${when[0].toUpperCase() + when.slice(1)} ${what}: ${first.title}`;
+    }
+    const text = soon.length === 1 ? one : `Скоро платежи и сроки: ${soon.length}. Ближайший — ${first.title}, ${dueText(first.days)}`;
+    flash(text, () => {
+      clearHistory();
+      setScreen('finance');
+      setEntry((e) => (isPhone ? null : e));
+    }, true, 'Открыть');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snap]);
 
   const security = {
     lock,
@@ -469,9 +515,10 @@ export default function App() {
 
   const mobile = info ? info.os === 'android' || info.os === 'ios' : false;
   let body = null;
-  if (screen === 'overview') body = <Overview snap={snap} nav={nav} act={opAct} />;
+  if (screen === 'overview') body = <Overview snap={snap} nav={nav} act={opAct} fin={finAct} />;
   else if (screen === 'feed') body = <Feed snap={snap} act={opAct} />;
   else if (screen === 'trips') body = <Trips snap={snap} nav={nav} />;
+  else if (screen === 'finance') body = <Finance snap={snap} act={finAct} />;
   else if (screen === 'settings') body = <Settings snap={snap} info={info} mobile={mobile} run={run} refresh={refresh} theme={theme} setTheme={setTheme} dark={dark} security={security} />;
   else if (screen === 'trip' && tripId)
     body = (
@@ -571,7 +618,7 @@ export default function App() {
                 setToast(null);
               }}
             >
-              Вернуть
+              {toast.label ?? 'Вернуть'}
             </button>
           )}
         </div>

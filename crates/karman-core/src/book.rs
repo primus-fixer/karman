@@ -3,6 +3,7 @@
 use crate::date::Date;
 use crate::db::Store;
 use crate::error::{format_err, Error, Result};
+use crate::finance::{self, DebtDir, DebtView, Due, PlanView};
 use crate::money::Kop;
 use crate::sync::EventBody;
 use crate::trip::{self, Op, OpKind, ReportRow, Settlement, Trip, TripStatus, DEFAULT_RATE};
@@ -127,6 +128,17 @@ pub struct Snapshot {
     pub trips: Vec<TripView>,
     pub ops: Vec<Op>,
     pub settings: BTreeMap<String, String>,
+    /// Долги и кредиты с остатками.
+    pub debts: Vec<DebtView>,
+    /// Регулярные платежи с ближайшей датой.
+    pub plans: Vec<PlanView>,
+    /// Платежи и сроки долгов на месяц вперёд и всё просроченное.
+    pub upcoming: Vec<Due>,
+    /// Всего я должен и мне должны — отдельно от «Моих денег».
+    pub i_owe: Kop,
+    pub owed_to_me: Kop,
+    /// За сколько дней напоминать (настройка «remind.days»).
+    pub remind_days: i32,
 }
 
 pub fn trip_view(t: &Trip, ops: &[Op], settings_rate: Kop, today: Date) -> TripView {
@@ -192,6 +204,12 @@ fn fx_with_cbr(settings: &BTreeMap<String, String>, cbr: Option<&CbrRates>) -> B
     fx
 }
 
+/// Курсы для пересчёта сейчас: ЦБ, если включены и загружены, иначе из настроек.
+pub fn fx_now(store: &Store) -> Result<BTreeMap<String, f64>> {
+    let cbr: Option<CbrRates> = store.meta(META_CBR)?.and_then(|t| serde_json::from_str(&t).ok());
+    Ok(fx_with_cbr(&store.settings()?, cbr.as_ref()))
+}
+
 /// Всё, что нужно экранам, одним ответом.
 pub fn snapshot(store: &Store, today: Date) -> Result<Snapshot> {
     let settings = store.settings()?;
@@ -228,7 +246,38 @@ pub fn snapshot(store: &Store, today: Date) -> Result<Snapshot> {
             owed -= b;
         }
     }
-    Ok(Snapshot { today, device: store.device().to_string(), rate, fx, fx_auto, fx_date, fx_manual, accounts, total, held, due, owed, debt_due, mine: total - held - due, trips, ops, settings })
+    let plain: Vec<Account> = accounts.iter().map(|a| a.account.clone()).collect();
+    let plans = finance::plan_views(&store.plans()?, &ops, &plain, &fx, today);
+    let debts = finance::debt_views(&store.debts()?, &plans, &ops, today);
+    let remind_days = finance::settings_lead(&settings);
+    let upcoming = finance::upcoming(&plans, &debts, &ops, today, remind_days);
+    let open = |dir: DebtDir| debts.iter().filter(|v| v.open() && v.debt.dir == dir).map(|v| v.left).sum::<Kop>();
+    let (i_owe, owed_to_me) = (open(DebtDir::IOwe), open(DebtDir::OwedToMe));
+    Ok(Snapshot {
+        today,
+        device: store.device().to_string(),
+        rate,
+        fx,
+        fx_auto,
+        fx_date,
+        fx_manual,
+        accounts,
+        total,
+        held,
+        due,
+        owed,
+        debt_due,
+        mine: total - held - due,
+        trips,
+        ops,
+        settings,
+        debts,
+        plans,
+        upcoming,
+        i_owe,
+        owed_to_me,
+        remind_days,
+    })
 }
 
 fn find_trip(store: &Store, id: &str) -> Result<Trip> {
@@ -276,6 +325,8 @@ fn company_op(id: String, date: Date, kind: OpKind, cat: &str, title: String, am
         att: Vec::new(),
         to: None,
         to_amount: None,
+        plan: None,
+        plan_date: None,
         extra: Default::default(),
     }
 }

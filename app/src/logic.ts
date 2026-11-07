@@ -1,6 +1,6 @@
 // Подписи и раскладка данных для экранов. Сами расчёты — в ядре.
 
-import type { AccountView, Op, OpKind, Snapshot, TripStatus, TripView } from './api';
+import type { AccountView, Op, OpKind, Plan, Snapshot, TripStatus, TripView } from './api';
 import { STATUSES } from './api';
 import { NB, daysText, dMon, dRange, diffDays, fmt, fmt2, plural, rub } from './format';
 import { ICON } from './icons';
@@ -28,6 +28,7 @@ export const CATS: Record<string, Cat> = {
   reimb: { n: 'Возмещение', s: 'Возмещение', i: 'reimb' },
   ret: { n: 'Возврат компании', s: 'Возврат', i: 'ret' },
   transfer: { n: 'Перевод между счетами', s: 'Перевод', i: 'transfer' },
+  debt: { n: 'Долг', s: 'Долг', i: 'debt' },
 };
 
 export const TRIP_OUT = ['tickets', 'lodging', 'taxi', 'car', 'food', 'tools'];
@@ -120,7 +121,7 @@ export function opView(snap: Snapshot, o: Op): OpView {
   if (o.kind === 'transfer') return transferView(snap, o);
   const acc = accountOf(snap, o.account);
   const accName = acc ? acc.account.name : 'Счёт удалён';
-  const cat = CATS[o.cat] || CATS.other;
+  const cat = o.kind === 'debt' ? CATS.debt : CATS[o.cat] || CATS.other;
   const inc = isIn(o);
   const tagged = o.kind === 'personal' && !!o.trip;
   const noDoc = o.kind === 'work' && !o.doc;
@@ -136,6 +137,14 @@ export function opView(snap: Snapshot, o: Op): OpView {
   if (noDoc) details.push({ label: 'В отчёт 1С', value: 'не входит: из суточных, сверх них — долг' });
   if (o.kind === 'food') details.push({ label: 'В отчёт 1С', value: 'не идёт, за счёт суточных' });
   if (o.cur && o.cur !== 'RUB' && o.orig != null) details.push({ label: 'Сумма в валюте', value: rub(o.orig, o.cur) });
+  if (o.kind === 'debt') {
+    const d = snap.debts.find((v) => v.debt.id === o.debt);
+    details.push({ label: 'Долг', value: d ? `${d.debt.who}, осталось ${rub(d.left)}` : 'долг удалён' });
+  }
+  if (o.plan) {
+    const p = snap.plans.find((v) => v.plan.id === o.plan);
+    details.push({ label: 'Регулярный платёж', value: (p ? p.plan.title : 'удалён') + (o.plan_date ? ', за ' + dMon(o.plan_date) : '') });
+  }
   if (o.note) details.push({ label: 'Примечание', value: o.note });
   return {
     op: o,
@@ -144,7 +153,7 @@ export function opView(snap: Snapshot, o: Op): OpView {
     own: isOwn(o),
     inc,
     amount: (inc ? '+' : '−') + rub(o.amount),
-    sub: accName + (o.kind === 'food' ? ', за счёт суточных' : noDoc ? ', из суточных' : ''),
+    sub: accName + (o.kind === 'food' ? ', за счёт суточных' : noDoc ? ', из суточных' : o.kind === 'debt' ? ', долг' : ''),
     dateSub: dMon(o.date) + ', ' + accName.toLowerCase() + (noDoc ? ', из суточных' : ''),
     chip: o.trip ? (tagged ? 'метка ' + o.trip : o.trip) : isFamily(o) ? 'семья' : '',
     chipTagged: tagged,
@@ -152,6 +161,28 @@ export function opView(snap: Snapshot, o: Op): OpView {
     noDoc,
     details,
   };
+}
+
+const WEEK_ACC = ['воскресенье', 'понедельник', 'вторник', 'среду', 'четверг', 'пятницу', 'субботу'];
+const WEEK_EACH = ['каждое', 'каждый', 'каждый', 'каждую', 'каждый', 'каждую', 'каждую'];
+
+/** «каждое 10-е число», «каждую пятницу», «каждый год, 5 марта». */
+export function everyText(p: Plan): string {
+  const [y, m, d] = p.start.split('-').map(Number);
+  if (p.every === 'week') {
+    const wd = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    return `${WEEK_EACH[wd]} ${WEEK_ACC[wd]}`;
+  }
+  if (p.every === 'year') return 'каждый год, ' + dMon(p.start);
+  return `каждое ${d}-е число`;
+}
+
+/** «сегодня», «завтра», «через 3 дня», «просрочен на 2 дня». */
+export function dueText(days: number): string {
+  if (days === 0) return 'сегодня';
+  if (days === 1) return 'завтра';
+  if (days > 1) return 'через ' + daysText(days);
+  return 'просрочен на ' + daysText(-days);
 }
 
 export type TripRowView = {

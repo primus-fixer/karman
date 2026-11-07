@@ -409,6 +409,8 @@ export default function Entry({
     const amount = cur === 'RUB' ? orig : toCur === 'RUB' && got ? got : keep && editing ? editing.amount : Math.round(orig * fx);
     if (!amount) return setError(`Нет курса для ${cur}: укажите его в настройках`);
     const op: Op = {
+      // Поля, которых нет в форме (из более новой версии, снимки), при правке не теряются.
+      ...(editing ?? {}),
       id: editing ? editing.id : '',
       date: e.date || snap.today,
       kind: 'transfer',
@@ -456,6 +458,8 @@ export default function Entry({
     const same = !!editing && editing.orig === (cur === 'RUB' ? null : orig) && editing.date === (e.date || snap.today) && editing.account === acc.account.id;
     const amount = cur === 'RUB' ? orig : same && editing ? editing.amount : Math.round(orig * fx);
     const op: Op = {
+      // Поля, которых нет в форме (из более новой версии, оплата по графику), при правке не теряются.
+      ...(editing ?? {}),
       id: editing ? editing.id : '',
       date: e.date || snap.today,
       kind,
@@ -473,6 +477,8 @@ export default function Entry({
       cur: cur === 'RUB' ? null : cur,
       note: doc === 'qr' ? e.receiptNote : editing && editing.doc !== 'qr' ? editing.note : '',
       att: e.att,
+      to: null,
+      to_amount: null,
     };
     setBusy(true);
     const next = await onSave(op);
