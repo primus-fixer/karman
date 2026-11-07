@@ -183,7 +183,7 @@ export function Viewer({ att, pdfInline, onClose }: { att: Attachment; pdfInline
 }
 
 /** Эти операции можно поправить в окне ввода; возврат компании и платежи по долгам — только удалить. */
-export const EDITABLE = new Set(['work', 'food', 'personal', 'income', 'advance', 'reimbursement']);
+export const EDITABLE = new Set(['work', 'food', 'personal', 'income', 'advance', 'reimbursement', 'transfer']);
 
 export function OpRow({ snap, op, act, dateSub }: { snap: Snapshot; op: Op; act: OpActions; dateSub?: boolean }) {
   const [open, setOpen] = useState(false);
@@ -207,7 +207,7 @@ export function OpRow({ snap, op, act, dateSub }: { snap: Snapshot; op: Op; act:
               </span>
             )}
             {v.noDoc && <span className="tag warn">без чека</span>}
-            {v.chip && <span className={'tag' + (v.chipTagged ? ' grey' : '')}>{v.chip}</span>}
+            {v.chip && <span className={'tag' + (v.chipTagged ? ' grey' : v.chipFamily ? ' own' : '')}>{v.chip}</span>}
           </span>
         </span>
       </button>
@@ -221,10 +221,12 @@ export function OpRow({ snap, op, act, dateSub }: { snap: Snapshot; op: Op; act:
           ))}
           {!!op.att?.length && <Thumbs items={op.att} onOpen={act.view} />}
           <div className="wrap">
-            <button type="button" className="btn ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }} onClick={() => act.attach(op)}>
-              <Icon name="camera" size={18} />
-              {op.att?.length ? 'Ещё снимок' : 'Снимок чека'}
-            </button>
+            {op.kind !== 'transfer' && (
+              <button type="button" className="btn ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }} onClick={() => act.attach(op)}>
+                <Icon name="camera" size={18} />
+                {op.att?.length ? 'Ещё снимок' : 'Снимок чека'}
+              </button>
+            )}
             {v.noDoc && (
               <button type="button" className="btn warn" onClick={() => act.addDoc(op)}>
                 Документ есть

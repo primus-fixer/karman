@@ -3,7 +3,7 @@ import { todayIso } from './format';
 
 // Типы повторяют ответы ядра (karman-core, serde).
 
-export type OpKind = 'work' | 'food' | 'personal' | 'income' | 'advance' | 'reimbursement' | 'return' | 'debt';
+export type OpKind = 'work' | 'food' | 'personal' | 'income' | 'advance' | 'reimbursement' | 'return' | 'debt' | 'transfer';
 export type DocKind = 'photo' | 'qr' | 'file';
 
 export type Attachment = { id: string; mime: string; name: string; size: number };
@@ -27,7 +27,44 @@ export type Op = {
   note: string;
   /** Снимки и файлы чеков; в ответе ядра поля нет, если вложений нет. */
   att?: Attachment[];
+  /** Перевод: счёт, на который ушли деньги. */
+  to?: string | null;
+  /** Перевод: сколько пришло в валюте счёта-получателя, если она не рубли. */
+  to_amount?: number | null;
+  /** Оплата регулярного платежа: какого и за какую дату. */
+  plan?: string | null;
+  plan_date?: string | null;
 };
+
+export type DebtDir = 'i_owe' | 'owed_to_me';
+export type Debt = { id: string; who: string; dir: DebtDir; amount: number; date: string; due: string | null; note: string; closed: boolean };
+export type DebtView = { debt: Debt; repaid: number; left: number; overdue: boolean; plan: string | null; next: string | null };
+export type Every = 'month' | 'week' | 'year';
+export type Plan = {
+  id: string;
+  title: string;
+  /** Сумма в валюте счёта. */
+  amount: number;
+  account: string;
+  cat: string;
+  every: Every;
+  start: string;
+  until: string | null;
+  /** Автосписание: записывается само. */
+  auto: boolean;
+  /** За сколько дней напоминать; null — как в настройках. */
+  remind: number | null;
+  /** Кредит: платёж уменьшает этот долг. */
+  debt: string | null;
+  skipped?: string[];
+  paused: boolean;
+  note: string;
+};
+export type PlanView = { plan: Plan; next: string | null; overdue: number; paid: number; amount_rub: number };
+/** Ближайший срок: платёж по графику или возврат долга. */
+export type Due = { kind: 'plan' | 'debt'; id: string; title: string; date: string; amount: number; days: number; lead: number; soon: boolean; auto: boolean; i_owe: boolean };
+/** Напоминания: платформа, разрешение на уведомления, режим на компьютере. */
+export type RemindStatus = { platform: 'android' | 'windows' | 'other'; permission: 'granted' | 'denied' | 'prompt'; desktop: 'open' | 'windows' };
 
 export const STATUSES = ['request', 'advance_received', 'in_trip', 'awaiting_report', 'review', 'closed'] as const;
 export type TripStatus = (typeof STATUSES)[number];
@@ -96,7 +133,14 @@ export type Snapshot = {
   today: string;
   device: string;
   rate: number;
+  /** Курсы для пересчёта: ЦБ, если включены и загружены, иначе из настроек. */
   fx: Record<string, number>;
+  /** Курс ЦБ на дату операции (настройка fx.auto, по умолчанию да). */
+  fx_auto: boolean;
+  /** Дата загруженных курсов ЦБ. */
+  fx_date: string | null;
+  /** Курсы из настроек — запасные. */
+  fx_manual: Record<string, number>;
   accounts: AccountView[];
   total: number;
   held: number;
@@ -107,13 +151,24 @@ export type Snapshot = {
   trips: TripView[];
   ops: Op[];
   settings: Record<string, string>;
+  debts: DebtView[];
+  plans: PlanView[];
+  /** Платежи и сроки долгов на месяц вперёд и всё просроченное. */
+  upcoming: Due[];
+  /** Долги отдельно от «Моих денег». */
+  i_owe: number;
+  owed_to_me: number;
+  /** За сколько дней напоминать. */
+  remind_days: number;
 };
 
 export type Check = { ok: boolean; text: string };
-export type DeviceInfo = { id: string; name: string; os: string; arch: string; version: string; data_dir: string; encrypted: boolean; cipher: string; events: number };
+export type DeviceInfo = { id: string; name: string; os: string; arch: string; version: string; data_dir: string; encrypted: boolean; cipher: string; events: number; unknown: number };
 export type PairingView = { uri: string; qr_svg: string; hosts: string[]; port: number };
 export type SyncStatus = { running: boolean; log: Check[] };
-export type SyncResult = { peer_name: string; sent: number; received: number; files_sent: number; files_received: number };
+export type SyncResult = { peer_name: string; sent: number; received: number; files_sent: number; files_received: number; hint: string };
+/** Курс валюты на дату: cbr — ЦБ, manual — из настроек, none — курса нет; fallback — сайт ЦБ не ответил, это последние сохранённые курсы. */
+export type FxQuote = { rate: number; source: 'cbr' | 'manual' | 'none'; date: string | null; fallback?: boolean };
 export type ReceiptView = { date: string; time: string; sum: number; fn_number: string; fd: string; fp: string; kind: string };
 export type LockStatus = {
   pin: boolean;
@@ -139,7 +194,8 @@ export const inApp = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in w
 const today = () => todayIso();
 
 export const api = {
-  snapshot: () => invoke<Snapshot>('snapshot', { today: today() }),
+  /** tz — смещение местного времени от UTC в минутах: для напоминаний в нужный час. */
+  snapshot: () => invoke<Snapshot>('snapshot', { today: today(), tz: -new Date().getTimezoneOffset() }),
   opSave: (op: Op) => invoke<Snapshot>('op_save', { today: today(), op }),
   opDelete: (id: string) => invoke<Snapshot>('op_delete', { today: today(), id }),
   tripSave: (trip: Trip) => invoke<Snapshot>('trip_save', { today: today(), trip }),
@@ -159,6 +215,16 @@ export const api = {
   blobPut: (mime: string, data: string) => invoke<{ id: string; size: number }>('blob_put', { mime, data }),
   blobUrl: (id: string) => invoke<string | null>('blob_url', { id }),
   receiptsZip: (trip: string) => invoke<string>('receipts_zip', { trip }),
+  fxRate: (cur: string, date: string) => invoke<FxQuote>('fx_rate', { today: today(), cur, date }),
+  debtSave: (debt: Debt, account: string | null) => invoke<Snapshot>('debt_save', { today: today(), debt, money: account ? { account } : null }),
+  debtDelete: (id: string) => invoke<Snapshot>('debt_delete', { today: today(), id }),
+  debtPay: (id: string, amount: number, account: string, date: string) => invoke<Snapshot>('debt_pay', { today: today(), id, amount, account, date }),
+  planSave: (plan: Plan) => invoke<Snapshot>('plan_save', { today: today(), plan }),
+  planDelete: (id: string) => invoke<Snapshot>('plan_delete', { today: today(), id }),
+  planPay: (id: string, date: string, amount: number | null, account: string | null) => invoke<Snapshot>('plan_pay', { today: today(), id, date, amount, account }),
+  planSkip: (id: string, date: string) => invoke<Snapshot>('plan_skip', { today: today(), id, date }),
+  remindStatus: (ask: boolean) => invoke<RemindStatus>('remind_status', { ask }),
+  remindDesktop: (mode: 'open' | 'windows') => invoke<string>('remind_desktop', { mode }),
   lockStatus: () => invoke<LockStatus>('lock_status'),
   pinUnlock: (code: string) => invoke<LockStatus>('pin_unlock', { code }),
   pinSet: (code: string, current: string | null) => invoke<LockStatus>('pin_set', { code, current }),
@@ -174,6 +240,12 @@ export const api = {
 export async function onLocked(cb: () => void): Promise<() => void> {
   const { listen } = await import('@tauri-apps/api/event');
   return listen('locked', cb);
+}
+
+/** Загрузились свежие курсы ЦБ — остатки на счетах в валюте пересчитаны. */
+export async function onFx(cb: () => void): Promise<() => void> {
+  const { listen } = await import('@tauri-apps/api/event');
+  return listen('fx', cb);
 }
 
 /** Сканирование QR-кода камерой телефона. */

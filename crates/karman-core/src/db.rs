@@ -7,6 +7,7 @@
 
 use crate::book::Account;
 use crate::error::{Error, Result};
+use crate::finance::{Debt, Plan};
 use crate::sync::{Event, EventBody, VersionVector};
 use crate::trip::{Op, Trip};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -17,7 +18,7 @@ use std::path::Path;
 
 /// Версия схемы. Меняется вместе с новыми видами событий: при открытии таблица
 /// записей собирается заново, и события, которые прежняя версия не понимала, оживают.
-const SCHEMA: &str = "3";
+const SCHEMA: &str = "5";
 
 /// Вложения: не больше 15 МБ, только снимки и PDF.
 pub const MAX_BLOB: usize = 15 * 1024 * 1024;
@@ -115,6 +116,11 @@ impl Store {
             out.push(Event { device, seq: seq as u64, lamport: lamport as u64, body: serde_json::from_str(&body)? });
         }
         Ok(out)
+    }
+
+    /// Сколько событий пришло из более новой версии и пока не показывается.
+    pub fn unknown_events(&self) -> Result<usize> {
+        Ok(self.all_events()?.iter().filter(|e| e.parsed().is_none()).count())
     }
 
     pub fn device(&self) -> &str {
@@ -229,6 +235,25 @@ impl Store {
         let mut out: Vec<Op> = self.items("op")?;
         out.sort_by(|a, b| b.date.cmp(&a.date).then_with(|| b.id.cmp(&a.id)));
         Ok(out)
+    }
+
+    /// Долги: сначала с ближайшим сроком.
+    pub fn debts(&self) -> Result<Vec<Debt>> {
+        let mut out: Vec<Debt> = self.items("debt")?;
+        out.sort_by(|a, b| a.due.is_none().cmp(&b.due.is_none()).then(a.due.cmp(&b.due)).then_with(|| a.date.cmp(&b.date)).then_with(|| a.id.cmp(&b.id)));
+        Ok(out)
+    }
+
+    /// Регулярные платежи по дате начала.
+    pub fn plans(&self) -> Result<Vec<Plan>> {
+        let mut out: Vec<Plan> = self.items("plan")?;
+        out.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.id.cmp(&b.id)));
+        Ok(out)
+    }
+
+    /// Операция с таким номером есть или была (удалена) — на этом устройстве или пришла с другого.
+    pub fn knows_op(&self, id: &str) -> Result<bool> {
+        Ok(self.conn.query_row("SELECT count(*) FROM items WHERE kind = 'op' AND id = ?1", [id], |r| r.get::<_, i64>(0))? > 0)
     }
 
     /// Поездки, новые сверху.
