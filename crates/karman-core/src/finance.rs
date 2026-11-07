@@ -290,6 +290,20 @@ pub fn upcoming(plans: &[PlanView], debts: &[DebtView], ops: &[Op], today: Date,
     out
 }
 
+/// Конец срока вкладов в ближайший месяц: вклад закрыть или продлить.
+pub fn deposit_ends(accounts: &[crate::book::AccountView], deposits: &[crate::savings::DepositView], today: Date, settings_lead: i32) -> Vec<Due> {
+    let horizon = today.add_days(AHEAD_DAYS);
+    deposits
+        .iter()
+        .filter_map(|v| {
+            let end = v.until.filter(|u| *u >= today && *u <= horizon)?;
+            let a = accounts.iter().find(|a| a.account.id == v.account)?;
+            let days = today.days_until(end);
+            Some(Due { kind: "deposit", id: v.account.clone(), title: a.account.name.clone(), date: end, amount: v.at_end, days, lead: settings_lead, soon: days <= settings_lead, auto: false, i_owe: false })
+        })
+        .collect()
+}
+
 /// Напоминание для уведомления: в какой день и что написать. Сумм нет —
 /// уведомление видно на заблокированном экране, суммы — только в приложении после входа.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -336,6 +350,7 @@ pub fn reminders(due: &[Due], today: Date) -> Vec<Reminder> {
                 continue;
             }
             let text = match (d.kind, d.auto, d.i_owe) {
+                ("deposit", _, _) => format!("{} заканчивается вклад: {}", when(ahead), d.title),
                 ("plan", true, _) => format!("{} автосписание: {}", when(ahead), d.title),
                 ("plan", false, _) => format!("{} платёж: {}", when(ahead), d.title),
                 (_, _, true) => format!("{} срок: вернуть долг — {}", when(ahead), d.title),
@@ -379,6 +394,7 @@ pub fn plan_op(plan: &Plan, date: Date, accounts: &[Account], fx: &BTreeMap<Stri
         to_amount: None,
         plan: Some(plan.id.clone()),
         plan_date: Some(date),
+        goal: None,
         extra: Default::default(),
     }
 }

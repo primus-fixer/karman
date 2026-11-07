@@ -7,7 +7,9 @@
 
 use crate::book::Account;
 use crate::error::{Error, Result};
+use crate::budget::Budget;
 use crate::finance::{Debt, Plan};
+use crate::savings::Goal;
 use crate::sync::{Event, EventBody, VersionVector};
 use crate::trip::{Op, Trip};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -18,7 +20,7 @@ use std::path::Path;
 
 /// Версия схемы. Меняется вместе с новыми видами событий: при открытии таблица
 /// записей собирается заново, и события, которые прежняя версия не понимала, оживают.
-const SCHEMA: &str = "5";
+const SCHEMA: &str = "6";
 
 /// Вложения: не больше 15 МБ, только снимки и PDF.
 pub const MAX_BLOB: usize = 15 * 1024 * 1024;
@@ -249,6 +251,18 @@ impl Store {
         let mut out: Vec<Plan> = self.items("plan")?;
         out.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.id.cmp(&b.id)));
         Ok(out)
+    }
+
+    /// Цели: сначала с ближайшим сроком.
+    pub fn goals(&self) -> Result<Vec<Goal>> {
+        let mut out: Vec<Goal> = self.items("goal")?;
+        out.sort_by(|a, b| a.done.cmp(&b.done).then(a.due.is_none().cmp(&b.due.is_none())).then(a.due.cmp(&b.due)).then_with(|| a.id.cmp(&b.id)));
+        Ok(out)
+    }
+
+    /// Бюджеты: личный и семейный.
+    pub fn budgets(&self) -> Result<Vec<Budget>> {
+        self.items("budget")
     }
 
     /// Операция с таким номером есть или была (удалена) — на этом устройстве или пришла с другого.

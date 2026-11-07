@@ -6,7 +6,7 @@ import { dueText } from './logic';
 import { bioLabel, LockScreen, PinFlow, type PinMode } from './Lock';
 import { attachFile, pickFiles } from './media';
 import Feed from './screens/Feed';
-import Finance, { type FinanceActions } from './screens/Finance';
+import Finance, { type FinanceActions, type FinView } from './screens/Finance';
 import Overview from './screens/Overview';
 import Settings, { type ThemeState } from './screens/Settings';
 import TripScreen, { type TripActions, type TripTab } from './screens/Trip';
@@ -104,6 +104,7 @@ export default function App() {
   const [lockKey, setLockKey] = useState(0);
   const [pinFlow, setPinFlow] = useState<PinMode | null>(null);
   const [viewer, setViewer] = useState<Attachment | null>(null);
+  const [finView, setFinView] = useState<FinView>('pay');
   const mainRef = useRef<HTMLElement>(null);
   const firstLoad = useRef(true);
   const notice = useRef<string | null>(null);
@@ -256,9 +257,9 @@ export default function App() {
     const soon = snap.upcoming.filter((u) => u.soon);
     if (!soon.length) return;
     const first = soon[0];
-    const what = first.kind === 'plan' ? (first.auto ? 'автосписание' : 'платёж') : 'срок долга';
+    const what = first.kind === 'plan' ? (first.auto ? 'автосписание' : 'платёж') : first.kind === 'deposit' ? 'заканчивается вклад' : 'срок долга';
     let one: string;
-    if (first.days < 0) one = (first.kind === 'plan' && first.auto ? 'Просрочено автосписание' : first.kind === 'plan' ? 'Просрочен платёж' : 'Прошёл срок долга') + ': ' + first.title;
+    if (first.days < 0) one = (first.kind === 'plan' && first.auto ? 'Просрочено автосписание' : first.kind === 'plan' ? 'Просрочен платёж' : first.kind === 'deposit' ? 'Закончился вклад' : 'Прошёл срок долга') + ': ' + first.title;
     else {
       const when = dueText(first.days);
       one = `${when[0].toUpperCase() + when.slice(1)} ${what}: ${first.title}`;
@@ -266,6 +267,7 @@ export default function App() {
     const text = soon.length === 1 ? one : `Скоро платежи и сроки: ${soon.length}. Ближайший — ${first.title}, ${dueText(first.days)}`;
     flash(text, () => {
       clearHistory();
+      setFinView('pay');
       setScreen('finance');
       setEntry((e) => (isPhone ? null : e));
     }, true, 'Открыть');
@@ -515,10 +517,22 @@ export default function App() {
 
   const mobile = info ? info.os === 'android' || info.os === 'ios' : false;
   let body = null;
-  if (screen === 'overview') body = <Overview snap={snap} nav={nav} act={opAct} fin={finAct} />;
+  if (screen === 'overview')
+    body = (
+      <Overview
+        snap={snap}
+        nav={nav}
+        act={opAct}
+        fin={finAct}
+        openFinance={(v) => {
+          setFinView(v);
+          nav.go('finance');
+        }}
+      />
+    );
   else if (screen === 'feed') body = <Feed snap={snap} act={opAct} />;
   else if (screen === 'trips') body = <Trips snap={snap} nav={nav} />;
-  else if (screen === 'finance') body = <Finance snap={snap} act={finAct} />;
+  else if (screen === 'finance') body = <Finance snap={snap} act={finAct} view={finView} setView={setFinView} goSettings={() => nav.go('settings')} />;
   else if (screen === 'settings') body = <Settings snap={snap} info={info} mobile={mobile} run={run} refresh={refresh} theme={theme} setTheme={setTheme} dark={dark} security={security} />;
   else if (screen === 'trip' && tripId)
     body = (

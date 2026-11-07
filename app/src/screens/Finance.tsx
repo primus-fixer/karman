@@ -3,6 +3,11 @@ import { api, type Debt, type DebtDir, type DebtView, type Due, type Every, type
 import { NB, SIGN, amountText, dMon, parseAmount, rub } from '../format';
 import { CATS, OWN_OUT, dueText, everyText, opView } from '../logic';
 import { ErrorText, Icon, Seg } from '../ui';
+import BudgetScreen from './Budget';
+import Savings from './Savings';
+
+/** Разделы «Финансов». */
+export type FinView = 'pay' | 'budget' | 'save';
 
 /** Действия экрана: запись через ядро и сообщение внизу. */
 export type FinanceActions = {
@@ -65,7 +70,8 @@ export function DueRow({ snap, due, act, compact = false }: { snap: Snapshot; du
   const late = due.days < 0;
   const plan = due.kind === 'plan' ? snap.plans.find((p) => p.plan.id === due.id) : undefined;
   const debt = due.kind === 'debt' ? snap.debts.find((d) => d.debt.id === due.id) : undefined;
-  const what = due.kind === 'plan' ? (due.auto ? 'спишется само' : plan ? everyText(plan.plan) : '') : due.i_owe ? 'вернуть долг' : 'вам вернут долг';
+  const what =
+    due.kind === 'plan' ? (due.auto ? 'спишется само' : plan ? everyText(plan.plan) : '') : due.kind === 'deposit' ? 'заканчивается вклад, будет ≈' + NB + rub(due.amount) : due.i_owe ? 'вернуть долг' : 'вам вернут долг';
   return (
     <div className="duerow">
       <div className="between" style={{ alignItems: 'flex-start' }}>
@@ -552,7 +558,29 @@ function PlanRow({ snap, view, act, onEdit }: { snap: Snapshot; view: PlanView; 
   );
 }
 
-export default function Finance({ snap, act }: { snap: Snapshot; act: FinanceActions }) {
+export default function Finance({ snap, act, view, setView, goSettings }: { snap: Snapshot; act: FinanceActions; view: FinView; setView: (v: FinView) => void; goSettings: () => void }) {
+  return (
+    <div className="stack gap16">
+      <h1 className="h1">Финансы</h1>
+      <Seg
+        label="Раздел финансов"
+        value={view}
+        onPick={setView}
+        items={[
+          { id: 'pay', label: 'Платежи' },
+          { id: 'budget', label: 'Бюджет' },
+          { id: 'save', label: 'Накопления' },
+        ]}
+      />
+      {view === 'pay' && <Payments snap={snap} act={act} />}
+      {view === 'budget' && <BudgetScreen snap={snap} act={act} />}
+      {view === 'save' && <Savings snap={snap} act={act} goSettings={goSettings} />}
+    </div>
+  );
+}
+
+/** Платежи по графику, сроки и долги. */
+function Payments({ snap, act }: { snap: Snapshot; act: FinanceActions }) {
   const [editDebt, setEditDebt] = useState<string | null>(null);
   const [editPlan, setEditPlan] = useState<string | null>(null);
   const [allDue, setAllDue] = useState(false);
@@ -564,9 +592,7 @@ export default function Finance({ snap, act }: { snap: Snapshot; act: FinanceAct
   const debtView = editDebt && editDebt !== 'new' ? snap.debts.find((v) => v.debt.id === editDebt) ?? null : null;
   const planView = editPlan && editPlan !== 'new' ? snap.plans.find((v) => v.plan.id === editPlan) ?? null : null;
   return (
-    <div className="stack gap26">
-      <h1 className="h1">Финансы</h1>
-
+    <div className="stack gap26" style={{ marginTop: 10 }}>
       <section className="stack">
         <div className="between" style={{ marginBottom: 8 }}>
           <h2 className="h2">Скоро</h2>

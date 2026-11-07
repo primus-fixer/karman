@@ -2,7 +2,10 @@
 
 use crate::book::{self, Account};
 use crate::date::Date;
+use crate::budget::{self, Budget};
 use crate::finance::{Debt, DebtDir, Every, Plan};
+use crate::savings::{Deposit, Goal, KIND_DEPOSIT, KIND_SAVINGS};
+use std::collections::BTreeMap;
 use crate::money::rub;
 use crate::sync::EventBody;
 use crate::trip::{DocKind, Op, OpKind, Trip, TripStatus, DEFAULT_RATE};
@@ -133,6 +136,7 @@ pub fn ops() -> Vec<Op> {
             to_amount: None,
             plan: None,
             plan_date: None,
+            goal: None,
             extra: Default::default(),
         })
         .collect()
@@ -161,6 +165,7 @@ fn own_op(id: &str, date: &str, kind: OpKind, cat: &str, title: &str, amount: f6
         to_amount: None,
         plan: None,
         plan_date: None,
+        goal: None,
         extra: Default::default(),
     }
 }
@@ -168,14 +173,15 @@ fn own_op(id: &str, date: &str, kind: OpKind, cat: &str, title: &str, amount: f6
 /// Демо-данные целиком, как события журнала: остатки счетов, счёт в тенге, поездки и операции из макета.
 pub fn book_events() -> Vec<EventBody> {
     let mut bodies: Vec<EventBody> = Vec::new();
-    for (id, opening) in [("acc-work", 2800.0), ("acc-personal", 61640.5), ("acc-cash", 12400.0)] {
+    // Личная карта: +25 000 к прежнему началу — ровно столько ушло на цель «Отпуск» (см. finance_events).
+    for (id, opening) in [("acc-work", 2800.0), ("acc-personal", 86640.5), ("acc-cash", 12400.0)] {
         if let Some(mut a) = book::default_accounts().into_iter().find(|a| a.id == id) {
             a.opening = rub(opening);
             bodies.push(EventBody::AccountPut { account: a });
         }
     }
     bodies.push(EventBody::AccountPut {
-        account: Account { id: "acc-kzt".into(), name: "Наличные, тенге".into(), short: "₸".into(), currency: "KZT".into(), opening: rub(18000.0), kind: "cash".into(), order: 4, archived: false, extra: Default::default() },
+        account: Account { id: "acc-kzt".into(), name: "Наличные, тенге".into(), short: "₸".into(), currency: "KZT".into(), opening: rub(18000.0), kind: "cash".into(), order: 4, archived: false, deposit: None, extra: Default::default() },
     });
     bodies.extend(trips().into_iter().map(|trip| EventBody::TripPut { trip }));
     bodies.extend(ops().into_iter().map(|mut op| {
@@ -230,5 +236,28 @@ pub fn finance_events() -> Vec<EventBody> {
         EventBody::PlanPut { plan: plan("plan-sber", "Кредит Сбербанк", 12400.0, "", "2026-11-15", true, Some("debt-sber")) },
         EventBody::PlanPut { plan: plan("plan-net", "Интернет и телефон", 890.0, "telecom", "2026-11-09", false, None) },
         EventBody::PlanPut { plan: plan("plan-garage", "Аренда гаража", 3000.0, "home", "2026-11-25", false, None) },
+    ]
+    .into_iter()
+    .chain(savings_events())
+    .collect()
+}
+
+/// Копилка с целью «Отпуск», вклад с капитализацией и бюджеты на месяц.
+fn savings_events() -> Vec<EventBody> {
+    let mut save = Account { id: "acc-save".into(), name: "Копилка".into(), short: "Копилка".into(), currency: "RUB".into(), opening: rub(20000.0), kind: KIND_SAVINGS.into(), order: 5, archived: false, deposit: None, extra: Default::default() };
+    let mut dep = Account { id: "acc-dep".into(), name: "Вклад «Надёжный»".into(), short: "Вклад".into(), currency: "RUB".into(), opening: rub(300000.0), kind: KIND_DEPOSIT.into(), order: 6, archived: false, deposit: None, extra: Default::default() };
+    dep.deposit = Some(Deposit { rate: 16.0, opened: d("2026-05-15"), until: Some(d("2027-05-15")), capitalize: true });
+    save.order = 5;
+    let goal = Goal { id: "goal-trip".into(), title: "Отпуск летом".into(), target: rub(150000.0), due: Some(d("2027-06-01")), account: "acc-save".into(), done: false, note: String::new(), extra: Default::default() };
+    let mut put = own_op("g1", "2026-10-15", OpKind::Transfer, "transfer", "На цель: Отпуск летом", 25000.0);
+    put.to = Some("acc-save".into());
+    put.goal = Some("goal-trip".into());
+    let personal = Budget { id: budget::PERSONAL.into(), total: Some(rub(60000.0)), cats: BTreeMap::from([("groceries".to_string(), rub(15000.0)), ("cafe".to_string(), rub(4000.0)), ("home".to_string(), rub(7000.0))]), extra: Default::default() };
+    vec![
+        EventBody::AccountPut { account: save },
+        EventBody::AccountPut { account: dep },
+        EventBody::GoalPut { goal },
+        EventBody::OpPut { op: put },
+        EventBody::BudgetPut { budget: personal },
     ]
 }

@@ -5,6 +5,7 @@
 //! и разбор QR-кодов (связь устройств и кассовые чеки).
 
 pub mod book;
+pub mod budget;
 pub mod cbr;
 pub mod date;
 pub mod db;
@@ -15,6 +16,7 @@ pub mod money;
 pub mod pairing;
 pub mod pin;
 pub mod receipt;
+pub mod savings;
 pub mod sync;
 pub mod trip;
 pub mod zip;

@@ -34,7 +34,19 @@ export type Op = {
   /** Оплата регулярного платежа: какого и за какую дату. */
   plan?: string | null;
   plan_date?: string | null;
+  /** Перевод на цель или с неё. */
+  goal?: string | null;
 };
+
+/** Условия вклада. */
+export type Deposit = { rate: number; opened: string; until: string | null; capitalize: boolean };
+/** Прогноз по вкладу: проценты за месяц, до конца срока и сумма к концу срока. */
+export type DepositView = { account: string; month: number; income: number; at_end: number; until: string | null; days_left: number | null };
+export type Goal = { id: string; title: string; target: number; due: string | null; account: string; done: boolean; note: string };
+export type GoalView = { goal: Goal; saved: number; left: number; months_left: number | null; per_month: number | null };
+export type Budget = { id: 'personal' | 'family'; total: number | null; cats: Record<string, number> };
+export type CatView = { cat: string; limit: number | null; spent: number };
+export type BudgetView = { id: 'personal' | 'family'; start: string; end: string; total: number | null; spent: number; cats: CatView[]; days_left: number };
 
 export type DebtDir = 'i_owe' | 'owed_to_me';
 export type Debt = { id: string; who: string; dir: DebtDir; amount: number; date: string; due: string | null; note: string; closed: boolean };
@@ -62,7 +74,7 @@ export type Plan = {
 };
 export type PlanView = { plan: Plan; next: string | null; overdue: number; paid: number; amount_rub: number };
 /** Ближайший срок: платёж по графику или возврат долга. */
-export type Due = { kind: 'plan' | 'debt'; id: string; title: string; date: string; amount: number; days: number; lead: number; soon: boolean; auto: boolean; i_owe: boolean };
+export type Due = { kind: 'plan' | 'debt' | 'deposit'; id: string; title: string; date: string; amount: number; days: number; lead: number; soon: boolean; auto: boolean; i_owe: boolean };
 /** Напоминания: платформа, разрешение на уведомления, режим на компьютере. */
 export type RemindStatus = { platform: 'android' | 'windows' | 'other'; permission: 'granted' | 'denied' | 'prompt'; desktop: 'open' | 'windows' };
 
@@ -126,7 +138,7 @@ export type TripView = {
   auto_just: string;
 };
 
-export type Account = { id: string; name: string; short: string; currency: string; opening: number; kind: string; order: number; archived: boolean };
+export type Account = { id: string; name: string; short: string; currency: string; opening: number; kind: string; order: number; archived: boolean; deposit?: Deposit | null };
 export type AccountView = { account: Account; balance: number; balance_rub: number };
 
 export type Snapshot = {
@@ -160,6 +172,16 @@ export type Snapshot = {
   owed_to_me: number;
   /** За сколько дней напоминать. */
   remind_days: number;
+  /** На накопительных счетах и вкладах — строка «Отложено». */
+  saved: number;
+  /** Отложенное входит в «Мои деньги» (настройка, по умолчанию нет). */
+  saved_in_mine: boolean;
+  deposits: DepositView[];
+  goals: GoalView[];
+  /** Бюджет на месяц: личный и семейный. */
+  budgets: BudgetView[];
+  /** С какого числа начинается месяц бюджета. */
+  budget_day: number;
 };
 
 export type Check = { ok: boolean; text: string };
@@ -223,6 +245,11 @@ export const api = {
   planDelete: (id: string) => invoke<Snapshot>('plan_delete', { today: today(), id }),
   planPay: (id: string, date: string, amount: number | null, account: string | null) => invoke<Snapshot>('plan_pay', { today: today(), id, date, amount, account }),
   planSkip: (id: string, date: string) => invoke<Snapshot>('plan_skip', { today: today(), id, date }),
+  goalSave: (goal: Goal) => invoke<Snapshot>('goal_save', { today: today(), goal }),
+  goalDelete: (id: string) => invoke<Snapshot>('goal_delete', { today: today(), id }),
+  /** «Отложить» на цель или, с take, «Взять из цели». */
+  goalMove: (id: string, amount: number, account: string, date: string, take: boolean) => invoke<Snapshot>('goal_move', { today: today(), id, amount, account, date, take }),
+  budgetSave: (budget: Budget) => invoke<Snapshot>('budget_save', { today: today(), budget }),
   remindStatus: (ask: boolean) => invoke<RemindStatus>('remind_status', { ask }),
   remindDesktop: (mode: 'open' | 'windows') => invoke<string>('remind_desktop', { mode }),
   lockStatus: () => invoke<LockStatus>('lock_status'),

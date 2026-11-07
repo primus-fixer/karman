@@ -3,7 +3,9 @@
 use crate::date::Date;
 use crate::db::Store;
 use crate::error::{format_err, Error, Result};
+use crate::budget::{self, BudgetView};
 use crate::finance::{self, DebtDir, DebtView, Due, PlanView};
+use crate::savings::{self, Deposit, DepositView, GoalView};
 use crate::money::Kop;
 use crate::sync::EventBody;
 use crate::trip::{self, Op, OpKind, ReportRow, Settlement, Trip, TripStatus, DEFAULT_RATE};
@@ -20,19 +22,23 @@ pub struct Account {
     pub currency: String,
     /// Остаток, с которого начат учёт, в валюте счёта.
     pub opening: Kop,
-    /// work — рабочая карта (для поездок), personal — личная, cash — наличные.
+    /// work — рабочая карта (для поездок), personal — личная, cash — наличные,
+    /// savings — накопительный, deposit — вклад.
     pub kind: String,
     #[serde(default)]
     pub order: i32,
     #[serde(default)]
     pub archived: bool,
+    /// Вклад: ставка, срок, капитализация.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deposit: Option<Deposit>,
     /// Поля из более новых версий.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 fn account(id: &str, name: &str, short: &str, kind: &str, order: i32) -> Account {
-    Account { id: id.into(), name: name.into(), short: short.into(), currency: "RUB".into(), opening: 0, kind: kind.into(), order, archived: false, extra: Default::default() }
+    Account { id: id.into(), name: name.into(), short: short.into(), currency: "RUB".into(), opening: 0, kind: kind.into(), order, archived: false, deposit: None, extra: Default::default() }
 }
 
 /// Счета, с которых начинается пустая база. Номера постоянные: если два устройства
@@ -139,6 +145,18 @@ pub struct Snapshot {
     pub owed_to_me: Kop,
     /// За сколько дней напоминать (настройка «remind.days»).
     pub remind_days: i32,
+    /// На накопительных счетах и вкладах — строка «Отложено».
+    pub saved: Kop,
+    /// Отложенное входит в «Мои деньги» (настройка «savings.in_mine», по умолчанию нет).
+    pub saved_in_mine: bool,
+    /// Прогноз по вкладам.
+    pub deposits: Vec<DepositView>,
+    /// Цели и сколько на них отложено.
+    pub goals: Vec<GoalView>,
+    /// Бюджет на месяц: личный и семейный.
+    pub budgets: Vec<BudgetView>,
+    /// С какого числа начинается месяц бюджета.
+    pub budget_day: u32,
 }
 
 pub fn trip_view(t: &Trip, ops: &[Op], settings_rate: Kop, today: Date) -> TripView {
@@ -250,7 +268,15 @@ pub fn snapshot(store: &Store, today: Date) -> Result<Snapshot> {
     let plans = finance::plan_views(&store.plans()?, &ops, &plain, &fx, today);
     let debts = finance::debt_views(&store.debts()?, &plans, &ops, today);
     let remind_days = finance::settings_lead(&settings);
-    let upcoming = finance::upcoming(&plans, &debts, &ops, today, remind_days);
+    let deposits = savings::deposit_views(&accounts, today);
+    let mut upcoming = finance::upcoming(&plans, &debts, &ops, today, remind_days);
+    upcoming.extend(finance::deposit_ends(&accounts, &deposits, today, remind_days));
+    upcoming.sort_by(|a, b| a.date.cmp(&b.date).then_with(|| a.title.cmp(&b.title)));
+    let saved: Kop = accounts.iter().filter(|a| !a.account.archived && savings::is_saving(&a.account.kind)).map(|a| a.balance_rub).sum();
+    let saved_in_mine = savings::in_mine(&settings);
+    let goals = savings::goal_views(&store.goals()?, &ops, today);
+    let budget_day = budget::settings_day(&settings);
+    let budgets = budget::budget_views(&store.budgets()?, &ops, today, budget_day);
     let open = |dir: DebtDir| debts.iter().filter(|v| v.open() && v.debt.dir == dir).map(|v| v.left).sum::<Kop>();
     let (i_owe, owed_to_me) = (open(DebtDir::IOwe), open(DebtDir::OwedToMe));
     Ok(Snapshot {
@@ -267,7 +293,7 @@ pub fn snapshot(store: &Store, today: Date) -> Result<Snapshot> {
         due,
         owed,
         debt_due,
-        mine: total - held - due,
+        mine: total - held - due - if saved_in_mine { 0 } else { saved },
         trips,
         ops,
         settings,
@@ -277,6 +303,12 @@ pub fn snapshot(store: &Store, today: Date) -> Result<Snapshot> {
         i_owe,
         owed_to_me,
         remind_days,
+        saved,
+        saved_in_mine,
+        deposits,
+        goals,
+        budgets,
+        budget_day,
     })
 }
 
@@ -327,6 +359,7 @@ fn company_op(id: String, date: Date, kind: OpKind, cat: &str, title: String, am
         to_amount: None,
         plan: None,
         plan_date: None,
+        goal: None,
         extra: Default::default(),
     }
 }
@@ -507,6 +540,40 @@ mod tests {
         assert_eq!(snap.accounts.iter().find(|a| a.account.id == "acc-personal").unwrap().balance, 0);
     }
 
+}
+
+#[cfg(test)]
+mod savings_tests {
+    use super::*;
+    use crate::savings::{Deposit, KIND_DEPOSIT, KIND_SAVINGS};
+
+    /// Накопления — строкой «Отложено», вне «Моих денег»; вклад напоминает о конце срока.
+    #[test]
+    fn savings_apart_from_my_money() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Store::open(&dir.path().join("s.db"), &[5u8; 32], "dev").unwrap();
+        ensure_defaults(&mut s).unwrap();
+        let today = Date::parse("2026-11-07").unwrap();
+        let mut card = default_accounts().remove(1);
+        card.opening = crate::money::rub(50000.0);
+        let mut save = account("acc-save", "Копилка", "Копилка", KIND_SAVINGS, 4);
+        save.opening = crate::money::rub(20000.0);
+        let mut dep = account("acc-dep", "Вклад Сбер", "Вклад", KIND_DEPOSIT, 5);
+        dep.opening = crate::money::rub(100000.0);
+        dep.deposit = Some(Deposit { rate: 12.0, opened: Date::parse("2026-05-10").unwrap(), until: Some(Date::parse("2026-11-10").unwrap()), capitalize: false });
+        s.append_all(vec![EventBody::AccountPut { account: card }, EventBody::AccountPut { account: save }, EventBody::AccountPut { account: dep }]).unwrap();
+        let snap = snapshot(&s, today).unwrap();
+        assert_eq!((snap.total, snap.saved, snap.mine), (crate::money::rub(170000.0), crate::money::rub(120000.0), crate::money::rub(50000.0)), "по умолчанию отложенное — отдельно");
+        let dv = &snap.deposits[0];
+        assert_eq!((dv.account.as_str(), dv.days_left, dv.month), ("acc-dep", Some(3), crate::money::rub(1000.0)));
+        let end = snap.upcoming.iter().find(|u| u.kind == "deposit").expect("конец вклада в «Скоро»");
+        assert_eq!((end.title.as_str(), end.days, end.soon), ("Вклад Сбер", 3, true));
+        let texts: Vec<String> = finance::reminders(&snap.upcoming, today).into_iter().map(|r| r.text).collect();
+        assert!(texts.contains(&"Через 3 дня заканчивается вклад: Вклад Сбер".to_string()), "{texts:?}");
+        s.append(EventBody::SettingPut { key: "savings.in_mine".into(), value: "1".into() }).unwrap();
+        let snap = snapshot(&s, today).unwrap();
+        assert_eq!((snap.mine, snap.saved_in_mine), (crate::money::rub(170000.0), true), "настройка: отложенное в «Моих деньгах»");
+    }
 }
 
 /// Чеки поездки для архива: имена «дата название сумма», без повторов.
