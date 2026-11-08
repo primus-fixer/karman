@@ -91,6 +91,12 @@ impl EventBody {
 
 const MAGIC: &[u8; 4] = b"KRM1";
 const MAX_FRAME: usize = 64 * 1024 * 1024;
+/// Первое сообщение (приветствие) маленькое: до проверки ключа не принимаем больше мегабайта
+/// и ждём его недолго — чужой в сети не займёт приём подключений.
+const HELLO_MAX: usize = 1024 * 1024;
+const HELLO_WAIT: Duration = Duration::from_secs(15);
+/// QR-код действует 15 минут: потом приём подключений останавливается сам.
+pub const SERVER_TTL: Duration = Duration::from_secs(15 * 60);
 
 /// Шифрует пакет: «KRM1» + случайный nonce + шифротекст XChaCha20-Poly1305.
 pub fn seal(key: &[u8; 32], plain: &[u8]) -> Result<Vec<u8>> {
@@ -209,10 +215,14 @@ fn write_msg(s: &mut TcpStream, key: &[u8; 32], msg: &Msg) -> Result<()> {
 }
 
 fn read_msg(s: &mut TcpStream, key: &[u8; 32]) -> Result<Msg> {
+    read_msg_max(s, key, MAX_FRAME)
+}
+
+fn read_msg_max(s: &mut TcpStream, key: &[u8; 32], max: usize) -> Result<Msg> {
     let mut len = [0u8; 4];
     s.read_exact(&mut len)?;
     let len = u32::from_be_bytes(len) as usize;
-    if len > MAX_FRAME {
+    if len > max {
         return Err(Error::Format("слишком большой пакет".into()));
     }
     let mut buf = vec![0u8; len];
@@ -327,10 +337,13 @@ pub fn sync_with(p: &Pairing, store: &Mutex<Store>, name: &str) -> Result<SyncRe
 /// Сторона, которая ждёт подключения (обычно компьютер, показавший QR).
 pub fn serve_one(mut s: TcpStream, key: &[u8; 32], store: &Mutex<Store>, name: &str) -> Result<SyncReport> {
     prepare(&s)?;
-    let (peer, peer_name, their_vv, peer_files, peer_app) = match read_msg(&mut s, key)? {
+    s.set_read_timeout(Some(HELLO_WAIT))?;
+    let (peer, peer_name, their_vv, peer_files, peer_app) = match read_msg_max(&mut s, key, HELLO_MAX)? {
         Msg::Hello { device, name, vv, files, app } => (device, name, vv, files, app),
         _ => return Err(Error::Format("ожидалось приветствие".into())),
     };
+    // Ключ подошёл — дальше пакеты со снимками, их можно ждать дольше.
+    prepare(&s)?;
     let (device, vv, events) = {
         let st = lock(store);
         (st.device().to_string(), st.version_vector()?, st.events_after(&their_vv)?)
@@ -379,15 +392,21 @@ pub struct Server {
 }
 
 impl Server {
+    /// Принимает подключения 15 минут — пока действует QR-код.
     pub fn start(store: Arc<Mutex<Store>>, key: [u8; 32], name: String, port: u16) -> Result<Server> {
+        Server::start_for(store, key, name, port, SERVER_TTL)
+    }
+
+    pub fn start_for(store: Arc<Mutex<Store>>, key: [u8; 32], name: String, port: u16, ttl: Duration) -> Result<Server> {
         let listener = TcpListener::bind(("0.0.0.0", port))?;
         let port = listener.local_addr()?.port();
         listener.set_nonblocking(true)?;
         let stop = Arc::new(AtomicBool::new(false));
         let log = Arc::new(Mutex::new(Vec::new()));
         let (stop2, log2) = (stop.clone(), log.clone());
+        let until = std::time::Instant::now() + ttl;
         let thread = std::thread::spawn(move || {
-            while !stop2.load(Ordering::Relaxed) {
+            while !stop2.load(Ordering::Relaxed) && std::time::Instant::now() < until {
                 match listener.accept() {
                     Ok((s, _)) => {
                         let _ = s.set_nonblocking(false);
@@ -408,6 +427,11 @@ impl Server {
             let _ = t.join();
         }
     }
+
+    /// Ещё принимает подключения (не остановлен и QR-код не истёк).
+    pub fn running(&self) -> bool {
+        self.thread.as_ref().is_some_and(|t| !t.is_finished())
+    }
 }
 
 impl Drop for Server {
@@ -420,6 +444,30 @@ impl Drop for Server {
 mod tests {
     use super::*;
     use crate::demo;
+
+    #[test]
+    fn server_stops_by_itself_and_rejects_big_hello() {
+        let dir = tempfile::tempdir().unwrap();
+        let b = Arc::new(Mutex::new(Store::open(&dir.path().join("b.db"), &[2u8; 32], "laptop").unwrap()));
+        let key = crate::pairing::random_key().unwrap();
+        let server = Server::start_for(b.clone(), key, "Ноутбук".into(), 0, Duration::from_millis(300)).unwrap();
+        assert!(server.running());
+        // Чужой без ключа объявляет огромное приветствие — отказ сразу, без ожидания данных.
+        let mut s = TcpStream::connect(("127.0.0.1", server.port)).unwrap();
+        s.write_all(&((HELLO_MAX as u32 + 1).to_be_bytes())).unwrap();
+        let t0 = std::time::Instant::now();
+        let mut buf = [0u8; 1];
+        let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
+        let _ = s.read(&mut buf);
+        assert!(t0.elapsed() < Duration::from_secs(3), "соединение закрыто сразу");
+        std::thread::sleep(Duration::from_millis(600));
+        assert!(!server.running(), "QR-код истёк — приём остановлен");
+        let log = server.log.lock().unwrap().clone();
+        assert!(log.iter().any(|r| matches!(r, Err(m) if m.contains("слишком большой"))), "{log:?}");
+        let a = Mutex::new(Store::open(&dir.path().join("a.db"), &[1u8; 32], "phone").unwrap());
+        let p = Pairing { device: "laptop".into(), name: "Ноутбук".into(), hosts: vec!["127.0.0.1".into()], port: server.port, key };
+        assert!(sync_with(&p, &a, "Телефон").is_err(), "после остановки не подключиться");
+    }
 
     #[test]
     fn seal_open_and_tamper() {

@@ -511,6 +511,7 @@ pub async fn backup_restore(app: AppHandle, id: String, password: String, today:
 
 #[tauri::command]
 pub fn backup_discard(state: State<AppState>, id: String) -> Res<()> {
+    state.unlocked()?;
     let path = upload_path(&state, &id)?;
     let _ = std::fs::remove_file(path);
     Ok(())

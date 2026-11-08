@@ -405,6 +405,8 @@ pub async fn lock_now(app: AppHandle) -> Res<LockStatus> {
         let mut g = state.guard.lock().map_err(err)?;
         if g.pin {
             g.locked = true;
+            drop(g);
+            crate::stop_sync(&state);
         }
     }
     reply(&app, None).await
@@ -431,6 +433,8 @@ pub fn on_focus(app: &AppHandle, focused: bool) {
         if g.pin && !g.locked && since.elapsed() >= lock_after() {
             g.locked = true;
             drop(g);
+            // Пока «Карман» заблокирован, по прежнему QR-коду не подключиться.
+            crate::stop_sync(&state);
             let _ = app.emit("locked", ());
         }
     }

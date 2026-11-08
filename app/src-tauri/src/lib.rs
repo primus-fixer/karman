@@ -576,6 +576,7 @@ fn device_info(state: State<AppState>) -> Res<DeviceInfo> {
 /// Отдельная проверочная база: запись, чтение, шифрование файла, отказ без ключа.
 #[tauri::command]
 fn db_check(state: State<AppState>) -> Res<Vec<Check>> {
+    state.unlocked()?;
     let path = state.data_dir.join("check.db");
     let remove = |p: &Path| {
         for suffix in ["", "-wal", "-shm"] {
@@ -676,9 +677,13 @@ fn pairing_view(p: &Pairing) -> Res<PairingView> {
 fn sync_start(state: State<AppState>) -> Res<PairingView> {
     drop(state.store()?);
     let mut slot = state.server.lock().map_err(err)?;
-    if let Some((_, p)) = slot.as_ref() {
-        return pairing_view(p);
+    if let Some((server, p)) = slot.as_ref() {
+        if server.running() {
+            return pairing_view(p);
+        }
     }
+    // Прежний QR-код истёк — новый ключ и новый QR-код.
+    *slot = None;
     let hosts = local_ipv4();
     if hosts.is_empty() {
         return Err("Нет подключения к сети: включите Wi-Fi или точку доступа".into());
@@ -701,13 +706,19 @@ struct SyncStatus {
 
 #[tauri::command]
 fn sync_status(state: State<AppState>) -> Res<SyncStatus> {
-    let slot = state.server.lock().map_err(err)?;
+    state.unlocked()?;
+    let mut slot = state.server.lock().map_err(err)?;
     let Some((server, _)) = slot.as_ref() else {
         return Ok(SyncStatus { running: false, log: vec![] });
     };
-    let log = server.log.lock().map_err(err)?;
+    let running = server.running();
+    let log = server.log.lock().map_err(err)?.clone();
+    if !running {
+        // QR-код истёк: приём остановлен.
+        *slot = None;
+    }
     Ok(SyncStatus {
-        running: true,
+        running,
         log: log
             .iter()
             .map(|r| match r {
@@ -720,10 +731,19 @@ fn sync_status(state: State<AppState>) -> Res<SyncStatus> {
 
 #[tauri::command]
 fn sync_stop(state: State<AppState>) -> Res<()> {
+    state.unlocked()?;
     if let Some((server, _)) = state.server.lock().map_err(err)?.take() {
         server.stop();
     }
     Ok(())
+}
+
+/// «Карман» заблокировался — QR-код больше не действует. Не ждём, пока закончится уже идущий обмен.
+fn stop_sync(state: &AppState) {
+    if let Ok(mut slot) = state.server.lock() {
+        // Server при удалении сам просит поток остановиться.
+        drop(slot.take());
+    }
 }
 
 #[derive(Serialize)]
