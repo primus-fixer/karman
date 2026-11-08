@@ -101,6 +101,9 @@ export default function App() {
   const [dark, setDark] = useState(false);
   const [lock, setLock] = useState<LockStatus | null>(null);
   const [locked, setLocked] = useState(false);
+  // Экран входа уже открыт — заново его не создаём. Иначе после отмены отпечатка на телефоне
+  // (окно отпечатка уводит «Карман» в фон и обратно) он снова и снова сам спрашивал отпечаток.
+  const lockedRef = useRef(false);
   const [lockKey, setLockKey] = useState(0);
   const [pinFlow, setPinFlow] = useState<PinMode | null>(null);
   const [viewer, setViewer] = useState<Attachment | null>(null);
@@ -133,19 +136,23 @@ export default function App() {
   }, [toast]);
 
   // ——— Вход ———
+  /** Новый экран входа (он сам спросит отпечаток) — только если его ещё нет на экране. */
+  const showLock = useCallback(() => {
+    if (lockedRef.current) return;
+    lockedRef.current = true;
+    setLockKey((k) => k + 1);
+    setLocked(true);
+  }, []);
   /** «Карман» заблокирован: показываем экран входа с актуальным состоянием. */
   const goLocked = useCallback(() => {
     api.lockStatus().then(
       (st) => {
         setLock(st);
-        if (st.locked) {
-          setLockKey((k) => k + 1);
-          setLocked(true);
-        }
+        if (st.locked) showLock();
       },
-      () => setLocked(true),
+      () => showLock(),
     );
-  }, []);
+  }, [showLock]);
 
   // ——— Данные ———
   const refresh = useCallback(() => {
@@ -172,8 +179,7 @@ export default function App() {
         setLock(st);
         notice.current = st.notice;
         if (st.locked) {
-          setLockKey((k) => k + 1);
-          setLocked(true);
+          showLock();
         } else {
           refresh();
           showNotice();
@@ -205,11 +211,12 @@ export default function App() {
       unFx.then((f) => f());
       unBackup.then((f) => f());
     };
-  }, [refresh, goLocked, showNotice]);
+  }, [refresh, goLocked, showNotice, showLock]);
 
   const onUnlocked = useCallback(
     (st: LockStatus) => {
       setLock(st);
+      lockedRef.current = false;
       setLocked(false);
       refresh();
       showNotice();
@@ -295,10 +302,7 @@ export default function App() {
     onLockNow: async () => {
       const st = await api.lockNow();
       setLock(st);
-      if (st.locked) {
-        setLockKey((k) => k + 1);
-        setLocked(true);
-      }
+      if (st.locked) showLock();
     },
   };
 
