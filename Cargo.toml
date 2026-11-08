@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/karman-core", "crates/karman-secure", "app/src-tauri"]
 
 [workspace.package]
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 publish = false
 
@@ -21,4 +21,11 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.base64]
+opt-level = 3
+
+# Шифрование кусков резервной копии.
+[profile.dev.package.chacha20]
+opt-level = 3
+
+[profile.dev.package.poly1305]
 opt-level = 3

@@ -4,6 +4,7 @@ import type { PinMode } from '../Lock';
 import { SIGN, amountText, dMon, parseAmount, rateText as fxText, rub } from '../format';
 import { SCHEMES, type ThemeMode } from '../theme';
 import { Checks, ErrorText, Icon, Seg } from '../ui';
+import BackupSection from './Backup';
 
 export type ThemeState = { scheme: string; mode: ThemeMode };
 
@@ -510,6 +511,7 @@ export default function Settings({
   setTheme,
   dark,
   security,
+  flash,
 }: {
   snap: Snapshot;
   info: DeviceInfo | null;
@@ -520,6 +522,7 @@ export default function Settings({
   setTheme: (t: ThemeState) => void;
   dark: boolean;
   security: Security;
+  flash: (text: string, long?: boolean) => void;
 }) {
   const [rateText, setRateText] = useState(amountText(snap.rate));
   useEffect(() => setRateText(amountText(snap.rate)), [snap.rate]);
@@ -712,6 +715,8 @@ export default function Settings({
           </div>
         ))}
       </section>
+
+      <BackupSection snap={snap} mobile={mobile} run={run} flash={flash} />
 
       <section className="stack gap10">
         <h2 className="h2">Оформление</h2>

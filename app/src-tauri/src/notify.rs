@@ -60,6 +60,14 @@ pub fn set_tz(store: &karman_core::db::Store, minutes: i32) {
     }
 }
 
+/// Смещение местного времени от UTC в минутах (0, пока экран его не прислал).
+pub fn tz_minutes() -> i32 {
+    match TZ.load(Ordering::Relaxed) {
+        NO_TZ => 0,
+        tz => tz,
+    }
+}
+
 /// Время напоминаний из настройки «remind.time» (по умолчанию 10:00).
 pub fn remind_time(settings: &BTreeMap<String, String>) -> (u32, u32) {
     settings
