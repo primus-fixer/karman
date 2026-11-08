@@ -71,7 +71,12 @@ impl Store {
     /// Открывает или создаёт базу, зашифрованную 256-битным ключом.
     pub fn open(path: &Path, key: &[u8; 32], device: &str) -> Result<Store> {
         let conn = Connection::open(path)?;
-        conn.execute_batch(&format!("PRAGMA key = \"x'{}'\";", hex(key)))?;
+        // Строку с ключом после использования затираем.
+        let mut pragma = format!("PRAGMA key = \"x'{}'\";", hex(key)).into_bytes();
+        let keyed = conn.execute_batch(std::str::from_utf8(&pragma).unwrap_or_default());
+        pragma.fill(0);
+        std::hint::black_box(&pragma);
+        keyed?;
         conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0))
             .map_err(|_| Error::WrongKey)?;
         conn.execute_batch(
@@ -124,7 +129,11 @@ impl Store {
     /// Копия базы в файл тем же ключом (sqlcipher_export).
     pub fn export_copy(&self, dest: &Path, key: &[u8; 32]) -> Result<()> {
         let _ = std::fs::remove_file(dest);
-        self.conn.execute("ATTACH DATABASE ?1 AS copy KEY ?2", params![dest.to_string_lossy(), format!("x'{}'", hex(key))])?;
+        let mut raw = format!("x'{}'", hex(key)).into_bytes();
+        let attached = self.conn.execute("ATTACH DATABASE ?1 AS copy KEY ?2", params![dest.to_string_lossy(), std::str::from_utf8(&raw).unwrap_or_default()]);
+        raw.fill(0);
+        std::hint::black_box(&raw);
+        attached?;
         let done = self.conn.query_row("SELECT sqlcipher_export('copy')", [], |_| Ok(()));
         self.conn.execute("DETACH DATABASE copy", [])?;
         done?;

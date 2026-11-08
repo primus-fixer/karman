@@ -340,6 +340,7 @@ function SyncWifi({ mobile, onSynced }: { mobile: boolean; onSynced: () => void 
   const [result, setResult] = useState<SyncResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expired, setExpired] = useState(false);
   const seen = useRef(0);
 
   // Пока показан QR-код, раз в 2 секунды спрашиваем, кто подключался.
@@ -354,6 +355,11 @@ function SyncWifi({ mobile, onSynced }: { mobile: boolean; onSynced: () => void 
         if (s.log.length > seen.current) {
           seen.current = s.log.length;
           onSynced();
+        }
+        // QR-код действует 15 минут — потом приём подключений останавливается.
+        if (!s.running) {
+          setPairing(null);
+          setExpired(true);
         }
       } catch {
         /* окно закрывается */
@@ -404,6 +410,7 @@ function SyncWifi({ mobile, onSynced }: { mobile: boolean; onSynced: () => void 
               if (p) {
                 seen.current = 0;
                 setLog([]);
+                setExpired(false);
                 setPairing(p);
               }
             }}
@@ -444,8 +451,10 @@ function SyncWifi({ mobile, onSynced }: { mobile: boolean; onSynced: () => void 
             <span style={{ overflowWrap: 'anywhere' }}>{pairing.uri}</span>
           </p>
           {log.length > 0 && <Checks items={log} />}
+          <p className="note faint">QR-код действует 15 минут и пока «Карман» не заблокирован. Не показывайте его посторонним: по нему можно получить все записи.</p>
         </>
       )}
+      {!pairing && expired && <p className="note">QR-код больше не действует. Чтобы связать устройства, покажите новый.</p>}
       <textarea className="field" rows={2} style={{ padding: '10px 12px' }} placeholder="Или вставьте ссылку karman://pair… с другого устройства" value={uri} onChange={(e) => setUri(e.target.value)} />
       <div className="wrap">
         <button type="button" className="btn ghost" disabled={busy || !uri.trim()} onClick={() => connect(uri.trim())}>
