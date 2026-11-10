@@ -5,6 +5,7 @@ import { SIGN, amountText, dMon, parseAmount, rateText as fxText, rub } from '..
 import { SCHEMES, type ThemeMode } from '../theme';
 import { Checks, ErrorText, Icon, Seg } from '../ui';
 import BackupSection from './Backup';
+import { OvertimeSettings } from './Overtime';
 
 export type ThemeState = { scheme: string; mode: ThemeMode };
 
@@ -580,6 +581,8 @@ export default function Settings({
           </div>
         ))}
       </section>
+
+      <OvertimeSettings snap={snap} run={run} />
 
       <section className="stack">
         <h2 className="h2" style={{ marginBottom: 6 }}>

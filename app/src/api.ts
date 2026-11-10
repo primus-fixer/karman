@@ -148,6 +148,25 @@ export type Settlement = {
 
 export type ReportRow = { code: string; name: string; plan: number; fact: number; over: number };
 
+/** Наряд поездки: номер, объект, на какие дни выдан, снимки или PDF. */
+export type WorkOrder = { id: string; trip: string; number: string; object: string; from: string; to: string; att: Attachment[]; note: string };
+/** Рабочий день поездки: время «8:00» и что делали. Пустые время и комментарий — день очищается. */
+export type WorkDay = { id: string; trip: string; date: string; start: string; end: string; comment: string };
+/** Часы переработки за день, в минутах: будни ×1,5, будни ×2, выходные ×2. */
+export type OtHours = { x15: number; x2: number; off: number };
+export type OtRow = { date: string; off: boolean; start: string; end: string; comment: string; trip: string | null; hours: OtHours | null };
+export type OtSheet = { rows: OtRow[]; x15: number; x2: number; off: number };
+/** Сумма за переработки месяца — только для экрана. Норма и часы — в минутах. */
+export type OtPay = { month: string; norm: number; exact: boolean; custom: boolean; rate: number; x15: number; x2: number; sum: number };
+/** Правила подсчёта, в минутах: конец рабочего дня, сколько идёт ×1,5, обед в выходной, шаг округления. */
+export type OtRules = { day_end: number; first: number; lunch: number; step: number };
+/** names — имена файлов нарядов в отчёте, в том же порядке, что и наряды. */
+export type TripOt = { orders: WorkOrder[]; names: string[]; sheet: OtSheet; summary: string; pay: OtPay[]; rules: OtRules };
+/** Общая таблица переработок за месяц — из всех поездок месяца. */
+export type OtMonth = { month: string; title: string; sheet: OtSheet; summary: string; pay: OtPay[]; orders: WorkOrder[]; names: string[]; rules: OtRules; months: string[] };
+/** Отчёт по переработкам: папка в «Загрузках», сколько в ней файлов нарядов и что не вошло. */
+export type OtExported = { path: string; files: number; notes: string[] };
+
 export type TripView = {
   trip: Trip;
   rate: number;
@@ -156,6 +175,8 @@ export type TripView = {
   rows: ReportRow[];
   over_total: number;
   auto_just: string;
+  /** Наряды и переработки поездки. */
+  ot: TripOt;
 };
 
 export type Account = { id: string; name: string; short: string; currency: string; opening: number; kind: string; order: number; archived: boolean; deposit?: Deposit | null };
@@ -326,6 +347,13 @@ export const api = {
   backupInspect: (id: string, password: string) => invoke<BackupInfo>('backup_inspect', { id, password }),
   backupRestore: (id: string, password: string) => invoke<RestoreResult>('backup_restore', { id, password, today: today() }),
   backupDiscard: (id: string) => invoke<null>('backup_discard', { id }),
+  orderSave: (order: WorkOrder) => invoke<Snapshot>('order_save', { today: today(), order }),
+  orderDelete: (id: string) => invoke<Snapshot>('order_delete', { today: today(), id }),
+  daySave: (day: WorkDay) => invoke<Snapshot>('day_save', { today: today(), day }),
+  /** month — «2026-10». */
+  overtimeMonth: (month: string) => invoke<OtMonth>('overtime_month', { month }),
+  /** Отчёт по поездке или общий за месяц: папка в «Загрузках» (на компьютере). */
+  overtimeExport: (what: { trip: string } | { month: string }) => invoke<OtExported>('overtime_export', { trip: null, month: null, ...what }),
 };
 
 /** Ядро сообщает, что «Карман» заблокировался (5 минут в фоне). */

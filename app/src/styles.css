@@ -705,8 +705,21 @@ textarea.field {
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   border-bottom: 1px solid var(--line);
+}
+
+/* На телефоне пять разделов поездки — колонки по ширине подписей */
+.phone .tabs {
+  grid-template-columns: repeat(5, auto);
+  justify-content: space-between;
+}
+
+@media (max-width: 374px) {
+  .phone .tabs button {
+    padding: 0 1px;
+    font-size: 13px;
+  }
 }
 
 .tabs button {
@@ -1690,4 +1703,173 @@ textarea.field {
   height: 100%;
   border: 0;
   background: #fff;
+}
+
+/* ——— Переработки ——— */
+/* Таблица по дням подстраивается под свою ширину, а не под окно: на компьютере с открытой
+   панелью ввода ей так же тесно, как на телефоне. */
+.otdays {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  container-type: inline-size;
+}
+
+.otday {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: 'd t' 'c h';
+  gap: 2px 12px;
+  align-items: baseline;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 6px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: none;
+  font-size: 14px;
+  line-height: 20px;
+  text-align: left;
+}
+
+.otday.off {
+  background: color-mix(in srgb, var(--pos) 7%, transparent);
+}
+
+button.otday.open {
+  background: var(--inset);
+}
+
+@media (hover: hover) {
+  button.otday:hover {
+    background: var(--inset);
+  }
+}
+
+.otday.head {
+  display: none;
+  min-height: 0;
+  padding-top: 4px;
+  padding-bottom: 6px;
+  border-top: 0;
+  align-items: end;
+  color: var(--ink2);
+  font-size: 12px;
+  line-height: 15px;
+}
+
+.otday.total {
+  font-weight: 500;
+}
+
+.otd {
+  grid-area: d;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.ott {
+  grid-area: t;
+  text-align: right;
+}
+
+.oth {
+  display: none;
+  text-align: right;
+  font-family: var(--num);
+}
+
+.otc {
+  grid-area: c;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink2);
+}
+
+.oths {
+  grid-area: h;
+  text-align: right;
+}
+
+/* Широко: как таблица Excel — колонки часов под шапкой. */
+@container (min-width: 720px) {
+  .otday {
+    grid-template-columns: 180px 116px 76px 76px 76px minmax(0, 1fr);
+    grid-template-areas: none;
+  }
+
+  .otday.head {
+    display: grid;
+  }
+
+  .otd,
+  .ott,
+  .otc {
+    grid-area: auto;
+  }
+
+  .ott {
+    text-align: left;
+  }
+
+  .oth {
+    display: block;
+  }
+
+  .oths {
+    display: none;
+  }
+
+  .ottimes {
+    grid-template-columns: 110px 110px minmax(0, 1fr);
+  }
+
+  .ottimes .otcm {
+    grid-column: auto;
+  }
+}
+
+.tag.off {
+  background: var(--inset);
+  background: color-mix(in srgb, var(--pos) 16%, transparent);
+  color: var(--pos);
+}
+
+.oted {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 6px 16px;
+  background: var(--inset);
+}
+
+.oted .field {
+  background: var(--surf);
+}
+
+.ottimes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ottimes .otcm {
+  grid-column: 1 / -1;
+}
+
+.oted .chip {
+  min-height: 36px;
+  background: var(--surf);
+}
+
+.otorder {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  min-width: 0;
 }

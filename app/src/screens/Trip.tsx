@@ -4,8 +4,9 @@ import type { Nav } from '../App';
 import { daysText, dMon, dNum, dRange, fmt2, parseAmount, plain, plural, rub } from '../format';
 import { DOC_LABEL, NEXT, statusIndex, tripControls, tripSummary } from '../logic';
 import { Icon, OpRow, Rail, Seg, Thumbs, type OpActions } from '../ui';
+import OvertimeTab, { type OtActions } from './Overtime';
 
-export type TripTab = 'summary' | 'report' | 'ops' | 'docs';
+export type TripTab = 'summary' | 'report' | 'ops' | 'docs' | 'ot';
 
 export type TripActions = {
   advance: (id: string) => void;
@@ -479,6 +480,7 @@ export default function TripScreen({
   isPhone,
   onBack,
   opAct,
+  ot,
 }: {
   snap: Snapshot;
   tripId: string;
@@ -491,6 +493,8 @@ export default function TripScreen({
   isPhone: boolean;
   onBack: () => void;
   opAct: OpActions;
+  /** Наряды и переработки. */
+  ot: OtActions;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const tv = snap.trips.find((x) => x.trip.id === tripId);
@@ -543,6 +547,7 @@ export default function TripScreen({
             ['report', 'Для 1С'],
             ['ops', 'Операции'],
             ['docs', 'Документы'],
+            ['ot', 'Наряды'],
           ] as [TripTab, string][]
         ).map(([id, label]) => (
           <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'on' : ''} onClick={() => setTab(id)}>
@@ -552,6 +557,7 @@ export default function TripScreen({
       </div>
 
       {tab === 'summary' && <Summary snap={snap} tv={tv} nav={nav} act={act} goTab={goTab} />}
+      {tab === 'ot' && <OvertimeTab snap={snap} tv={tv} act={ot} wide={!isPhone} />}
       {tab === 'report' && <Report snap={snap} tv={tv} act={act} part={curPart} setPart={setPart} isPhone={isPhone} />}
       {tab === 'ops' && (
         <div className="stack">

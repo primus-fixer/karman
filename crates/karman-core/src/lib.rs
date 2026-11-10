@@ -7,6 +7,7 @@
 pub mod backup;
 pub mod book;
 pub mod budget;
+pub mod calendar;
 pub mod cbr;
 pub mod date;
 pub mod db;
@@ -15,7 +16,9 @@ pub mod error;
 pub mod export;
 pub mod finance;
 pub mod money;
+pub mod overtime;
 pub mod pairing;
+pub mod pdf;
 pub mod pin;
 pub mod receipt;
 pub mod savings;

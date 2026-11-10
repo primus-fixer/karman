@@ -62,6 +62,24 @@ impl Date {
         Date { days: days_from_civil(ny, nm, nd) }
     }
 
+    /// День недели: 1 — понедельник, 7 — воскресенье.
+    pub fn weekday(self) -> u32 {
+        // 1 января 1970 года — четверг.
+        (self.days + 3).rem_euclid(7) as u32 + 1
+    }
+
+    /// Первое число месяца.
+    pub fn month_start(self) -> Date {
+        let (y, m, _) = self.ymd();
+        Date { days: days_from_civil(y, m, 1) }
+    }
+
+    /// Последнее число месяца.
+    pub fn month_end(self) -> Date {
+        let (y, m, _) = self.ymd();
+        Date { days: days_from_civil(y, m, days_in_month(y, m)) }
+    }
+
     /// «31.10.2026» — как в 1С.
     pub fn dotted(self) -> String {
         let (y, m, d) = self.ymd();

@@ -197,6 +197,7 @@ pub fn book_events() -> Vec<EventBody> {
         bodies.push(EventBody::OpPut { op });
     }
     bodies.extend(finance_events());
+    bodies.extend(overtime_events());
     bodies
 }
 
@@ -260,4 +261,48 @@ fn savings_events() -> Vec<EventBody> {
         EventBody::OpPut { op: put },
         EventBody::BudgetPut { budget: personal },
     ]
+}
+
+/// Наряды и рабочие дни поездки 573 — время из таблицы переработок за октябрь 2026 года.
+pub fn overtime_events() -> Vec<EventBody> {
+    use crate::overtime::{day_id, WorkDay, WorkOrder};
+    let c1 = "2СШ яч. №12,13,14,15";
+    let c2 = "2СШ яч. №9,10,11,12,13,14,15";
+    let order = |id: &str, number: &str, object: &str, from: &str, to: &str| WorkOrder {
+        id: id.into(),
+        trip: "573".into(),
+        number: number.into(),
+        object: object.into(),
+        from: d(from),
+        to: d(to),
+        att: Vec::new(),
+        note: String::new(),
+        extra: Default::default(),
+    };
+    let day = |date: &str, start: &str, end: &str, comment: &str| WorkDay {
+        id: day_id("573", d(date)),
+        trip: "573".into(),
+        date: d(date),
+        start: start.into(),
+        end: end.into(),
+        comment: comment.into(),
+        extra: Default::default(),
+    };
+    let mut out = vec![
+        EventBody::OrderPut { order: order("ord-3-2-23", "3-2/23", &format!("Чекмагуш. {c1}"), "2026-10-23", "2026-10-26") },
+        EventBody::OrderPut { order: order("ord-3-2-25", "3-2/25", &format!("Чекмагуш. {c2}"), "2026-10-26", "2026-10-29") },
+    ];
+    for (date, start, end, comment) in [
+        ("2026-10-22", "", "", "Чекмагуш. организационные и подготовительные работы"),
+        ("2026-10-23", "8:00", "2:00", c1),
+        ("2026-10-24", "15:00", "1:00", c1),
+        ("2026-10-25", "9:00", "23:00", c1),
+        ("2026-10-26", "8:00", "23:00", c2),
+        ("2026-10-27", "8:00", "23:00", c2),
+        ("2026-10-28", "8:00", "20:00", c2),
+        ("2026-10-29", "21:45", "2:15", c2),
+    ] {
+        out.push(EventBody::DayPut { day: day(date, start, end, comment) });
+    }
+    out
 }

@@ -20,7 +20,7 @@ use std::path::Path;
 
 /// Версия схемы. Меняется вместе с новыми видами событий: при открытии таблица
 /// записей собирается заново, и события, которые прежняя версия не понимала, оживают.
-const SCHEMA: &str = "6";
+const SCHEMA: &str = "7";
 
 /// Вложения: не больше 15 МБ, только снимки и PDF.
 pub const MAX_BLOB: usize = 15 * 1024 * 1024;
@@ -308,6 +308,20 @@ impl Store {
         self.items("budget")
     }
 
+    /// Наряды всех поездок.
+    pub fn orders(&self) -> Result<Vec<crate::overtime::WorkOrder>> {
+        let mut out: Vec<crate::overtime::WorkOrder> = self.items("order")?;
+        out.sort_by(|a, b| a.from.cmp(&b.from).then_with(|| a.id.cmp(&b.id)));
+        Ok(out)
+    }
+
+    /// Рабочие дни всех поездок.
+    pub fn work_days(&self) -> Result<Vec<crate::overtime::WorkDay>> {
+        let mut out: Vec<crate::overtime::WorkDay> = self.items("workday")?;
+        out.sort_by(|a, b| a.date.cmp(&b.date).then_with(|| a.trip.cmp(&b.trip)));
+        Ok(out)
+    }
+
     /// Операция с таким номером есть или была (удалена) — на этом устройстве или пришла с другого.
     pub fn knows_op(&self, id: &str) -> Result<bool> {
         Ok(self.conn.query_row("SELECT count(*) FROM items WHERE kind = 'op' AND id = ?1", [id], |r| r.get::<_, i64>(0))? > 0)
@@ -392,9 +406,11 @@ impl Store {
         Ok(self.conn.query_row("SELECT count(*) FROM blobs WHERE id = ?1", [id], |r| r.get::<_, i64>(0))? > 0)
     }
 
-    /// Вложения, на которые ссылаются операции.
+    /// Вложения, на которые ссылаются операции и наряды.
     pub fn referenced_blobs(&self) -> Result<BTreeSet<String>> {
-        Ok(self.ops()?.into_iter().flat_map(|o| o.att.into_iter().map(|a| a.id)).collect())
+        let ops = self.ops()?.into_iter().flat_map(|o| o.att.into_iter().map(|a| a.id));
+        let orders = self.orders()?.into_iter().flat_map(|o| o.att.into_iter().map(|a| a.id));
+        Ok(ops.chain(orders).collect())
     }
 
     /// Вложения из операций, которые есть на этом устройстве.
@@ -570,5 +586,35 @@ mod tests {
         let s = Store::open(&path, &key, "dev-a").unwrap();
         assert_eq!(s.trips().unwrap()[0].id, "588", "новые поездки сверху");
         assert_eq!(s.accounts().unwrap()[0].id, "acc-work");
+    }
+
+    #[test]
+    fn order_photos_are_kept_until_the_order_is_deleted() {
+        use crate::overtime::WorkOrder;
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Store::open(&dir.path().join("o.db"), &[5u8; 32], "dev-a").unwrap();
+        let mut jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0];
+        jpeg.extend_from_slice(&[7u8; 2000]);
+        let id = s.put_blob("image/jpeg", &jpeg).unwrap();
+        let order = WorkOrder {
+            id: "ord-1".into(),
+            trip: "573".into(),
+            number: "3-2/23".into(),
+            object: String::new(),
+            from: crate::Date::parse("2026-10-23").unwrap(),
+            to: crate::Date::parse("2026-10-26").unwrap(),
+            att: vec![crate::trip::Attachment { id: id.clone(), mime: "image/jpeg".into(), name: "наряд.jpg".into(), size: jpeg.len() as u64 }],
+            note: String::new(),
+            extra: Default::default(),
+        };
+        s.append(EventBody::OrderPut { order }).unwrap();
+        assert!(s.referenced_blobs().unwrap().contains(&id), "снимок наряда — в копиях и обмене");
+        assert_eq!(s.present_blobs().unwrap(), vec![id.clone()]);
+        // Снимок старше суток: пока наряд есть, он не удаляется.
+        s.conn.execute("UPDATE blobs SET added = added - 3 * 86400", []).unwrap();
+        assert_eq!(s.gc_blobs().unwrap(), 0);
+        s.append(EventBody::OrderDelete { id: "ord-1".into() }).unwrap();
+        assert_eq!(s.gc_blobs().unwrap(), 1, "наряд удалён — снимок больше не нужен");
+        assert!(s.blob(&id).unwrap().is_none());
     }
 }

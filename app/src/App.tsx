@@ -9,6 +9,7 @@ import Feed from './screens/Feed';
 import Finance, { type FinanceActions, type FinView } from './screens/Finance';
 import Overview from './screens/Overview';
 import Settings, { type ThemeState } from './screens/Settings';
+import type { OtActions } from './screens/Overtime';
 import TripScreen, { type TripActions, type TripTab } from './screens/Trip';
 import TripForm from './screens/TripForm';
 import Trips from './screens/Trips';
@@ -160,6 +161,12 @@ export default function App() {
       (s) => {
         setSnap(s);
         setFatal(null);
+        // На широком экране панель ввода открыта сразу — в том же обновлении, что и первые данные.
+        // Отдельный эффект после отрисовки спорил с первым быстрым нажатием, и панель оставалась на экране.
+        if (firstLoad.current) {
+          firstLoad.current = false;
+          if (window.innerWidth >= 1280) setEntry({ draft: defaultDraft(s), key: Date.now(), editing: null });
+        }
       },
       (e) => (message(e) === LOCKED ? goLocked() : setFatal(message(e))),
     );
@@ -398,14 +405,6 @@ export default function App() {
     openEntry: () => openEntry(),
   };
 
-  // На широком экране панель ввода открыта сразу.
-  useEffect(() => {
-    if (snap && firstLoad.current) {
-      firstLoad.current = false;
-      if (!isPhone && window.innerWidth >= 1280) setEntry({ draft: defaultDraft(snap), key: Date.now(), editing: null });
-    }
-  }, [snap, isPhone]);
-
   const addDoc = (op: Op) => run(api.opSave({ ...op, doc: 'photo' }), 'Документ отмечен, расход вошёл в отчёт');
   const deleteOp = async (op: Op) => {
     const s = await run(api.opDelete(op.id));
@@ -487,6 +486,8 @@ export default function App() {
     },
   };
 
+  const otAct: OtActions = { run, flash: (text, undo, long) => flash(text, undo, long), locked: goLocked, view: (a) => setViewer(a), mobile: mobileNow };
+
   const overlay =
     locked && lock ? (
       <LockScreen key={lockKey} status={lock} os={info?.os ?? ''} onUnlocked={onUnlocked} />
@@ -557,6 +558,7 @@ export default function App() {
         isPhone={isPhone}
         onBack={back}
         opAct={opAct}
+        ot={otAct}
       />
     );
   else if (screen === 'trip-form')

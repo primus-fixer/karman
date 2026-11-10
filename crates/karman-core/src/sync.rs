@@ -9,6 +9,7 @@ use crate::pairing::Pairing;
 use crate::book::Account;
 use crate::budget::Budget;
 use crate::finance::{Debt, Plan};
+use crate::overtime::{WorkDay, WorkOrder};
 use crate::savings::Goal;
 use crate::trip::{Op, Trip};
 use base64::engine::general_purpose::STANDARD as B64;
@@ -65,6 +66,12 @@ pub enum EventBody {
     GoalPut { goal: Goal },
     GoalDelete { id: String },
     BudgetPut { budget: Budget },
+    /// Наряд поездки.
+    OrderPut { order: WorkOrder },
+    OrderDelete { id: String },
+    /// Рабочий день поездки: время работ и комментарий.
+    DayPut { day: WorkDay },
+    DayDelete { id: String },
 }
 
 impl EventBody {
@@ -85,6 +92,10 @@ impl EventBody {
             EventBody::GoalPut { goal } => ("goal", goal.id.clone(), Some(serde_json::to_string(goal)?)),
             EventBody::GoalDelete { id } => ("goal", id.clone(), None),
             EventBody::BudgetPut { budget } => ("budget", budget.id.clone(), Some(serde_json::to_string(budget)?)),
+            EventBody::OrderPut { order } => ("order", order.id.clone(), Some(serde_json::to_string(order)?)),
+            EventBody::OrderDelete { id } => ("order", id.clone(), None),
+            EventBody::DayPut { day } => ("workday", day.id.clone(), Some(serde_json::to_string(day)?)),
+            EventBody::DayDelete { id } => ("workday", id.clone(), None),
         })
     }
 }

@@ -7,6 +7,7 @@ mod backup;
 mod fx;
 mod guard;
 mod notify;
+mod overtime;
 
 use karman_core::book::{self, Account, Snapshot};
 use karman_core::budget::{Budget, FAMILY, PERSONAL};
@@ -261,6 +262,9 @@ fn trip_delete(state: State<AppState>, today: String, id: String) -> Res<Snapsho
         .filter(|o| o.trip.as_deref() == Some(id.as_str()))
         .map(|o| EventBody::OpDelete { id: o.id })
         .collect();
+    // Вместе с поездкой — её наряды и рабочие дни.
+    bodies.extend(st.orders().map_err(err)?.into_iter().filter(|o| o.trip == id).map(|o| EventBody::OrderDelete { id: o.id }));
+    bodies.extend(st.work_days().map_err(err)?.into_iter().filter(|d| d.trip == id).map(|d| EventBody::DayDelete { id: d.id }));
     bodies.push(EventBody::TripDelete { id });
     st.append_all(bodies).map_err(err)?;
     snap(&st, &today)
@@ -1032,6 +1036,11 @@ pub fn run() {
             budget_save,
             stats,
             export_xlsx,
+            overtime::order_save,
+            overtime::order_delete,
+            overtime::day_save,
+            overtime::overtime_month,
+            overtime::overtime_export,
             backup::backup_status,
             backup::backup_password,
             backup::backup_every,
