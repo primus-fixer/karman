@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, inApp, LOCKED, message, onBackup, onFx, onLocked, type Attachment, type DeviceInfo, type LockStatus, type Op, type Snapshot, type TripStatus } from './api';
+import { api, inApp, LOCKED, message, onBackup, onClaude, onFx, onLocked, type Attachment, type DeviceInfo, type LockStatus, type Op, type Snapshot, type TripStatus } from './api';
 import Entry, { defaultDraft, draftFromOp, tripDraft, type EntryDraft } from './Entry';
 import { rub } from './format';
 import { dueText } from './logic';
@@ -247,6 +247,17 @@ export default function App() {
     },
     [flash, goLocked],
   );
+
+  // Claude записал что-то через коннектор: свежие данные и сообщение с «Вернуть».
+  useEffect(() => {
+    const un = onClaude((e) => {
+      api.snapshot().then(setSnap, () => undefined);
+      flash(e.text, e.id ? () => run(api.claudeUndo(e.id), 'Отменено') : undefined, true);
+    }).catch(() => () => undefined);
+    return () => {
+      un.then((f) => f());
+    };
+  }, [flash, run]);
 
   /** Первый платёж или долг со сроком: на Android попросить разрешение на уведомления. */
   const ensureNotify = useCallback(() => {
