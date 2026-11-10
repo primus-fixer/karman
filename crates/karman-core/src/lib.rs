@@ -9,6 +9,7 @@ pub mod backup;
 pub mod book;
 pub mod budget;
 pub mod calendar;
+pub mod category;
 pub mod cbr;
 pub mod cloud;
 pub mod date;

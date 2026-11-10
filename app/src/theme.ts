@@ -3,7 +3,7 @@ export type Tokens = Record<string, string>;
 export type Scheme = { name: string; light: Tokens; dark: Tokens };
 
 export const SCHEMES: Record<string, Scheme> = {
-  shield: { name:'Щит',
+  shield: { name:'Север',
     light:{bg:'#EEF2F3',surf:'#F9FBFB',inset:'#E3E9EB',ink:'#15232D',ink2:'#3F4F5A',ink3:'#566671',line:'#CDD6DA',work:'#A64A08',workBg:'#F7E6D8',onWork:'#FFFFFF',own:'#0E5A8A',ownBg:'#DCEAF3',onOwn:'#FFFFFF',pos:'#0B6B57',warn:'#A4262C',warnBg:'#F8E3E1',serOwn:'#0E5A8A',serWork:'#A64A08'},
     dark:{bg:'#141E26',surf:'#1C2933',inset:'#25343F',ink:'#E7EEF1',ink2:'#B4C2CA',ink3:'#93A3AD',line:'#32434F',work:'#F2A25C',workBg:'#3A2A1C',onWork:'#1E1206',own:'#7DBDEB',ownBg:'#1D3445',onOwn:'#0A1C2A',pos:'#5FCFB0',warn:'#F4968E',warnBg:'#43241F',serOwn:'#4C9BD8',serWork:'#CE7A2B'} },
   taiga: { name:'Тайга',

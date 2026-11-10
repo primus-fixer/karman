@@ -17,9 +17,21 @@ export const CATS: Record<string, Cat> = {
   groceries: { n: 'Продукты', s: 'Продукты', i: 'groceries' },
   cafe: { n: 'Кафе', s: 'Кафе', i: 'cafe' },
   transport: { n: 'Транспорт', s: 'Транспорт', i: 'transport' },
+  auto: { n: 'Автомобиль', s: 'Автомобиль', i: 'auto' },
   home: { n: 'Дом', s: 'Дом', i: 'home' },
-  telecom: { n: 'Связь и подписки', s: 'Связь', i: 'telecom' },
+  telecom: { n: 'Связь и интернет', s: 'Связь', i: 'telecom' },
+  subscriptions: { n: 'Подписки', s: 'Подписки', i: 'subscriptions' },
+  health: { n: 'Здоровье', s: 'Здоровье', i: 'health' },
+  clothes: { n: 'Одежда и обувь', s: 'Одежда', i: 'clothes' },
+  beauty: { n: 'Красота', s: 'Красота', i: 'beauty' },
+  kids: { n: 'Дети', s: 'Дети', i: 'kids' },
+  pets: { n: 'Питомцы', s: 'Питомцы', i: 'pets' },
+  sport: { n: 'Спорт', s: 'Спорт', i: 'sport' },
+  fun: { n: 'Развлечения', s: 'Развлечения', i: 'fun' },
+  education: { n: 'Образование', s: 'Учёба', i: 'education' },
+  travel: { n: 'Отдых и путешествия', s: 'Отдых', i: 'travel' },
   gifts: { n: 'Подарки', s: 'Подарки', i: 'gifts' },
+  taxes: { n: 'Налоги и сборы', s: 'Налоги', i: 'taxes' },
   other: { n: 'Другое', s: 'Другое', i: 'other' },
   salary: { n: 'Зарплата', s: 'Зарплата', i: 'salary' },
   interest: { n: 'Проценты', s: 'Проценты', i: 'interest' },
@@ -33,8 +45,57 @@ export const CATS: Record<string, Cat> = {
 
 export const TRIP_OUT = ['tickets', 'lodging', 'taxi', 'car', 'food', 'tools'];
 export const TRIP_IN = ['advance', 'reimb'];
-export const OWN_OUT = ['groceries', 'cafe', 'transport', 'home', 'telecom', 'gifts', 'other'];
 export const OWN_IN = ['salary', 'interest', 'otherIn'];
+
+/** Встроенные категории личных трат в порядке выбора; «Другое» — последней (как в ядре, category.rs). */
+export const BUILTIN_OUT = ['groceries', 'cafe', 'transport', 'auto', 'home', 'telecom', 'subscriptions', 'health', 'clothes', 'beauty', 'kids', 'pets', 'sport', 'fun', 'education', 'travel', 'gifts', 'taxes', 'other'];
+
+/** Иконки для своей категории — тот же набор, что в ядре (category::ICONS). */
+export const CAT_ICONS = ['groceries', 'cafe', 'food', 'transport', 'auto', 'taxi', 'car', 'tickets', 'lodging', 'home', 'telecom', 'subscriptions', 'health', 'clothes', 'beauty', 'kids', 'pets', 'sport', 'fun', 'music', 'gamepad', 'education', 'book', 'travel', 'gifts', 'star', 'sprout', 'bolt', 'tools', 'taxes', 'credit', 'salary', 'debt', 'other'];
+
+/** Все категории личных трат: встроенные, свои по названию, «Другое» — последней. Со скрытыми. */
+export let OWN_OUT_ALL: string[] = [...BUILTIN_OUT];
+/** Категории личных трат для выбора — без скрытых. Обновляются вместе со сводкой ({@link applyCats}). */
+export let OWN_OUT: string[] = [...BUILTIN_OUT];
+let customIds: string[] = [];
+
+/** Общая настройка «категория скрыта». */
+export const hiddenKey = (id: string) => 'cat.hidden.' + id;
+/** Категория скрыта из выбора; «Другое» не скрывается. */
+export const isHiddenCat = (settings: Record<string, string>, id: string) => id !== 'other' && settings[hiddenKey(id)] === '1';
+/** Своя категория (а не встроенная). */
+export const isCustomCat = (id: string) => customIds.includes(id);
+
+/**
+ * Свои категории из сводки — в общий справочник CATS и в списки выбора. Вызывается при каждой новой
+ * сводке до отрисовки экранов: названия и иконки своих категорий видны везде, где видны встроенные.
+ */
+export function applyCats(snap: Pick<Snapshot, 'categories' | 'settings'>) {
+  for (const id of customIds) delete CATS[id];
+  const own = [...(snap.categories ?? [])].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  customIds = own.map((c) => c.id);
+  for (const c of own) CATS[c.id] = { n: c.name, s: c.name, i: ICON[c.icon] ? c.icon : 'other' };
+  OWN_OUT_ALL = [...BUILTIN_OUT.slice(0, -1), ...customIds, 'other'];
+  OWN_OUT = OWN_OUT_ALL.filter((c) => !isHiddenCat(snap.settings, c));
+}
+
+/**
+ * Кнопки категорий в окне ввода: чаще других выбираемые (до `max`), а выбранная — всегда видна.
+ * Остальные — под «Ещё». Порядок частых — как в списке, чтобы кнопки не прыгали.
+ */
+export function topCats(list: string[], ops: Op[], selected: string, max = 8): string[] {
+  if (list.length <= max + 1) return list;
+  const count = new Map<string, number>();
+  for (const o of ops) if (o.kind === 'personal') count.set(o.cat, (count.get(o.cat) ?? 0) + 1);
+  const used = list.filter((c) => (count.get(c) ?? 0) > 0).sort((a, b) => (count.get(b) ?? 0) - (count.get(a) ?? 0) || list.indexOf(a) - list.indexOf(b));
+  const pick = new Set(used.slice(0, max));
+  for (const c of list) {
+    if (pick.size >= max) break;
+    pick.add(c);
+  }
+  if (selected && list.includes(selected)) pick.add(selected);
+  return list.filter((c) => pick.has(c));
+}
 
 export const STATUS = ['Заявка', 'Аванс получен', 'В поездке', 'Ожидает отчёт', 'На проверке', 'Закрыта'];
 export const RAIL = ['Заявка', 'Аванс', 'Поездка', 'Отчёт', 'Проверка', 'Закрыта'];

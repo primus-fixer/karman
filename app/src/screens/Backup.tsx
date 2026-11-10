@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, LOCKED, message, onBackup, type BackupInfo, type BackupStatus, type Snapshot } from '../api';
 import { NB, plural } from '../format';
 import { pickFiles } from '../media';
-import { ErrorText, Icon, Seg } from '../ui';
+import { Cut, ErrorText, Icon, Seg } from '../ui';
 
 type Run = (p: Promise<Snapshot>, ok?: string) => Promise<Snapshot | null>;
 
@@ -299,10 +299,7 @@ export default function BackupSection({ snap, mobile, run, flash }: { snap: Snap
   const desktop = st ? st.desktop : !mobile;
 
   return (
-    <section className="stack" id="backup">
-      <h2 className="h2" style={{ marginBottom: 6 }}>
-        Резервная копия
-      </h2>
+    <Cut id="backup" title="Резервная копия">
       {desktop ? (
         <>
           <p className="note" style={{ marginBottom: 8 }}>
@@ -371,10 +368,20 @@ export default function BackupSection({ snap, mobile, run, flash }: { snap: Snap
 
           <div className="stack gap6" style={{ marginTop: 10 }}>
             <span className="note">Автокопии</span>
-            <Seg label="Как часто делать автокопию" value={st?.every ?? 'day'} onPick={(v) => act(api.backupEvery(v))} items={EVERY} />
+            <Seg
+              label="Как часто делать автокопию"
+              value={st?.every ?? 'day'}
+              onPick={(v) =>
+                act(api.backupEvery(v)).then(() => {
+                  // Выключены или включены — видно и в «Обзоре»: напоминание о копиях.
+                  run(api.snapshot());
+                })
+              }
+              items={EVERY}
+            />
             <p className="note">
               {st?.every === 'off'
-                ? 'Только по кнопке «Сделать копию».'
+                ? 'Только по кнопке «Сделать копию». «Обзор» о копиях не напоминает.'
                 : `${st?.every === 'week' ? 'Раз в неделю' : 'Раз в день'}, пока «Карман» открыт или в трее. Хранятся последние ${st?.keep ?? 14}, старые удаляются сами.`}
             </p>
           </div>
@@ -418,6 +425,6 @@ export default function BackupSection({ snap, mobile, run, flash }: { snap: Snap
         </div>
       )}
       <ErrorText text={error} />
-    </section>
+    </Cut>
   );
 }

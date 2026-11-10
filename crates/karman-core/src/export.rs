@@ -2,12 +2,13 @@
 //! и «Командировки» за год — то же, что на экране «Статистика».
 
 use crate::book::Account;
+use crate::category::{self, Category};
 use crate::money::Kop;
 use crate::stats::Stats;
 use crate::trip::{DocKind, Op, OpKind};
 use crate::xlsx::{self, Cell, Sheet};
 
-/// Название категории — как на экранах.
+/// Название встроенной категории — как на экранах. Свои категории — [`crate::category::name`].
 pub fn cat_name(cat: &str) -> &'static str {
     match cat {
         "tickets" => "Билеты",
@@ -19,9 +20,21 @@ pub fn cat_name(cat: &str) -> &'static str {
         "groceries" => "Продукты",
         "cafe" => "Кафе",
         "transport" => "Транспорт",
+        "auto" => "Автомобиль",
         "home" => "Дом",
-        "telecom" => "Связь и подписки",
+        "telecom" => "Связь и интернет",
+        "subscriptions" => "Подписки",
+        "health" => "Здоровье",
+        "clothes" => "Одежда и обувь",
+        "beauty" => "Красота",
+        "kids" => "Дети",
+        "pets" => "Питомцы",
+        "sport" => "Спорт",
+        "fun" => "Развлечения",
+        "education" => "Образование",
+        "travel" => "Отдых и путешествия",
         "gifts" => "Подарки",
+        "taxes" => "Налоги и сборы",
         "salary" => "Зарплата",
         "interest" => "Проценты",
         "otherIn" => "Другой доход",
@@ -62,7 +75,7 @@ fn text(s: impl Into<String>) -> Cell {
 }
 
 /// Файл .xlsx с операциями периода и итогами из статистики.
-pub fn workbook(ops: &[Op], accounts: &[Account], s: &Stats) -> std::io::Result<Vec<u8>> {
+pub fn workbook(ops: &[Op], accounts: &[Account], custom: &[Category], s: &Stats) -> std::io::Result<Vec<u8>> {
     let name = |id: &str| accounts.iter().find(|a| a.id == id).map(|a| a.name.clone()).unwrap_or_else(|| "Счёт удалён".into());
     let mut list: Vec<&Op> = ops.iter().filter(|o| o.date >= s.from && o.date <= s.to).collect();
     list.sort_by(|a, b| a.date.cmp(&b.date).then_with(|| a.id.cmp(&b.id)));
@@ -93,7 +106,7 @@ pub fn workbook(ops: &[Op], accounts: &[Account], s: &Stats) -> std::io::Result<
             Cell::Date(o.date),
             text(o.title.clone()),
             text(kind_name(o)),
-            text(cat_name(if o.kind == OpKind::Debt { "debt" } else { &o.cat })),
+            text(category::name(if o.kind == OpKind::Debt { "debt" } else { &o.cat }, custom)),
             Cell::Money(signed),
             text(name(&o.account)),
             o.to.as_deref().map(|t| text(name(t))).unwrap_or(Cell::Empty),
@@ -111,7 +124,7 @@ pub fn workbook(ops: &[Op], accounts: &[Account], s: &Stats) -> std::io::Result<
     let prev = if s.partial { format!("{} – {}, ₽", s.prev_from.dotted(), s.prev_to.dotted()) } else { "Прошлый период, ₽".into() };
     let mut cats = vec![vec![Cell::Text("Категория".into()), Cell::Text("Сумма, ₽".into()), Cell::Text(prev), Cell::Text("Разница, ₽".into())]];
     for c in &s.cats {
-        cats.push(vec![text(cat_name(&c.cat)), Cell::Money(c.amount), Cell::Money(c.prev), Cell::Money(c.amount - c.prev)]);
+        cats.push(vec![text(category::name(&c.cat, custom)), Cell::Money(c.amount), Cell::Money(c.prev), Cell::Money(c.amount - c.prev)]);
     }
     cats.push(vec![]);
     cats.push(vec![Cell::Text("Всего".into()), Cell::Money(s.spent), Cell::Money(s.prev_spent), Cell::Money(s.spent - s.prev_spent)]);
@@ -172,7 +185,7 @@ mod tests {
         let ops = crate::demo::ops();
         let accounts = crate::book::default_accounts();
         let s = stats(&ops, &accounts, &crate::demo::trips(), crate::trip::DEFAULT_RATE, Span::Month, crate::demo::today(), crate::demo::today());
-        let bytes = workbook(&ops, &accounts, &s).unwrap();
+        let bytes = workbook(&ops, &accounts, &[], &s).unwrap();
         assert_eq!(&bytes[..2], b"PK");
         assert!(s.trips.count >= 3, "в демо есть поездки — лист «Командировки» не пустой");
         assert_eq!(file_name(&s), "Карман 2026-11");

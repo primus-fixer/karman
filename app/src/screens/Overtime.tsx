@@ -4,7 +4,7 @@ import { costText } from './Ai';
 import { aiOn, useAi } from '../aiState';
 import { NB, addDays, amountText, dMon, dNum, dRange, monthName, parseAmount, plural, rub, toDate, todayIso } from '../format';
 import { ORDER_PHOTO, attachFile, pickFiles } from '../media';
-import { ErrorText, Icon, Seg, Thumbs } from '../ui';
+import { Cut, ErrorText, Icon, Seg, Thumbs } from '../ui';
 
 type Run = (p: Promise<Snapshot>, ok?: string) => Promise<Snapshot | null>;
 
@@ -1162,10 +1162,7 @@ export function OvertimeSettings({ snap, run }: { snap: Snapshot; run: Run }) {
   const endBad = /^\d\d:\d\d$/.test(end) && (end < '12:00' || end > '22:00');
   const startBad = /^\d\d:\d\d$/.test(start) && (start < '05:00' || start > '12:00');
   return (
-    <section className="stack">
-      <h2 className="h2" style={{ marginBottom: 6 }}>
-        Переработки
-      </h2>
+    <Cut id="ot" title="Переработки">
       <p className="note" style={{ marginBottom: 8 }}>
         Наряды и часы — в карточке поездки, раздел «Наряды». Здесь — как считать часы и оклад для суммы к оплате.
       </p>
@@ -1249,6 +1246,6 @@ export function OvertimeSettings({ snap, run }: { snap: Snapshot; run: Run }) {
       <p className="note" style={{ paddingTop: 10, borderTop: '1px solid var(--line)' }}>
         {rulesText(rules)}
       </p>
-    </section>
+    </Cut>
   );
 }

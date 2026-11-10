@@ -159,6 +159,8 @@ pub struct Snapshot {
     pub budgets: Vec<BudgetView>,
     /// С какого числа начинается месяц бюджета.
     pub budget_day: u32,
+    /// Свои категории личных трат (скрытые — в настройках «cat.hidden.<код>»).
+    pub categories: Vec<crate::category::Category>,
 }
 
 pub fn trip_view(t: &Trip, ops: &[Op], settings_rate: Kop, today: Date) -> TripView {
@@ -316,6 +318,7 @@ pub fn snapshot(store: &Store, today: Date) -> Result<Snapshot> {
         goals,
         budgets,
         budget_day,
+        categories: store.categories()?,
     })
 }
 

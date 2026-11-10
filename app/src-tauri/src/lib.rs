@@ -305,6 +305,16 @@ fn account_save(state: State<AppState>, today: String, mut account: Account) -> 
     snap(&st, &today)
 }
 
+/// Своя категория личных трат: новая (без номера) или переименованная, с иконкой из набора.
+#[tauri::command]
+fn category_save(state: State<AppState>, today: String, mut category: karman_core::category::Category) -> Res<Snapshot> {
+    let mut st = state.store()?;
+    let custom = st.categories().map_err(err)?;
+    karman_core::category::check(&mut category, &custom)?;
+    st.append(EventBody::CategoryPut { category }).map_err(err)?;
+    snap(&st, &today)
+}
+
 #[tauri::command]
 fn setting_set(state: State<AppState>, today: String, key: String, value: String) -> Res<Snapshot> {
     let mut st = state.store()?;
@@ -905,7 +915,7 @@ fn export_xlsx(app: AppHandle, state: State<AppState>, today: String, span: Stri
     let (bytes, name) = {
         let st = state.store()?;
         let s = stats_for(&st, &today, &span, &anchor)?;
-        (karman_core::export::workbook(&st.ops().map_err(err)?, &st.accounts().map_err(err)?, &s).map_err(err)?, karman_core::export::file_name(&s))
+        (karman_core::export::workbook(&st.ops().map_err(err)?, &st.accounts().map_err(err)?, &st.categories().map_err(err)?, &s).map_err(err)?, karman_core::export::file_name(&s))
     };
     save_download(&app, &name, "xlsx", &bytes)
 }
@@ -1029,6 +1039,7 @@ pub fn run() {
             trip_settle,
             account_save,
             setting_set,
+            category_save,
             device_info,
             db_check,
             calc_check,
@@ -1041,6 +1052,7 @@ pub fn run() {
             blob_url,
             receipts_zip,
             fx::fx_rate,
+            fx::fx_refresh,
             debt_save,
             debt_delete,
             debt_pay,

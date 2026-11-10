@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { api, type Debt, type DebtDir, type DebtView, type Due, type Every, type Plan, type PlanView, type Snapshot } from '../api';
 import { NB, SIGN, amountText, dMon, parseAmount, rub } from '../format';
-import { CATS, OWN_OUT, dueText, everyText, opView } from '../logic';
+import { CATS, OWN_OUT, OWN_OUT_ALL, dueText, everyText, opView, topCats } from '../logic';
 import { ErrorText, Icon, Seg } from '../ui';
 import BudgetScreen from './Budget';
 import Savings from './Savings';
@@ -283,7 +283,11 @@ function PlanEditor({ snap, view, act, onClose }: { snap: Snapshot; view: PlanVi
   const [title, setTitle] = useState(p?.title ?? '');
   const [amount, setAmount] = useState(p ? amountText(p.amount) : '');
   const [account, setAccount] = useState(p?.account ?? accountByKind(snap, 'personal'));
-  const [cat, setCat] = useState(p?.cat || 'telecom');
+  const [cat, setCat] = useState(p?.cat || (OWN_OUT.includes('telecom') ? 'telecom' : OWN_OUT[0]));
+  const [allCats, setAllCats] = useState(false);
+  // Платёж со скрытой категорией: её кнопка видна, пока категория выбрана.
+  const catsAll = !OWN_OUT.includes(cat) && OWN_OUT_ALL.includes(cat) ? [...OWN_OUT, cat] : OWN_OUT;
+  const catsShown = allCats ? catsAll : topCats(catsAll, snap.ops, cat);
   const [every, setEvery] = useState<Every>(p?.every ?? 'month');
   const [start, setStart] = useState(p?.start ?? snap.today);
   const [until, setUntil] = useState(p?.until ?? '');
@@ -357,12 +361,17 @@ function PlanEditor({ snap, view, act, onClose }: { snap: Snapshot; view: PlanVi
         </label>
       )}
       {!debt && (
-        <div className="chips scroll" role="group" aria-label="Категория">
-          {OWN_OUT.map((c) => (
+        <div className={'chips' + (allCats ? '' : ' scroll')} role="group" aria-label="Категория">
+          {catsShown.map((c) => (
             <button key={c} type="button" aria-pressed={c === cat} className={'chip' + (c === cat ? ' sel' : '')} onClick={() => setCat(c)}>
-              {CATS[c].s}
+              {(CATS[c] || CATS.other).s}
             </button>
           ))}
+          {catsAll.length > catsShown.length && (
+            <button type="button" className="chip more" aria-label={`Ещё категории: ${catsAll.length - catsShown.length}`} onClick={() => setAllCats(true)}>
+              Ещё {catsAll.length - catsShown.length}
+            </button>
+          )}
         </div>
       )}
       <label className="label">
