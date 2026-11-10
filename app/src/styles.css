@@ -1873,3 +1873,16 @@ button.otday.open {
   border-top: 1px solid var(--line);
   min-width: 0;
 }
+
+/* ——— Claude ——— */
+.codebox {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border-radius: 10px;
+  background: var(--inset);
+  font-family: Consolas, 'Cascadia Mono', Menlo, monospace;
+  font-size: 12px;
+  line-height: 17px;
+  white-space: pre;
+}

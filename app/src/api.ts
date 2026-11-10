@@ -167,6 +167,11 @@ export type OtMonth = { month: string; title: string; sheet: OtSheet; summary: s
 /** Отчёт по переработкам: папка в «Загрузках», сколько в ней файлов нарядов и что не вошло. */
 export type OtExported = { path: string; files: number; notes: string[] };
 
+/** Действие Claude через коннектор: что сделано и отменено ли. `at` — unix-время. */
+export type ClaudeAction = { id: number; at: number; tool: string; text: string; undone: boolean };
+/** Коннектор для приложения Claude: включён ли, разрешена ли запись, чем Claude запускает «Карман». */
+export type ClaudeStatus = { desktop: boolean; on: boolean; write: boolean; command: string; args: string[]; dir: string; actions: ClaudeAction[] };
+
 export type TripView = {
   trip: Trip;
   rate: number;
@@ -354,6 +359,11 @@ export const api = {
   overtimeMonth: (month: string) => invoke<OtMonth>('overtime_month', { month }),
   /** Отчёт по поездке или общий за месяц: папка в «Загрузках» (на компьютере). */
   overtimeExport: (what: { trip: string } | { month: string }) => invoke<OtExported>('overtime_export', { trip: null, month: null, ...what }),
+  claudeStatus: () => invoke<ClaudeStatus>('claude_status'),
+  claudeSet: (on: boolean, write: boolean) => invoke<ClaudeStatus>('claude_set', { on, write }),
+  claudeUndo: (id: number) => invoke<Snapshot>('claude_undo', { today: today(), id }),
+  /** Файл расширения для приложения Claude — в «Загрузки». */
+  claudeBundle: () => invoke<string>('claude_bundle'),
 };
 
 /** Ядро сообщает, что «Карман» заблокировался (5 минут в фоне). */
@@ -372,6 +382,12 @@ export async function onBackup(cb: () => void): Promise<() => void> {
 export async function onFx(cb: () => void): Promise<() => void> {
   const { listen } = await import('@tauri-apps/api/event');
   return listen('fx', cb);
+}
+
+/** Claude что-то записал через коннектор: обновить данные и показать, что сделано (id 0 — без отмены). */
+export async function onClaude(cb: (e: { id: number; text: string }) => void): Promise<() => void> {
+  const { listen } = await import('@tauri-apps/api/event');
+  return listen<{ id: number; text: string }>('claude', (ev) => cb(ev.payload));
 }
 
 /** Сканирование QR-кода камерой телефона. */

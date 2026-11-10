@@ -57,6 +57,24 @@ fn fetch_from(agent: &ureq::Agent, url: &str, mirror: &str, date: &str) -> Resul
     Err(format!("курсы ЦБ не загрузились: cbr.ru — {first}, на зеркале нет курсов за неделю до {date}"))
 }
 
+/// Курс без запроса в интернет: сохранённый курс ЦБ на дату, последние сохранённые курсы ЦБ
+/// или курс из настроек. Для записей Claude — они не ждут сайт ЦБ.
+pub fn stored_rate(st: &karman_core::db::Store, cur: &str, date: &str) -> Option<f64> {
+    if cur == "RUB" {
+        return Some(1.0);
+    }
+    let settings = st.settings().ok()?;
+    if settings.get("fx.auto").map(|v| v != "0").unwrap_or(true) {
+        for key in [meta_cbr_on(date), META_CBR.to_string()] {
+            let saved = st.meta(&key).ok().flatten().and_then(|t| serde_json::from_str::<CbrRates>(&t).ok());
+            if let Some(r) = saved.and_then(|c| c.rates.get(cur).copied()) {
+                return Some(r);
+            }
+        }
+    }
+    fx_rates(&settings).get(cur).copied()
+}
+
 fn auto(state: &AppState) -> bool {
     state.store.lock().ok().and_then(|s| s.settings().ok()).and_then(|s| s.get("fx.auto").cloned()).map(|v| v != "0").unwrap_or(true)
 }

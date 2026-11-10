@@ -5,6 +5,7 @@ import { SIGN, amountText, dMon, parseAmount, rateText as fxText, rub } from '..
 import { SCHEMES, type ThemeMode } from '../theme';
 import { Checks, ErrorText, Icon, Seg } from '../ui';
 import BackupSection from './Backup';
+import ClaudeSection from './Claude';
 import { OvertimeSettings } from './Overtime';
 
 export type ThemeState = { scheme: string; mode: ThemeMode };
@@ -712,7 +713,7 @@ export default function Settings({
         </div>
         <SyncWifi mobile={mobile} onSynced={refresh} />
         {[
-          ['cloud', 'Личное облако', 'Яндекс Диск и Google Drive — следующий шаг'],
+          ['cloud', 'Личное облако', 'Яндекс Диск и Google Drive — позже'],
           ['server', 'Личный сервер', 'VPS или NAS — вместе с совместным доступом'],
         ].map(([icon, name, note]) => (
           <div key={icon} className="setrow" style={{ minHeight: 58, marginTop: icon === 'cloud' ? 14 : 0 }}>
@@ -727,6 +728,8 @@ export default function Settings({
           </div>
         ))}
       </section>
+
+      <ClaudeSection mobile={mobile} run={run} flash={flash} locked={refresh} />
 
       <BackupSection snap={snap} mobile={mobile} run={run} flash={flash} />
 

@@ -113,11 +113,11 @@ pub fn overtime_month(state: State<AppState>, month: String) -> Res<MonthView> {
 #[derive(Serialize)]
 pub struct Exported {
     /// Папка отчёта в «Загрузках».
-    path: String,
+    pub path: String,
     /// Сколько файлов нарядов в папке «Наряды».
-    files: usize,
+    pub files: usize,
     /// Что не вошло и почему.
-    notes: Vec<String>,
+    pub notes: Vec<String>,
 }
 
 /// Папка без повторов в «Загрузках».
@@ -135,6 +135,11 @@ fn unique_dir(base: &std::path::Path, name: &str) -> std::path::PathBuf {
 /// папка в «Загрузках»: таблица Excel и «Наряды». Как и другие выгрузки, собирается на компьютере.
 #[tauri::command]
 pub fn overtime_export(app: AppHandle, state: State<AppState>, trip: Option<String>, month: Option<String>) -> Res<Exported> {
+    export_report(&app, &state, trip, month)
+}
+
+/// Отчёт по переработкам в «Загрузки» — для кнопки на экране и для Claude.
+pub fn export_report(app: &AppHandle, state: &AppState, trip: Option<String>, month: Option<String>) -> Res<Exported> {
     if cfg!(mobile) {
         return Err("Отчёт по переработкам собирается на компьютере: свяжите устройства по Wi-Fi и выгрузите там".into());
     }

@@ -4,6 +4,7 @@
 //! Вся логика расчётов — в ядре `karman-core`. Вход по PIN-коду и отпечатку — в `guard`.
 
 mod backup;
+mod claude;
 mod fx;
 mod guard;
 mod notify;
@@ -932,6 +933,12 @@ fn receipt_parse(text: String) -> Res<ReceiptView> {
     })
 }
 
+/// `karman --mcp`: коннектор для приложения Claude (посредник MCP через stdio), без окна.
+#[cfg(desktop)]
+pub fn mcp_relay() -> i32 {
+    claude::relay()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[allow(unused_mut)]
@@ -967,6 +974,9 @@ pub fn run() {
             let _ = store.gc_blobs();
             let today = Date::today_utc().to_string();
             let guard = Guard::new(guard::has_pin(&store));
+            // Коннектор для приложения Claude: ждём посредника `karman --mcp` на 127.0.0.1.
+            #[cfg(desktop)]
+            claude::start(app.handle().clone(), dir.clone());
             app.manage(AppState {
                 store: Arc::new(Mutex::new(store)),
                 me,
@@ -1041,6 +1051,10 @@ pub fn run() {
             overtime::day_save,
             overtime::overtime_month,
             overtime::overtime_export,
+            claude::claude_status,
+            claude::claude_set,
+            claude::claude_undo,
+            claude::claude_bundle,
             backup::backup_status,
             backup::backup_password,
             backup::backup_every,

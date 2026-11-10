@@ -35,6 +35,19 @@ jobs:
       - name: Сборка
         run: npm run tauri build
         working-directory: app
+      # Приложение Claude запускает karman.exe --mcp и говорит с ним через stdio — проверяем,
+      # что программа без окна консоли отвечает по протоколу MCP.
+      - name: Коннектор для Claude отвечает через stdio
+        shell: pwsh
+        run: |
+          $req = @(
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}',
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}',
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+          ) -join "`n"
+          $out = $req | & "target/release/karman.exe" --mcp | Out-String
+          Write-Output $out
+          if ($out -notmatch '"serverInfo"' -or $out -notmatch '"add_operation"') { throw "karman.exe --mcp не ответил" }
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: karman-windows
