@@ -104,6 +104,8 @@ pub struct TripView {
     pub over_total: Kop,
     /// Подставленное обоснование сверхбюджета.
     pub auto_just: String,
+    /// Наряды и переработки поездки.
+    pub ot: crate::overtime::TripOt,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -165,7 +167,7 @@ pub fn trip_view(t: &Trip, ops: &[Op], settings_rate: Kop, today: Date) -> TripV
     let rows = trip::report(t, &s, ops);
     let over_total = rows.iter().map(|r| r.over).sum();
     let auto_just = trip::over_budget_note(t, &s, &rows);
-    TripView { trip: t.clone(), rate, rate_source, s, rows, over_total, auto_just }
+    TripView { trip: t.clone(), rate, rate_source, s, rows, over_total, auto_just, ot: Default::default() }
 }
 
 /// Как операция меняет остаток счёта (в валюте счёта). Перевод списывает со счёта-источника
@@ -251,7 +253,12 @@ pub fn snapshot(store: &Store, today: Date) -> Result<Snapshot> {
         })
         .collect();
     let total = accounts.iter().filter(|a| !a.account.archived).map(|a| a.balance_rub).sum();
-    let trips: Vec<TripView> = store.trips()?.iter().map(|t| trip_view(t, &ops, rate, today)).collect();
+    let (orders, days) = (store.orders()?, store.work_days()?);
+    let trips: Vec<TripView> = store
+        .trips()?
+        .iter()
+        .map(|t| TripView { ot: crate::overtime::trip_ot(t, &orders, &days, &settings), ..trip_view(t, &ops, rate, today) })
+        .collect();
     let (mut held, mut due, mut owed, mut debt_due) = (0, 0, 0, 0);
     for v in &trips {
         let b = v.s.balance;

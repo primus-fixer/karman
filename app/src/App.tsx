@@ -9,6 +9,7 @@ import Feed from './screens/Feed';
 import Finance, { type FinanceActions, type FinView } from './screens/Finance';
 import Overview from './screens/Overview';
 import Settings, { type ThemeState } from './screens/Settings';
+import type { OtActions } from './screens/Overtime';
 import TripScreen, { type TripActions, type TripTab } from './screens/Trip';
 import TripForm from './screens/TripForm';
 import Trips from './screens/Trips';
@@ -487,6 +488,8 @@ export default function App() {
     },
   };
 
+  const otAct: OtActions = { run, flash: (text, undo, long) => flash(text, undo, long), locked: goLocked, view: (a) => setViewer(a), mobile: mobileNow };
+
   const overlay =
     locked && lock ? (
       <LockScreen key={lockKey} status={lock} os={info?.os ?? ''} onUnlocked={onUnlocked} />
@@ -557,6 +560,7 @@ export default function App() {
         isPhone={isPhone}
         onBack={back}
         opAct={opAct}
+        ot={otAct}
       />
     );
   else if (screen === 'trip-form')

@@ -52,9 +52,9 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 }
 
 /** Уменьшает снимок и сохраняет в JPEG. */
-async function toJpeg(file: File): Promise<string> {
+async function toJpeg(file: File, side: number): Promise<string> {
   const img = await loadImage(await readDataUrl(file));
-  const scale = Math.min(1, MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+  const scale = Math.min(1, side / Math.max(img.naturalWidth, img.naturalHeight));
   const w = Math.max(1, Math.round(img.naturalWidth * scale));
   const h = Math.max(1, Math.round(img.naturalHeight * scale));
   const canvas = document.createElement('canvas');
@@ -71,8 +71,11 @@ async function toJpeg(file: File): Promise<string> {
 
 const isPdf = (f: File) => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf');
 
-/** Сохраняет файл в базе и возвращает вложение для операции. */
-export async function attachFile(file: File): Promise<Attachment> {
+/** Лист наряда снимается крупнее чека: в отчёте его читают с экрана и печатают. */
+export const ORDER_PHOTO = { side: 2200, name: 'наряд.jpg' };
+
+/** Сохраняет файл в базе и возвращает вложение для операции или наряда. */
+export async function attachFile(file: File, as: { side: number; name: string } = { side: MAX_SIDE, name: 'чек.jpg' }): Promise<Attachment> {
   let mime: string;
   let data: string;
   if (isPdf(file)) {
@@ -81,10 +84,10 @@ export async function attachFile(file: File): Promise<Attachment> {
     data = base64Of(await readDataUrl(file));
   } else {
     mime = 'image/jpeg';
-    data = await toJpeg(file);
+    data = await toJpeg(file, as.side);
   }
   const r = await api.blobPut(mime, data);
-  const name = file.name && !/^image\.|^IMG_|^\d+\.jpg$/i.test(file.name) ? file.name : mime === 'application/pdf' ? 'документ.pdf' : 'чек.jpg';
+  const name = file.name && !/^image\.|^IMG_|^\d+\.jpg$/i.test(file.name) ? file.name : mime === 'application/pdf' ? 'документ.pdf' : as.name;
   return { id: r.id, mime, name, size: r.size };
 }
 
