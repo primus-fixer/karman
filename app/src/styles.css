@@ -1706,14 +1706,19 @@ textarea.field {
 }
 
 /* ——— Переработки ——— */
+/* Таблица по дням подстраивается под свою ширину, а не под окно: на компьютере с открытой
+   панелью ввода ей так же тесно, как на телефоне. */
 .otdays {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  container-type: inline-size;
 }
 
 .otday {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: 'd t' 'c h';
   gap: 2px 12px;
   align-items: baseline;
   width: 100%;
@@ -1742,6 +1747,7 @@ button.otday.open {
 }
 
 .otday.head {
+  display: none;
   min-height: 0;
   padding-top: 4px;
   padding-bottom: 6px;
@@ -1757,6 +1763,7 @@ button.otday.open {
 }
 
 .otd {
+  grid-area: d;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -1764,50 +1771,65 @@ button.otday.open {
   min-width: 0;
 }
 
+.ott {
+  grid-area: t;
+  text-align: right;
+}
+
 .oth {
+  display: none;
   text-align: right;
   font-family: var(--num);
 }
 
 .otc {
+  grid-area: c;
   min-width: 0;
   overflow-wrap: anywhere;
   color: var(--ink2);
 }
 
-.desktop .otday {
-  grid-template-columns: 180px 116px 76px 76px 76px minmax(0, 1fr);
-}
-
-.desktop .otday .oths {
-  display: none;
-}
-
-.phone .otday {
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas: 'd t' 'c h';
-}
-
-.phone .otday .otd {
-  grid-area: d;
-}
-
-.phone .otday .ott {
-  grid-area: t;
-  text-align: right;
-}
-
-.phone .otday .otc {
-  grid-area: c;
-}
-
-.phone .otday .oths {
+.oths {
   grid-area: h;
   text-align: right;
 }
 
-.phone .otday .oth {
-  display: none;
+/* Широко: как таблица Excel — колонки часов под шапкой. */
+@container (min-width: 720px) {
+  .otday {
+    grid-template-columns: 180px 116px 76px 76px 76px minmax(0, 1fr);
+    grid-template-areas: none;
+  }
+
+  .otday.head {
+    display: grid;
+  }
+
+  .otd,
+  .ott,
+  .otc {
+    grid-area: auto;
+  }
+
+  .ott {
+    text-align: left;
+  }
+
+  .oth {
+    display: block;
+  }
+
+  .oths {
+    display: none;
+  }
+
+  .ottimes {
+    grid-template-columns: 110px 110px minmax(0, 1fr);
+  }
+
+  .ottimes .otcm {
+    grid-column: auto;
+  }
 }
 
 .tag.off {
@@ -1830,15 +1852,11 @@ button.otday.open {
 
 .ottimes {
   display: grid;
-  grid-template-columns: 110px 110px minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
-.phone .ottimes {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.phone .ottimes .otcm {
+.ottimes .otcm {
   grid-column: 1 / -1;
 }
 

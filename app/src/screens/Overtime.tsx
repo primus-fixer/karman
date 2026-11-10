@@ -784,7 +784,7 @@ function Days({ tv, act, wide }: { tv: TripView; act: OtActions; wide: boolean }
         Нажмите на день и впишите, во сколько начали и закончили работу. Часы переработки посчитаются сами.
       </p>
       <div className="otdays">
-        {wide && <HeadRow rules={rules} />}
+        <HeadRow rules={rules} />
         {rows.map((r, i) => (
           <Fragment key={r.date}>
             <button type="button" className={'otday' + (r.off ? ' off' : '') + (open === r.date ? ' open' : '')} aria-expanded={open === r.date} onClick={() => setOpen(open === r.date ? null : r.date)}>
@@ -813,7 +813,7 @@ function Days({ tv, act, wide }: { tv: TripView; act: OtActions; wide: boolean }
 
 // ——— Общая таблица за месяц ———
 
-function MonthPart({ snap, tv, act, wide }: { snap: Snapshot; tv: TripView; act: OtActions; wide: boolean }) {
+function MonthPart({ snap, tv, act }: { snap: Snapshot; tv: TripView; act: OtActions }) {
   const [month, setMonth] = useState(() => mainMonth(tv.trip));
   const [data, setData] = useState<OtMonth | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -886,7 +886,7 @@ function MonthPart({ snap, tv, act, wide }: { snap: Snapshot; tv: TripView; act:
               Из всех поездок месяца, с днями между ними. Время и комментарии правятся в карточке поездки.
             </p>
             <div className="otdays">
-              {wide && <HeadRow rules={shown.rules} />}
+              <HeadRow rules={shown.rules} />
               {shown.sheet.rows.map((r) => (
                 <div key={r.date} className={'otday' + (r.off ? ' off' : '')}>
                   <RowCells row={r} showTrip />
@@ -928,7 +928,7 @@ export default function OvertimeTab({ snap, tv, act, wide }: { snap: Snapshot; t
           <Days tv={tv} act={act} wide={wide} />
         </>
       ) : (
-        <MonthPart snap={snap} tv={tv} act={act} wide={wide} />
+        <MonthPart snap={snap} tv={tv} act={act} />
       )}
       <p className="note">{rulesText(ot.rules)} Правила и оклад — в настройках.</p>
     </div>
