@@ -142,6 +142,8 @@ pub async fn backup_password(app: AppHandle, password: String) -> Res<Status> {
     let mut bytes = password.into_bytes();
     let (key, cloud_file) = tauri::async_runtime::spawn_blocking(move || {
         let made = std::str::from_utf8(&bytes).map_err(err).and_then(|p| {
+            // Новый пароль — не из самых простых: им шифруются и копии, и облако.
+            karman_core::backup::check_new_password(p).map_err(err)?;
             let key = BackupKey::new(p).map_err(err)?;
             let cloud_file = cloud_key.as_deref().map(|ck| crate::cloud::rewrap(ck, p)).transpose()?;
             Ok((key, cloud_file))

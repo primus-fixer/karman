@@ -183,7 +183,9 @@ export type PhraseDraft = { dir: 'out' | 'in' | 'move'; amount: number; scope: s
 export type ExpenseScan = { not_document: boolean; kind: string; cat: string; amount: number; currency: string; date: string | null; comment: string; problems: string; usd: number };
 /** Приказ или заявка → поля новой поездки; plan — суммы по статьям 01–05 в копейках. */
 export type TripScan = { not_document: boolean; id: string; city: string; region: string; req_no: string; req_date: string | null; start: string | null; end: string | null; goal: string; plan: number[]; employee: string; problems: string; usd: number };
-export type ChatItem = { role: 'user' | 'assistant'; text: string; actions: string[]; error: boolean };
+/** Удаление, которое предложил Claude: выполняется только по кнопке человека. */
+export type ChatConfirm = { id: number; text: string; button: string; state: 'wait' | 'done' | 'kept' | 'failed' };
+export type ChatItem = { role: 'user' | 'assistant'; text: string; actions: string[]; error: boolean; confirm: ChatConfirm[] };
 export type ChatView = { items: ChatItem[]; usd: number; write: boolean };
 /** Находки Claude: problem — исправить, check — проверить, fine — в порядке. */
 export type Finding = { level: 'problem' | 'check' | 'fine'; text: string };
@@ -445,6 +447,8 @@ export const api = {
   aiChatSend: (text: string) => invoke<ChatView>('ai_chat_send', { today: today(), text }),
   aiChatView: () => invoke<ChatView>('ai_chat_view'),
   aiChatReset: () => invoke<ChatView>('ai_chat_reset'),
+  /** Кнопка под ответом Claude: удалить (yes) или оставить. */
+  aiChatConfirm: (id: number, yes: boolean) => invoke<ChatView>('ai_chat_confirm', { id, yes }),
   aiTripCheck: (trip: string) => invoke<Review>('ai_trip_check', { today: today(), trip }),
   /** Сводка месяца без ИИ. */
   monthInsights: () => invoke<Insights>('month_insights', { today: today() }),

@@ -17,7 +17,8 @@ use karman_core::ai::{self, Doc, ExpenseDraft, Findings, OrderScan, PhraseDraft,
 use karman_core::db::Store;
 use karman_core::insights::{self, Insights};
 use karman_core::overtime::Rules;
-use karman_core::{book, tools};
+use karman_core::sync::EventBody;
+use karman_core::{book, tools, Date};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -442,6 +443,27 @@ pub struct ChatItem {
     /// Что Claude записал за этот ответ — каждое отменяется «Вернуть».
     actions: Vec<String>,
     error: bool,
+    /// Удаления, которые ждут кнопки человека.
+    confirm: Vec<Confirm>,
+}
+
+/// Удаление, которое предложил Claude: без кнопки человека не выполняется.
+#[derive(Clone, Serialize)]
+pub struct Confirm {
+    id: u64,
+    /// «Удалить операцию: Такси до объекта, 640 ₽».
+    text: String,
+    /// «Удалить» или «Очистить».
+    button: &'static str,
+    /// wait — ждёт; done — сделано; kept — человек не разрешил; failed — не получилось.
+    state: &'static str,
+}
+
+struct Pending {
+    id: u64,
+    tool: String,
+    args: Value,
+    text: String,
 }
 
 /// Разговор живёт в памяти, пока открыт «Карман»: история сообщений для Claude API как есть
@@ -451,9 +473,37 @@ struct Chat {
     messages: Vec<Value>,
     items: Vec<ChatItem>,
     usd: f64,
+    /// Удаления, которые ждут кнопки человека.
+    pending: Vec<Pending>,
+    next: u64,
+    /// Что решил человек после ответа Claude — уйдёт вместе со следующим вопросом.
+    notes: Vec<String>,
 }
 
-static CHAT: Mutex<Chat> = Mutex::new(Chat { system: String::new(), messages: Vec::new(), items: Vec::new(), usd: 0.0 });
+const fn empty_chat() -> Chat {
+    Chat { system: String::new(), messages: Vec::new(), items: Vec::new(), usd: 0.0, pending: Vec::new(), next: 0, notes: Vec::new() }
+}
+
+static CHAT: Mutex<Chat> = Mutex::new(empty_chat());
+
+/// Удаление записей Claude в «Спросить Claude» ждёт кнопки человека (выбор в 0.13.1): что удалится
+/// и надпись кнопки. `None` — не удаление (или инструмент сам ответит ошибкой).
+fn deletion(st: &Store, today: Date, tool: &str, args: &Value) -> Option<(String, &'static str)> {
+    let change = tools::plan(st, today, tool, args, &|cur, date| crate::fx::stored_rate(st, cur, &date.to_string())).ok()?;
+    let op = change.bodies.iter().any(|b| matches!(b, EventBody::OpDelete { .. }));
+    let day = change.bodies.iter().any(|b| matches!(b, EventBody::DayDelete { .. }));
+    if !op && !day {
+        return None;
+    }
+    let text = if let Some(rest) = change.text.strip_prefix("Удалено: ") {
+        format!("Удалить операцию: {rest}")
+    } else if let Some(rest) = change.text.strip_prefix("Очищен день ") {
+        format!("Очистить день {rest}")
+    } else {
+        change.text
+    };
+    Some((text, if op { "Удалить" } else { "Очистить" }))
+}
 
 /// Шагов с инструментами на один вопрос — не больше.
 const MAX_STEPS: usize = 8;
@@ -486,9 +536,12 @@ fn chat_turn(app: &AppHandle, today: &str, text: &str) -> Res<ChatView> {
         chat.system = ai::chat_system(d);
     }
     let start = chat.messages.len();
-    chat.messages.push(json!({ "role": "user", "content": text }));
-    chat.items.push(ChatItem { role: "user", text: text.to_string(), actions: Vec::new(), error: false });
+    // Что человек решил по удалениям после прошлого ответа — Claude узнаёт об этом с вопросом.
+    let content = if chat.notes.is_empty() { text.to_string() } else { format!("{}\n\n{text}", std::mem::take(&mut chat.notes).join("\n")) };
+    chat.messages.push(json!({ "role": "user", "content": content }));
+    chat.items.push(ChatItem { role: "user", text: text.to_string(), actions: Vec::new(), error: false, confirm: Vec::new() });
     let mut actions = Vec::new();
+    let mut confirm = Vec::new();
     let mut outcome: Res<String> = Err(format!("Claude не уложился в {MAX_STEPS} шагов — спросите проще или по частям"));
     for _ in 0..MAX_STEPS {
         let body = ai::chat_request(&chat.system, &chat.messages);
@@ -509,9 +562,29 @@ fn chat_turn(app: &AppHandle, today: &str, text: &str) -> Res<ChatView> {
             };
             break;
         }
-        let results: Vec<Value> = calls
-            .iter()
-            .map(|(id, name, input)| match run_tool(app, Caller::Chat, name, input) {
+        let mut results: Vec<Value> = Vec::new();
+        for (id, name, input) in &calls {
+            // Удалять Claude может только по кнопке человека: пока — предложение под ответом.
+            let ask = if tools::is_write(name) {
+                let st = state.store()?;
+                if chat_write_on(&st) {
+                    deletion(&st, d, name, input)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            if let Some((what, button)) = ask {
+                chat.next += 1;
+                let pid = chat.next;
+                chat.pending.push(Pending { id: pid, tool: name.clone(), args: input.clone(), text: what.clone() });
+                confirm.push(Confirm { id: pid, text: what.clone(), button, state: "wait" });
+                let note = format!("{what} — ждёт подтверждения: под твоим ответом у человека кнопка «{button}». Скажи коротко, что нужно нажать; повторно не удаляй.");
+                results.push(json!({ "type": "tool_result", "tool_use_id": id, "content": json!({ "pending": note }).to_string() }));
+                continue;
+            }
+            results.push(match run_tool(app, Caller::Chat, name, input) {
                 Ok(v) => {
                     if tools::is_write(name) {
                         if let Some(t) = v["done"].as_str() {
@@ -521,19 +594,19 @@ fn chat_turn(app: &AppHandle, today: &str, text: &str) -> Res<ChatView> {
                     json!({ "type": "tool_result", "tool_use_id": id, "content": v.to_string() })
                 }
                 Err(e) => json!({ "type": "tool_result", "tool_use_id": id, "content": e, "is_error": true }),
-            })
-            .collect();
+            });
+        }
         chat.messages.push(json!({ "role": "user", "content": results }));
     }
     match outcome {
         Ok(answer) => {
             let answer = if answer.is_empty() { "Готово.".to_string() } else { answer };
-            chat.items.push(ChatItem { role: "assistant", text: answer, actions, error: false });
+            chat.items.push(ChatItem { role: "assistant", text: answer, actions, error: false, confirm });
         }
         Err(e) => {
             // Разговор для Claude возвращается к началу вопроса; записанное остаётся — с «Вернуть».
             chat.messages.truncate(start);
-            chat.items.push(ChatItem { role: "assistant", text: e, actions, error: true });
+            chat.items.push(ChatItem { role: "assistant", text: e, actions, error: true, confirm });
         }
     }
     let write = chat_write_on(&*state.store()?);
@@ -565,8 +638,38 @@ pub fn ai_chat_view(state: State<AppState>) -> Res<ChatView> {
 pub fn ai_chat_reset(state: State<AppState>) -> Res<ChatView> {
     let write = chat_write_on(&*state.store()?);
     let mut chat = CHAT.lock().map_err(err)?;
-    *chat = Chat { system: String::new(), messages: Vec::new(), items: Vec::new(), usd: 0.0 };
+    *chat = empty_chat();
     Ok(chat_view(&chat, write))
+}
+
+/// Кнопка под ответом Claude: «Удалить» (`yes`) или «Оставить». Удаление — как запись Claude:
+/// с «Вернуть»; если запись из чата успели выключить, не выполняется.
+#[tauri::command]
+pub async fn ai_chat_confirm(app: AppHandle, id: u64, yes: bool) -> Res<ChatView> {
+    app.state::<AppState>().unlocked()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let mut guard = CHAT.lock().map_err(err)?;
+        let chat = &mut *guard;
+        let pos = chat.pending.iter().position(|p| p.id == id).ok_or("Это действие уже не ждёт ответа")?;
+        let p = chat.pending.remove(pos);
+        let (mark, note) = if !yes {
+            ("kept", format!("Человек не разрешил: {}.", p.text))
+        } else {
+            match run_tool(&app, Caller::Chat, &p.tool, &p.args) {
+                Ok(_) => ("done", format!("Человек нажал «Удалить»: {} — сделано.", p.text)),
+                Err(e) => ("failed", format!("Человек разрешил «{}», но не получилось: {e}", p.text)),
+            }
+        };
+        for c in chat.items.iter_mut().flat_map(|i| i.confirm.iter_mut()).filter(|c| c.id == id) {
+            c.state = mark;
+        }
+        chat.notes.push(note);
+        let write = chat_write_on(&*state.store()?);
+        Ok(chat_view(chat, write))
+    })
+    .await
+    .map_err(err)?
 }
 
 // ——— Проверка отчёта и сводка месяца ———

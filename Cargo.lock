@@ -2064,7 +2064,7 @@ dependencies = [
 
 [[package]]
 name = "karman-app"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.3.4",
@@ -2091,7 +2091,7 @@ dependencies = [
 
 [[package]]
 name = "karman-cloud"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "base64 0.22.1",
  "karman-core",
@@ -2103,7 +2103,7 @@ dependencies = [
 
 [[package]]
 name = "karman-core"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -2122,7 +2122,7 @@ dependencies = [
 
 [[package]]
 name = "karman-secure"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "jni",
  "ndk-context",

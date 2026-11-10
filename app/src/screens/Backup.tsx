@@ -232,7 +232,7 @@ function PasswordForm({ first, cloud, onSaved, onCancel }: { first: boolean; clo
       <p className="note">
         Не короче 8 символов, лучше — фраза из нескольких слов. Пароль нигде не хранится и не восстанавливается: забудете — копию не открыть.
         {first ? '' : ' Прежние копии открываются прежним паролем.'}
-        {cloud ? ' Этим же паролем зашифровано облако: новый пароль уйдёт туда при ближайшем обмене.' : ''}
+        {cloud ? ' Этим же паролем зашифровано облако: новый пароль уйдёт туда при ближайшем обмене. Если старый пароль мог узнать кто-то ещё, после смены отключите облако с удалением данных и подключите снова — сменится и ключ облака.' : ''}
       </p>
       <input className="field" type="password" autoComplete="new-password" aria-label="Новый пароль копии" placeholder="Пароль копии" value={a} onChange={(e) => setA(e.target.value)} />
       <input className="field" type="password" autoComplete="new-password" aria-label="Пароль копии ещё раз" placeholder="Ещё раз" value={b} onChange={(e) => setB(e.target.value)} />

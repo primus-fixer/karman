@@ -2,8 +2,10 @@
 //!
 //! Приложение Claude запускает `karman --mcp` (расширение `.mcpb`) и говорит с ним по протоколу MCP
 //! через stdio. Посредник сам отвечает на `initialize` и `tools/list`, а вызовы инструментов передаёт
-//! запущенному «Карману» по 127.0.0.1 с одноразовым ключом из папки данных — запросы из сети
-//! «Карман» не принимает. Если «Карман» закрыт, посредник его запускает (на Windows).
+//! запущенному «Карману» по 127.0.0.1 — запросы из сети «Карман» не принимает. Ключ связи новый при
+//! каждом запуске и лежит в папке данных; по сети он не ходит: стороны доказывают друг другу, что знают
+//! его (MAC от одноразовых чисел). Программа, занявшая порт закрытого «Кармана», не получит ни ключа,
+//! ни запроса. Если «Карман» закрыт, посредник его запускает (на Windows).
 //!
 //! Чтение — когда подключение включено в настройках. Запись — только если она отдельно разрешена;
 //! каждое действие Claude видно в «Кармане» и отменяется кнопкой «Вернуть».
@@ -39,13 +41,27 @@ struct Link {
     app: String,
 }
 
+/// Запрос посредника — после того как «Карман» доказал, что знает ключ связи.
 #[derive(Serialize, Deserialize)]
 struct Request {
-    token: String,
+    /// Доказательство посредника: MAC от одноразового числа «Кармана».
+    auth: String,
     tool: String,
     #[serde(default)]
     args: Value,
 }
+
+/// Одноразовое число для проверки: 32 случайных байта.
+fn nonce() -> Option<String> {
+    karman_core::pairing::random_key().ok().map(|k| k.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+fn valid_nonce(n: &str) -> bool {
+    n.len() == 64 && n.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Посредник из прежней версии «Кармана» присылает ключ открытым текстом.
+const OUTDATED: &str = "«Карман» обновился — перезапустите приложение Claude, чтобы обновился и коннектор";
 
 #[derive(Serialize, Deserialize, Default)]
 struct Reply {
@@ -191,21 +207,46 @@ fn still_current(st: &Store, done: &[EventBody]) -> Res<bool> {
 
 // ——— Приём запросов посредника (компьютер) ———
 
+/// «Карман»: посредник прислал своё одноразовое число — отвечаем доказательством и своим числом;
+/// дальше принимаем запрос, только если посредник доказал, что знает ключ. `None` — связь оборвалась.
+fn accept(stream: &std::net::TcpStream, token: &str) -> Option<Result<Request, String>> {
+    let mut reader = BufReader::new(stream.take(MAX_REQUEST));
+    let mut line = String::new();
+    if reader.read_line(&mut line).ok()? == 0 {
+        return None;
+    }
+    let hello: Value = match serde_json::from_str(&line) {
+        Ok(v) => v,
+        Err(_) => return Some(Err("неверный запрос".into())),
+    };
+    let Some(theirs) = hello["hello"].as_str().filter(|n| valid_nonce(n)) else {
+        return Some(Err(if hello.get("token").is_some() { OUTDATED } else { "неверный запрос" }.into()));
+    };
+    let Some(mine) = nonce() else { return Some(Err("нет случайных чисел".into())) };
+    let mut out = stream;
+    writeln!(out, "{}", json!({ "proof": mcp::link_proof(token, "karman", theirs), "nonce": mine })).ok()?;
+    line.clear();
+    if reader.read_line(&mut line).ok()? == 0 {
+        return None;
+    }
+    Some(match serde_json::from_str::<Request>(&line) {
+        Ok(r) if same(&r.auth, &mcp::link_proof(token, "bridge", &mine)) => Ok(r),
+        Ok(_) => Err("неверный ключ".into()),
+        Err(_) => Err("неверный запрос".into()),
+    })
+}
+
 #[cfg(desktop)]
 fn serve(app: &AppHandle, stream: std::net::TcpStream, token: &str) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
-    let mut line = String::new();
-    let reply = match BufReader::new((&stream).take(MAX_REQUEST)).read_line(&mut line) {
-        Ok(0) | Err(_) => return,
-        Ok(_) => match serde_json::from_str::<Request>(&line) {
-            Ok(r) if same(&r.token, token) => match execute(app, &r.tool, &r.args) {
-                Ok(v) => Reply { ok: Some(v), err: None },
-                Err(e) => Reply { ok: None, err: Some(e) },
-            },
-            Ok(_) => Reply { ok: None, err: Some("неверный ключ".into()) },
-            Err(_) => Reply { ok: None, err: Some("неверный запрос".into()) },
+    let reply = match accept(&stream, token) {
+        None => return,
+        Some(Ok(r)) => match execute(app, &r.tool, &r.args) {
+            Ok(v) => Reply { ok: Some(v), err: None },
+            Err(e) => Reply { ok: None, err: Some(e) },
         },
+        Some(Err(e)) => Reply { ok: None, err: Some(e) },
     };
     let mut out = &stream;
     let _ = writeln!(out, "{}", serde_json::to_string(&reply).unwrap_or_default());
@@ -278,11 +319,33 @@ fn call_app(dir: &Path, tool: &str, args: &Value) -> Result<Value, CallError> {
     let stream = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(2)).map_err(|_| CallError::NotRunning)?;
     // Отчёт с нарядами собирается дольше обычного запроса.
     let _ = stream.set_read_timeout(Some(Duration::from_secs(120)));
-    let req = Request { token: link.token, tool: tool.to_string(), args: args.clone() };
-    let mut out = &stream;
-    writeln!(out, "{}", serde_json::to_string(&req).map_err(|e| CallError::Failed(e.to_string()))?).map_err(|_| CallError::NotRunning)?;
+    talk(&stream, &link.token, tool, args)
+}
+
+/// Посредник: сначала «Карман» доказывает, что знает ключ связи, потом — запрос с доказательством
+/// посредника. Если на порту не «Карман» (порт занят другой программой), запрос не уходит.
+fn talk(stream: &std::net::TcpStream, token: &str, tool: &str, args: &Value) -> Result<Value, CallError> {
+    let mine = nonce().ok_or_else(|| CallError::Failed("нет случайных чисел".into()))?;
+    let mut out = stream;
+    writeln!(out, "{}", json!({ "hello": mine })).map_err(|_| CallError::NotRunning)?;
+    let mut reader = BufReader::new(stream.take(64 << 20));
     let mut line = String::new();
-    BufReader::new((&stream).take(64 << 20)).read_line(&mut line).map_err(|e| CallError::Failed(format!("«Карман» не ответил: {e}")))?;
+    reader.read_line(&mut line).map_err(|_| CallError::NotRunning)?;
+    let challenge: Value = serde_json::from_str(&line).map_err(|_| CallError::NotRunning)?;
+    if let Some(e) = challenge["err"].as_str() {
+        // «Карман» прежней версии не знает о проверке.
+        return Err(CallError::Failed(format!("«Карман» не принял запрос ({e}) — перезапустите «Карман», чтобы он обновился")));
+    }
+    let proof = challenge["proof"].as_str().unwrap_or_default();
+    let Some(theirs) = challenge["nonce"].as_str().filter(|n| valid_nonce(n)) else { return Err(CallError::NotRunning) };
+    if proof.is_empty() || !same(proof, &mcp::link_proof(token, "karman", &mine)) {
+        // На порту не «Карман»: ни ключа, ни запроса ему не отдаём.
+        return Err(CallError::NotRunning);
+    }
+    let req = Request { auth: mcp::link_proof(token, "bridge", theirs), tool: tool.to_string(), args: args.clone() };
+    writeln!(out, "{}", serde_json::to_string(&req).map_err(|e| CallError::Failed(e.to_string()))?).map_err(|_| CallError::NotRunning)?;
+    line.clear();
+    reader.read_line(&mut line).map_err(|e| CallError::Failed(format!("«Карман» не ответил: {e}")))?;
     let reply: Reply = serde_json::from_str(&line).map_err(|_| CallError::Failed("«Карман» ответил непонятно — обновите его".into()))?;
     match (reply.ok, reply.err) {
         (Some(v), _) => Ok(v),
@@ -512,5 +575,81 @@ mod tests {
     fn token_compare() {
         assert!(same("abc", "abc"));
         assert!(!same("abc", "abd") && !same("abc", "abcd"));
+    }
+
+    /// «Карман» на 127.0.0.1: принимает одно подключение и отвечает эхом запроса.
+    fn fake_karman(token: &'static str) -> (u16, std::thread::JoinHandle<Option<Result<Request, String>>>) {
+        let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = l.local_addr().unwrap().port();
+        let h = std::thread::spawn(move || {
+            let (stream, _) = l.accept().unwrap();
+            let got = accept(&stream, token);
+            let reply = match &got {
+                Some(Ok(r)) => Reply { ok: Some(json!({ "tool": r.tool, "args": r.args })), err: None },
+                Some(Err(e)) => Reply { ok: None, err: Some(e.clone()) },
+                None => return got,
+            };
+            let mut out = &stream;
+            writeln!(out, "{}", serde_json::to_string(&reply).unwrap()).unwrap();
+            got
+        });
+        (port, h)
+    }
+
+    fn connect(port: u16) -> std::net::TcpStream {
+        let s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        s
+    }
+
+    const KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn bridge_and_karman_prove_the_key_without_sending_it() {
+        let (port, h) = fake_karman(KEY);
+        let v = talk(&connect(port), KEY, "summary", &json!({ "x": 1 })).ok().unwrap();
+        assert_eq!(v, json!({ "tool": "summary", "args": { "x": 1 } }));
+        assert!(matches!(h.join().unwrap(), Some(Ok(_))));
+        // Посредник с чужим ключом: «Карман» не выполняет запрос.
+        let (port, h) = fake_karman(KEY);
+        let other = "f".repeat(64);
+        let r = talk(&connect(port), &other, "summary", &json!({}));
+        // Доказательство «Кармана» не сходится с чужим ключом — посредник сам ничего не отправил.
+        assert!(matches!(r, Err(CallError::NotRunning)));
+        assert!(h.join().unwrap().is_none(), "запрос не ушёл");
+    }
+
+    #[test]
+    fn a_program_on_the_port_gets_neither_key_nor_request() {
+        let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = l.local_addr().unwrap().port();
+        let h = std::thread::spawn(move || {
+            let (stream, _) = l.accept().unwrap();
+            let mut seen = String::new();
+            let mut reader = BufReader::new(&stream);
+            reader.read_line(&mut seen).unwrap();
+            // Самозванец отвечает как умеет — ключа он не знает.
+            let mut out = &stream;
+            writeln!(out, "{}", json!({ "proof": "00".repeat(32), "nonce": "11".repeat(32) })).unwrap();
+            let mut rest = String::new();
+            let _ = reader.read_line(&mut rest);
+            seen + &rest
+        });
+        let r = talk(&connect(port), KEY, "add_operation", &json!({ "title": "Такси до объекта" }));
+        assert!(matches!(r, Err(CallError::NotRunning)));
+        let seen = h.join().unwrap();
+        assert!(seen.contains("hello") && !seen.contains(KEY) && !seen.contains("Такси") && !seen.contains("auth"), "{seen}");
+    }
+
+    #[test]
+    fn old_bridge_is_told_to_restart_claude() {
+        let (port, h) = fake_karman(KEY);
+        let s = connect(port);
+        let mut out = &s;
+        writeln!(out, "{}", json!({ "token": KEY, "tool": "summary", "args": {} })).unwrap();
+        let mut line = String::new();
+        BufReader::new(&s).read_line(&mut line).unwrap();
+        assert!(line.contains("перезапустите приложение Claude"), "{line}");
+        assert!(matches!(h.join().unwrap(), Some(Err(e)) if e == OUTDATED));
     }
 }

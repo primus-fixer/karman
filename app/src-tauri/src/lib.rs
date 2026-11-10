@@ -1077,6 +1077,7 @@ pub fn run() {
             ai::ai_chat_send,
             ai::ai_chat_view,
             ai::ai_chat_reset,
+            ai::ai_chat_confirm,
             ai::ai_trip_check,
             ai::month_insights,
             ai::ai_month_summary,

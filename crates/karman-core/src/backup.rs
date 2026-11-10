@@ -110,6 +110,58 @@ pub fn check_password(password: &str) -> Result<()> {
     Ok(())
 }
 
+/// Частые пароли и слова-пароли (буквы без цифр и знаков): их перебирают первыми.
+const COMMON: &[&str] = &[
+    "password", "passw", "pass", "parol", "gfhjkm", "пароль", "qwerty", "qwertyuiop", "йцукен", "karman", "карман", "admin", "letmein", "iloveyou", "welcome",
+    "1q2w3e4r", "1q2w3e4r5t", "zaq12wsx", "1qaz2wsx", "привет", "privet", "любовь", "sunshine", "dragon", "monkey",
+];
+/// Ряды клавиш и символов подряд: «12345678», «qwertyui», «йцукенгш», «abcdefgh».
+const RUNS: &[&str] = &[
+    "01234567890123456789",
+    "abcdefghijklmnopqrstuvwxyz",
+    "qwertyuiopasdfghjklzxcvbnm",
+    "1qaz2wsx3edc4rfv5tgb6yhn",
+    "йцукенгшщзхъфывапролджэячсмитьбю",
+    "абвгдеёжзийклмнопрстуфхцчшщъыьэюя",
+];
+
+/// Самые простые пароли: подбираются за минуты, даже с Argon2id. Возвращает, чем плох пароль.
+pub fn weak_password(password: &str) -> Option<&'static str> {
+    let s: String = password.to_lowercase().chars().filter(|c| !c.is_whitespace()).collect();
+    let chars: Vec<char> = s.chars().collect();
+    let distinct = chars.iter().collect::<std::collections::BTreeSet<_>>().len();
+    if distinct < 4 {
+        return Some("в нём почти одни и те же символы");
+    }
+    if chars.iter().all(|c| c.is_ascii_digit()) && chars.len() < 12 {
+        return Some("одни цифры подбираются быстро");
+    }
+    for k in 1..=4 {
+        if chars.len() > k && chars.len() % k == 0 && chars.chunks(k).all(|c| c == &chars[..k]) {
+            return Some("это повтор нескольких символов");
+        }
+    }
+    let rev: String = s.chars().rev().collect();
+    if RUNS.iter().any(|r| r.contains(s.as_str()) || r.contains(rev.as_str())) {
+        return Some("это ряд клавиш или символов подряд");
+    }
+    let letters: String = s.chars().filter(|c| !c.is_ascii_digit() && !c.is_ascii_punctuation()).collect();
+    if COMMON.iter().any(|w| s == *w || letters == *w) {
+        return Some("это одно из самых частых слов-паролей");
+    }
+    None
+}
+
+/// Новый пароль копий: не короче восьми символов и не из самых простых — им шифруются копии
+/// и данные в облаке, а файлы на Диске может скачать любой, кто войдёт в аккаунт.
+pub fn check_new_password(password: &str) -> Result<()> {
+    check_password(password)?;
+    match weak_password(password) {
+        Some(why) => Err(Error::Backup(format!("Слишком простой пароль: {why}. Им шифруются копии и данные в облаке — лучше фраза из нескольких слов"))),
+        None => Ok(()),
+    }
+}
+
 /// Ключ копий: Argon2id от пароля копии. Хранится в базе (она сама зашифрована), чтобы
 /// автокопии делались без пароля; сам пароль нигде не хранится.
 pub struct BackupKey {
@@ -759,6 +811,12 @@ mod tests {
     #[test]
     fn key_meta_and_password_rules() {
         assert!(matches!(BackupKey::new_with("1234567", FAST), Err(Error::Backup(m)) if m.contains("не короче 8")));
+        for weak in ["12345678", "87654321", "qwertyui", "йцукенгш", "abcdefgh", "aaaaaaaa", "abababab", "abcabcabc", "Пароль2026", "password123!", "1q2w3e4r", "карман 12", "11112222"] {
+            assert!(matches!(check_new_password(weak), Err(Error::Backup(m)) if m.contains("Слишком простой")), "{weak}");
+        }
+        for fine in ["отпуск в Сочи 2026", "пароль копий семьи", "длинный пароль", "correct horse battery", "Мой кот Барсик 7", "759301846215"] {
+            assert!(check_new_password(fine).is_ok(), "{fine}");
+        }
         let key = BackupKey::new_with("длинный пароль", FAST).unwrap();
         let again = BackupKey::from_meta(&key.to_meta()).unwrap();
         assert_eq!((again.key, again.salt, again.kdf), (key.key, key.salt, key.kdf));

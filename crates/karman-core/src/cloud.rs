@@ -286,6 +286,16 @@ pub fn read_key_file(cloud: &dyn Cloud) -> Result<Option<KeyFile>> {
     cloud.get(Dir::Root, KEY_FILE, MAX_KEY_FILE)?.map(|b| KeyFile::parse(&b)).transpose()
 }
 
+/// Файл «Кармана» в папке облака. Удаляются только такие: чужие файлы в «Карман/e» и «Карман/b»
+/// (если человек положил их туда сам) остаются.
+fn ours(dir: Dir, name: &str) -> bool {
+    match dir {
+        Dir::Root => name == KEY_FILE,
+        Dir::Events => parse_event_name(name).is_some(),
+        Dir::Blobs => name.strip_suffix(".kbl").is_some_and(|s| s.len() == 32 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))),
+    }
+}
+
 /// Подключает устройство по паролю копий: ключ облака уже есть — открывает его, нет — создаёт.
 /// Возвращает ключ и `true`, если облако подключено впервые.
 pub fn join(cloud: &dyn Cloud, password: &str, kdf: Kdf, now: i64) -> Result<(CloudKey, bool)> {
@@ -293,9 +303,9 @@ pub fn join(cloud: &dyn Cloud, password: &str, kdf: Kdf, now: i64) -> Result<(Cl
     if let Some(kf) = read_key_file(cloud)? {
         return Ok((CloudKey::from_key_file(&kf, password)?, false));
     }
-    // Без ключа старые файлы не прочитать никому: убираем их, чтобы не мешали.
+    // Без ключа старые файлы «Кармана» не прочитать никому: убираем их, чтобы не мешали.
     for dir in [Dir::Events, Dir::Blobs] {
-        for e in cloud.list(dir)? {
+        for e in cloud.list(dir)?.into_iter().filter(|e| ours(dir, &e.name)) {
             cloud.delete(dir, &e.name)?;
         }
     }
@@ -327,7 +337,7 @@ pub fn wipe(cloud: &dyn Cloud, cancel: &AtomicBool) -> Result<usize> {
     cloud.delete(Dir::Root, KEY_FILE)?;
     let mut n = 1;
     for dir in [Dir::Events, Dir::Blobs] {
-        for e in cloud.list(dir)? {
+        for e in cloud.list(dir)?.into_iter().filter(|e| ours(dir, &e.name)) {
             if cancel.load(Ordering::Relaxed) {
                 return Err(fail(CloudFail::Cancelled, "Удаление остановлено"));
             }
@@ -1235,6 +1245,30 @@ mod tests {
         let (k4, _) = join(&cloud, "новый пароль копий", FAST, 5).unwrap();
         assert_eq!(k4.key, k3.key);
         assert!(matches!(put_key_file(&cloud, &k, &k.key_file(PW, FAST, 6).unwrap()), Err(Error::Cloud(CloudFail::Replaced, _))));
+    }
+
+    #[test]
+    fn only_karman_files_are_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let cloud = MemCloud::default();
+        let a = demo(dir.path(), "a.db", "aaaa");
+        let (k, _) = join(&cloud, PW, FAST, 1).unwrap();
+        round(&cloud, &a, &k, &mut State::default()).unwrap();
+        // Свои файлы человека в папках «Кармана».
+        for (d, n) in [(Dir::Events, "заметки.txt"), (Dir::Blobs, "фото.jpg"), (Dir::Events, "aaaa-01-3.kev"), (Dir::Root, "план.docx")] {
+            cloud.set_raw(d, n, b"my file".to_vec());
+        }
+        let cancel = AtomicBool::new(false);
+        wipe(&cloud, &cancel).unwrap();
+        assert_eq!(cloud.names(Dir::Events), ["aaaa-01-3.kev", "заметки.txt"]);
+        assert_eq!(cloud.names(Dir::Blobs), ["фото.jpg"]);
+        assert_eq!(cloud.names(Dir::Root), ["план.docx"]);
+        // Подключение заново тоже убирает только файлы «Кармана».
+        round(&cloud, &a, &join(&cloud, PW, FAST, 2).unwrap().0, &mut State::default()).unwrap();
+        cloud.remove(Dir::Root, KEY_FILE);
+        join(&cloud, PW, FAST, 3).unwrap();
+        assert_eq!(cloud.names(Dir::Events), ["aaaa-01-3.kev", "заметки.txt"]);
+        assert_eq!(cloud.names(Dir::Blobs), ["фото.jpg"]);
     }
 
     #[test]

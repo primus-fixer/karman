@@ -2020,6 +2020,14 @@ button.otday.open {
 .chatmsg.error {
   color: var(--warn);
 }
+.chatconfirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+}
 .chatacts {
   display: flex;
   flex-direction: column;
