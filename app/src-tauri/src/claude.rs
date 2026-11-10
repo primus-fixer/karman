@@ -324,6 +324,7 @@ fn call_app(dir: &Path, tool: &str, args: &Value) -> Result<Value, CallError> {
 
 /// Посредник: сначала «Карман» доказывает, что знает ключ связи, потом — запрос с доказательством
 /// посредника. Если на порту не «Карман» (порт занят другой программой), запрос не уходит.
+#[cfg(desktop)]
 fn talk(stream: &std::net::TcpStream, token: &str, tool: &str, args: &Value) -> Result<Value, CallError> {
     let mine = nonce().ok_or_else(|| CallError::Failed("нет случайных чисел".into()))?;
     let mut out = stream;
@@ -604,6 +605,7 @@ mod tests {
 
     const KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
+    #[cfg(desktop)]
     #[test]
     fn bridge_and_karman_prove_the_key_without_sending_it() {
         let (port, h) = fake_karman(KEY);
@@ -619,6 +621,7 @@ mod tests {
         assert!(h.join().unwrap().is_none(), "запрос не ушёл");
     }
 
+    #[cfg(desktop)]
     #[test]
     fn a_program_on_the_port_gets_neither_key_nor_request() {
         let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
