@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, LOCKED, message, type AiStatus, type AiUsage, type Snapshot } from '../api';
+import { api, LOCKED, message, type AiFeature, type AiStatus, type AiUsage, type Snapshot } from '../api';
+import { setAi } from '../aiState';
 import { NB } from '../format';
 import { ErrorText, Icon } from '../ui';
 
@@ -19,8 +20,23 @@ const whenText = (at: number) => {
 };
 
 /** Раздел настроек «ИИ»: ключ API Claude на этом устройстве, распознавание нарядов, счётчик запросов. */
+/** Функции ИИ: что делает, какой моделью, как включается. */
+const FEATURES: { id: AiFeature; title: string; note: (s: AiStatus) => string; on: string; off: string }[] = [
+  { id: 'orders', title: 'Распознавание нарядов', note: (s) => `В поездке → «Наряды» → «Распознать»: ${s.model} читает все листы наряда, время по дням — по правилам переработок`, on: 'Распознавание нарядов включено', off: 'Распознавание нарядов выключено' },
+  { id: 'docs', title: 'Билеты, счета гостиниц, приказы', note: (s) => `«Распознать» у снимка в окне ввода и «Из приказа или заявки» в новой поездке — ${s.model}`, on: 'Распознавание документов включено', off: 'Распознавание документов выключено' },
+  { id: 'phrase', title: 'Ввод фразой', note: () => 'В окне ввода: «такси 640 до объекта, чек есть» — Claude Haiku 5.5 заполнит форму, сохраняете вы', on: 'Ввод фразой включён', off: 'Ввод фразой выключен' },
+  { id: 'chat', title: 'Спросить Claude', note: (s) => `Вопросы о деньгах и поездках — ${s.chat_model}. Claude видит только то, что запросит в «Кармане»`, on: '«Спросить Claude» включено', off: '«Спросить Claude» выключено' },
+  { id: 'write', title: 'Claude может записывать', note: () => 'В «Спросить Claude»: операции, дни, наряды, поездки — каждое действие с кнопкой «Вернуть»', on: 'Claude может записывать — каждое действие с «Вернуть»', off: 'Claude только читает' },
+  { id: 'review', title: 'Проверка отчёта и сводка месяца', note: (s) => `«Проверить с Claude» в отчёте поездки и сводка месяца в статистике — ${s.chat_model}`, on: 'Проверка и сводка включены', off: 'Проверка и сводка выключены' },
+];
+
 export default function AiSection({ snap, flash, locked }: { snap: Snapshot; flash: (text: string, long?: boolean) => void; locked: () => void }) {
-  const [st, setSt] = useState<AiStatus | null>(null);
+  const [st, setStRaw] = useState<AiStatus | null>(null);
+  // Состояние — и для других экранов: кнопки «Распознать», «Спросить Claude».
+  const setSt = useCallback((s: AiStatus | null) => {
+    setStRaw(s);
+    setAi(s);
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [key, setKey] = useState('');
@@ -40,7 +56,7 @@ export default function AiSection({ snap, flash, locked }: { snap: Snapshot; fla
       setWs(s.workspace);
       if (s.workspace) setWsOpen(true);
     }, fail);
-  }, [fail]);
+  }, [fail, setSt]);
 
   if (!st) {
     return (
@@ -99,10 +115,10 @@ export default function AiSection({ snap, flash, locked }: { snap: Snapshot; fla
       fail(e);
     }
   };
-  const toggle = async (on: boolean) => {
+  const toggle = async (f: (typeof FEATURES)[number], on: boolean) => {
     try {
-      setSt(await api.aiSet(on));
-      flash(on ? 'Распознавание нарядов включено' : 'Распознавание нарядов выключено');
+      setSt(await api.aiSet(f.id, on));
+      flash(on ? f.on : f.off);
     } catch (e) {
       fail(e);
     }
@@ -151,7 +167,7 @@ export default function AiSection({ snap, flash, locked }: { snap: Snapshot; fla
         ИИ
       </h2>
       <p className="note" style={{ marginBottom: 8 }}>
-        Claude читает снимки и PDF нарядов и заполняет время работы по дням — вы проверяете и сохраняете. Нужен ваш ключ API Claude: запросы оплачиваются с вашего счёта в Claude Console, отдельно от подписки.
+        Claude читает наряды, билеты, счета гостиниц и приказы, заполняет операцию по фразе, отвечает на вопросы о деньгах и проверяет отчёт — вы проверяете и сохраняете. Нужен ваш ключ API Claude: запросы оплачиваются с вашего счёта в Claude Console, отдельно от подписки.
       </p>
       {st.key && !replace ? (
         <div className="setrow">
@@ -176,13 +192,20 @@ export default function AiSection({ snap, flash, locked }: { snap: Snapshot; fla
       ) : (
         keyForm
       )}
-      <label className="setrow" style={{ opacity: st.key ? 1 : 0.55 }}>
-        <span>
-          <span>Распознавание нарядов</span>
-          <span className="note">В поездке → «Наряды» → «Распознать»: {st.model} читает все листы наряда, время по дням — по правилам переработок</span>
-        </span>
-        <input type="checkbox" role="switch" aria-label="Распознавание нарядов" checked={st.orders} disabled={!st.key} onChange={(e) => toggle(e.target.checked)} style={{ flex: 'none', width: 20, height: 20, margin: 0, accentColor: 'var(--own)' }} />
-      </label>
+      {FEATURES.map((f) => {
+        // Запись — часть «Спросить Claude»: без чата она ни к чему.
+        const sub = f.id === 'write';
+        const enabled = st.key && (!sub || st.features.chat);
+        return (
+          <label key={f.id} className="setrow" style={{ opacity: enabled ? 1 : 0.55, paddingLeft: sub ? 18 : undefined }}>
+            <span>
+              <span>{f.title}</span>
+              <span className="note">{f.note(st)}</span>
+            </span>
+            <input type="checkbox" role="switch" aria-label={f.title} checked={st.features[f.id]} disabled={!enabled} onChange={(e) => toggle(f, e.target.checked)} style={{ flex: 'none', width: 20, height: 20, margin: 0, accentColor: 'var(--own)' }} />
+          </label>
+        );
+      })}
       <div className="setrow">
         <span>
           <span>Запросы к Claude</span>
@@ -207,7 +230,7 @@ export default function AiSection({ snap, flash, locked }: { snap: Snapshot; fla
         </div>
       )}
       <p className="note" style={{ marginTop: 8 }}>
-        Ключ хранится только на этом устройстве, зашифрованным, — в обмен по Wi-Fi и резервные копии не попадает. В Anthropic уходят листы наряда и даты поездки — только когда вы нажимаете «Распознать».
+        Ключ хранится только на этом устройстве, зашифрованным, — в обмен по Wi-Fi и резервные копии не попадает. В Anthropic уходит только то, что вы отправили сами: листы документа по кнопке «Распознать», фраза, вопрос и данные, которые Claude запросит для ответа, данные поездки или месяца для проверки и сводки.
       </p>
       <ErrorText text={error} />
     </section>

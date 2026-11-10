@@ -2,7 +2,8 @@ import { useEffect, useState, type CSSProperties, type FormEvent } from 'react';
 import { api, inApp, message, scanQr, type Account, type Attachment, type DocKind, type FxQuote, type Op, type Snapshot, type TripView } from './api';
 import { NB, SIGN, amountText, dMon, fmt, parseAmount, plural, rub } from './format';
 import { attachFile, pickFiles } from './media';
-import { CATS, OWN_IN, OWN_OUT, TRIP_IN, TRIP_OUT, isFamily, isIn, kindFor, statusIndex } from './logic';
+import { CATS, OWN_IN, OWN_OUT, TRIP_IN, TRIP_OUT, catFromHistory, isFamily, isIn, kindFor, statusIndex } from './logic';
+import { aiOn, useAi } from './aiState';
 import { Icon, Seg, Thumbs } from './ui';
 
 export type EntryDraft = {
@@ -210,6 +211,11 @@ export default function Entry({
   const [qrText, setQrText] = useState('');
   const [moreTrips, setMoreTrips] = useState(false);
   const [filesBusy, setFilesBusy] = useState(false);
+  const ai = useAi();
+  const [phrase, setPhrase] = useState('');
+  const [aiBusy, setAiBusy] = useState<'phrase' | 'doc' | null>(null);
+  /** Что сделал Claude: «заполнено по фразе», сомнения. */
+  const [aiNote, setAiNote] = useState<{ text: string; warn: boolean } | null>(null);
   const set = (patch: Partial<EntryDraft>) => {
     setE((x) => ({ ...x, ...patch }));
     setError(null);
@@ -319,6 +325,64 @@ export default function Entry({
     }
   };
 
+  /** Фраза → форма (Claude Haiku 5.5). Записывает человек кнопкой ниже. */
+  const fillFromPhrase = async () => {
+    const text = phrase.trim();
+    if (!text || aiBusy) return;
+    setAiBusy('phrase');
+    setAiNote(null);
+    try {
+      const r = await api.aiPhrase(text);
+      const acc2 = r.acc || e.acc;
+      const tripOut = r.dir === 'out' && isTripScope(r.scope);
+      setE((x) => ({
+        ...x,
+        dir: r.dir,
+        amount: r.amount > 0 ? amountText(Math.round(r.amount * 100)) : x.amount,
+        scope: r.dir === 'move' ? 'own' : r.scope,
+        cat: r.cat,
+        acc: acc2,
+        to: r.dir === 'move' ? r.to || defaultTo(snap, acc2) : '',
+        toAmount: '',
+        receipt: tripOut && r.cat !== 'food' ? (r.document ? x.receipt || 'photo' : x.att.length ? x.receipt : null) : null,
+        receiptNote: tripOut ? x.receiptNote : '',
+        comment: r.comment || x.comment,
+        date: r.date || x.date,
+      }));
+      setPhrase('');
+      setError(null);
+      setAiNote(r.unclear ? { text: 'Claude не уверен: ' + r.unclear, warn: true } : { text: r.amount > 0 ? 'Заполнено по фразе — проверьте и запишите' : 'Заполнено по фразе — впишите сумму', warn: r.amount <= 0 });
+    } catch (err) {
+      setAiNote({ text: message(err), warn: true });
+    } finally {
+      setAiBusy(null);
+    }
+  };
+  /** Билет, счёт гостиницы или чек → сумма, дата, статья, комментарий (Claude Opus 5.5). */
+  const fillFromDoc = async () => {
+    if (!e.att.length || aiBusy) return;
+    setAiBusy('doc');
+    setAiNote(null);
+    try {
+      const r = await api.aiDocScan(
+        e.att.map((a) => a.id),
+        tripId,
+      );
+      const patch: Partial<EntryDraft> = {};
+      if (r.amount > 0) patch.amount = amountText(Math.round(r.amount * 100));
+      if (r.date) patch.date = r.date;
+      if (TRIP_OUT.includes(r.cat)) patch.cat = r.cat;
+      if (r.comment) patch.comment = r.comment;
+      set(patch);
+      const other = r.currency && r.currency !== cur ? `Сумма в документе — в ${r.currency}, а счёт — в ${cur}: проверьте счёт. ` : '';
+      setAiNote(r.problems ? { text: other + 'Claude не уверен: ' + r.problems, warn: true } : { text: other + 'Заполнено по документу — проверьте и запишите', warn: !!other });
+    } catch (err) {
+      setAiNote({ text: message(err), warn: true });
+    } finally {
+      setAiBusy(null);
+    }
+  };
+
   // Курсы на дату операции: для счёта в валюте и для счёта, куда идёт перевод.
   const qFrom = useRate(snap, cur, e.date || snap.today);
   const qTo = useRate(snap, move ? toCur : 'RUB', e.date || snap.today);
@@ -363,6 +427,10 @@ export default function Entry({
       }
     }
   }
+
+  // Подсказка категории по прошлым операциям с тем же названием — без ИИ.
+  const histCat = move || e.dir === 'move' ? null : catFromHistory(snap.ops, e.comment, e.dir, isTrip);
+  const showHist = !!histCat && histCat !== e.cat && catList(e.dir, e.scope).includes(histCat);
 
   const room = tv ? Math.max(0, tv.s.leftover) : 0;
   const showDocs = !move && e.dir === 'out' && isTrip && e.cat !== 'food';
@@ -546,6 +614,35 @@ export default function Entry({
         </button>
       </div>
 
+      {aiOn(ai, 'phrase') && !editing && (
+        <div className="phrase">
+          <input
+            className="field"
+            type="text"
+            aria-label="Фразой"
+            placeholder="Фразой: такси 640 до объекта, чек есть"
+            value={phrase}
+            onChange={(ev) => setPhrase(ev.target.value)}
+            onKeyDown={(ev) => {
+              // Enter в строке фразы заполняет форму, а не записывает операцию.
+              if (ev.key === 'Enter') {
+                ev.preventDefault();
+                fillFromPhrase();
+              }
+            }}
+          />
+          <button type="button" className="btn ghost" aria-label="Заполнить по фразе" disabled={!phrase.trim() || !!aiBusy} onClick={fillFromPhrase}>
+            <Icon name="spark" size={18} />
+            {aiBusy === 'phrase' ? 'Claude…' : 'Заполнить'}
+          </button>
+        </div>
+      )}
+      {aiNote && aiBusy !== 'doc' && (
+        <p className={'note' + (aiNote.warn ? ' warn' : '')} role="status" style={{ fontSize: 13, lineHeight: '18px', margin: '-2px 0 0' }}>
+          {aiNote.text}
+        </p>
+      )}
+
       {isPhone ? (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', minHeight: 70 }}>
           <p className="amountbig" aria-live="polite">
@@ -660,6 +757,13 @@ export default function Entry({
         <input className="field" type="date" aria-label="Дата" value={e.date} onChange={(ev) => onDate(ev.target.value)} style={{ height: 44, padding: '0 8px', fontSize: 14 }} />
         <input className="field" type="text" aria-label="Комментарий" placeholder="Комментарий" value={e.comment} onChange={(ev) => set({ comment: ev.target.value })} style={{ minWidth: 0, height: 44, fontSize: 14 }} />
       </div>
+      {showHist && histCat && (
+        <div className="chips">
+          <button type="button" className="chip" onClick={() => set({ cat: histCat })}>
+            Как раньше: {CATS[histCat].n}
+          </button>
+        </div>
+      )}
 
       {showDocs && (
         <div className="stack gap6">
@@ -678,6 +782,12 @@ export default function Entry({
             ))}
           </div>
           {e.att.length > 0 && <Thumbs items={e.att} onRemove={removeFile} />}
+          {e.att.length > 0 && aiOn(ai, 'docs') && (
+            <button type="button" className="btn ghost small" style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 6 }} disabled={!!aiBusy || filesBusy} onClick={fillFromDoc}>
+              <Icon name="spark" size={16} />
+              {aiBusy === 'doc' ? 'Claude читает документ…' : 'Распознать: сумма, дата, статья'}
+            </button>
+          )}
           {!e.receipt && !filesBusy && (
             <button type="button" className="btn link" style={{ alignSelf: 'flex-start', padding: 0, minHeight: 32, color: 'var(--own)', fontSize: 14 }} onClick={() => set({ receipt: 'photo' })}>
               Чек есть, сниму позже

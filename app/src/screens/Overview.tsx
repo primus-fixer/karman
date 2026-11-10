@@ -76,13 +76,34 @@ export function TripList({ snap, nav, closed = false }: { snap: Snapshot; nav: N
   );
 }
 
-/** В настройки, к разделу «Резервная копия». */
+/**
+ * В настройки, к разделу «Резервная копия». Разделы выше (облако, Claude, ИИ) догружаются и становятся
+ * выше — полторы секунды держим раздел на месте, пока человек сам не прокрутит.
+ */
 function goBackup(nav: Nav) {
   nav.go('settings');
-  window.setTimeout(() => document.getElementById('backup')?.scrollIntoView({ block: 'start' }), 80);
+  let stop = false;
+  let want: number | null = null;
+  const cancel = () => (stop = true);
+  const events = ['wheel', 'touchstart', 'keydown', 'mousedown'] as const;
+  events.forEach((e) => window.addEventListener(e, cancel, { passive: true }));
+  const t0 = Date.now();
+  const tick = () => {
+    const el = document.getElementById('backup');
+    if (el && !stop) {
+      const top = el.getBoundingClientRect().top;
+      if (want === null || Math.abs(top - want) > 2) {
+        el.scrollIntoView({ block: 'start' });
+        want = el.getBoundingClientRect().top;
+      }
+    }
+    if (!stop && Date.now() - t0 < 1500) window.requestAnimationFrame(tick);
+    else events.forEach((e) => window.removeEventListener(e, cancel));
+  };
+  window.setTimeout(tick, 80);
 }
 
-export default function Overview({ snap, nav, act, fin, openFinance, mobile }: { snap: Snapshot; nav: Nav; act: OpActions; fin: FinanceActions; openFinance: (v: FinView) => void; mobile: boolean }) {
+export default function Overview({ snap, nav, act, fin, openFinance, mobile, ask }: { snap: Snapshot; nav: Nav; act: OpActions; fin: FinanceActions; openFinance: (v: FinView) => void; mobile: boolean; ask?: () => void }) {
   const [accountsOpen, setAccountsOpen] = useState(false);
   const mine = fmt(snap.mine);
   const comma = mine.indexOf(',');
@@ -105,6 +126,12 @@ export default function Overview({ snap, nav, act, fin, openFinance, mobile }: {
       <p className="note" style={{ fontSize: 15, lineHeight: '21px', margin: '-4px 0 -14px' }}>
         {weekdayLabel(snap.today)}
       </p>
+      {ask && (
+        <button type="button" className="askbar" onClick={ask}>
+          <Icon name="spark" size={18} />
+          <span>Спросить Claude о деньгах и поездках</span>
+        </button>
+      )}
       <section className="stack gap16">
         <div>
           <h1 className="note" style={{ fontSize: 15, lineHeight: '20px', fontWeight: 500 }}>

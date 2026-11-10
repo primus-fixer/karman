@@ -6,6 +6,7 @@
 mod ai;
 mod backup;
 mod claude;
+mod cloud;
 mod fx;
 mod guard;
 mod notify;
@@ -43,6 +44,8 @@ struct AppState {
     server: Mutex<Option<(Server, Pairing)>>,
     guard: Mutex<Guard>,
     notice: Mutex<Option<String>>,
+    /// Вход в облако по коду, который ждёт ввода.
+    cloud_login: Mutex<Option<cloud::Login>>,
 }
 
 impl AppState {
@@ -962,6 +965,8 @@ pub fn run() {
     }
     builder
         .plugin(tauri_plugin_notification::init())
+        // Страница входа в облако — в браузере системы (вызывается из ядра, экрану права не нужны).
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -986,11 +991,13 @@ pub fn run() {
                 server: Mutex::new(None),
                 guard: Mutex::new(guard),
                 notice: Mutex::new(notice),
+                cloud_login: Mutex::new(None),
             });
             fx::refresh_on_start(app.handle().clone(), today);
             notify::init(app.handle());
             notify::start_desktop_loop(app.handle().clone());
             backup::start_auto(app.handle().clone());
+            cloud::start(app.handle().clone());
             if notify::TRAY.load(std::sync::atomic::Ordering::Relaxed) {
                 #[cfg(windows)]
                 notify::tray(app.handle())?;
@@ -1064,6 +1071,15 @@ pub fn run() {
             ai::ai_set,
             ai::ai_check,
             ai::ai_order_scan,
+            ai::ai_phrase,
+            ai::ai_doc_scan,
+            ai::ai_trip_scan,
+            ai::ai_chat_send,
+            ai::ai_chat_view,
+            ai::ai_chat_reset,
+            ai::ai_trip_check,
+            ai::month_insights,
+            ai::ai_month_summary,
             backup::backup_status,
             backup::backup_password,
             backup::backup_every,
@@ -1074,6 +1090,17 @@ pub fn run() {
             backup::backup_inspect,
             backup::backup_restore,
             backup::backup_discard,
+            cloud::cloud_status,
+            cloud::cloud_login,
+            cloud::cloud_open_page,
+            cloud::cloud_app_passwords,
+            cloud::cloud_dav_login,
+            cloud::cloud_login_cancel,
+            cloud::cloud_login_check,
+            cloud::cloud_password,
+            cloud::cloud_sync_now,
+            cloud::cloud_every,
+            cloud::cloud_disconnect,
             notify::remind_status,
             notify::remind_desktop,
             guard::lock_status,

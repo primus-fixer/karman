@@ -1261,6 +1261,24 @@ textarea.field {
   gap: 6px;
 }
 
+/* Окно ввода: строка «Фразой» и кнопка «Заполнить». */
+.phrase {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+.phrase .field {
+  height: 44px;
+  font-size: 14px;
+}
+.phrase .btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 12px;
+}
+
 .chip {
   min-height: 42px;
   padding: 0 11px;
@@ -1927,4 +1945,159 @@ button.otday.open {
   font-size: 12px;
   line-height: 17px;
   white-space: pre;
+}
+
+/* ——— Спросить Claude ——— */
+.askbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 46px;
+  margin-bottom: -10px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 23px;
+  background: var(--surf);
+  color: var(--ink2);
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+}
+.chatsheet {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  background: var(--surf);
+}
+.desktop .chatsheet {
+  flex: 0 0 400px;
+  padding: 24px 20px 16px;
+  border-left: 1px solid var(--line);
+}
+.phone .chatsheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: 20px;
+  z-index: 5;
+  padding: 12px 14px max(12px, env(safe-area-inset-bottom));
+  border-radius: 22px 22px 0 0;
+}
+.chatlog {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.chatmsg {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 92%;
+  padding: 10px 12px;
+  border-radius: 14px;
+  font-size: 15px;
+  line-height: 21px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chatmsg.user {
+  align-self: flex-end;
+  background: var(--ownBg);
+}
+.chatmsg.assistant {
+  align-self: flex-start;
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+.chatmsg.error {
+  color: var(--warn);
+}
+.chatacts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+}
+.chatin {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: end;
+}
+.chatin textarea {
+  min-height: 46px;
+  max-height: 140px;
+  resize: none;
+  font-size: 15px;
+}
+.chatin .btn {
+  height: 46px;
+}
+@media (max-width: 1100px) {
+  .desktop .chatsheet {
+    flex-basis: 340px;
+    padding: 20px 16px 14px;
+  }
+}
+
+/* Находки Claude: что исправить, что проверить, что в порядке. */
+.findings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.findings li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+  line-height: 20px;
+}
+.findings .fmark {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--bg);
+  font-size: 12px;
+  font-weight: 600;
+}
+.findings li.warn .fmark {
+  background: var(--warn);
+  color: var(--surf);
+}
+
+
+/* ——— Облако ——— */
+.logincode {
+  align-self: flex-start;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-size: 28px;
+  line-height: 36px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  font-variant-numeric: tabular-nums;
+  user-select: all;
+}
+
+.confirmbox {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
 }

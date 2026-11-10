@@ -4,26 +4,64 @@
 //! Android Keystore на телефоне) и лежит в зашифрованной базе среди настроек устройства.
 //! В обмен по Wi-Fi и в резервные копии ключ не попадает.
 //!
-//! В Anthropic уходит только то, что человек отправил кнопкой «Распознать»: листы наряда
-//! и даты поездки. Распознанное ничего не меняет, пока человек не проверит и не сохранит.
+//! В Anthropic уходит только то, что человек отправил сам: листы наряда или документа кнопкой
+//! «Распознать», фраза для окна ввода, вопрос в «Спросить Claude» (и данные, которые Claude
+//! запросит инструментами «Кармана»), данные поездки или месяца для проверки и сводки.
+//! Распознанное ничего не меняет, пока человек не проверит и не сохранит.
 
+use crate::claude::{run_tool, Caller};
 use crate::{day, err, AppState, Res};
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
-use karman_core::ai::{self, Doc, OrderScan, Usage};
+use karman_core::ai::{self, Doc, ExpenseDraft, Findings, OrderScan, PhraseDraft, TripDraft, Usage};
 use karman_core::db::Store;
+use karman_core::insights::{self, Insights};
 use karman_core::overtime::Rules;
+use karman_core::{book, tools};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
+use std::sync::Mutex;
 use std::time::Duration;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 const META_KEY: &str = "ai.key";
 const META_WORKSPACE: &str = "ai.workspace";
-const META_ORDERS: &str = "ai.orders";
 const META_USAGE: &str = "ai.usage";
 const META_CHECKED: &str = "ai.checked";
+
+/// Переключатели функций ИИ на этом устройстве: (функция, ключ настройки, включена ли по умолчанию).
+/// Запись из чата по умолчанию выключена.
+const FEATURES: [(&str, &str, bool); 6] = [
+    ("orders", "ai.orders", true),
+    ("docs", "ai.docs", true),
+    ("phrase", "ai.phrase", true),
+    ("chat", "ai.chat", true),
+    ("write", "ai.write", false),
+    ("review", "ai.review", true),
+];
+
+fn feature_on(st: &Store, name: &str) -> bool {
+    let Some((_, key, default)) = FEATURES.iter().find(|f| f.0 == name) else { return false };
+    match st.meta(key).ok().flatten().as_deref() {
+        Some("1") => true,
+        Some("0") => false,
+        _ => *default,
+    }
+}
+
+/// Разрешена ли запись для Claude в «Спросить Claude».
+pub fn chat_write_on(st: &Store) -> bool {
+    feature_on(st, "write")
+}
+
+fn need(st: &Store, name: &str, what: &str) -> Res<()> {
+    if feature_on(st, name) {
+        Ok(())
+    } else {
+        Err(format!("{what} выключено: Настройки → ИИ"))
+    }
+}
 
 /// Листов в одном запросе: больше двадцати — у Claude API строже ограничения на размер снимков.
 const MAX_FILES: usize = 20;
@@ -54,10 +92,14 @@ pub struct AiStatus {
     workspace: String,
     /// Когда ключ последний раз проверен успешно (секунды Unix).
     checked: Option<i64>,
-    /// Распознавание нарядов включено.
+    /// Включённые функции: orders, docs, phrase, chat, write, review.
+    features: BTreeMap<&'static str, bool>,
+    /// Распознавание нарядов включено (для экрана нарядов).
     orders: bool,
     /// Модель для документов.
     model: &'static str,
+    /// Модель для вопросов, проверки отчёта и сводки.
+    chat_model: &'static str,
     month: UsageView,
     total: UsageView,
 }
@@ -88,8 +130,10 @@ fn status(st: &Store, today: Option<&str>) -> Res<AiStatus> {
         tail: key.as_deref().map(ai::key_tail).unwrap_or_default(),
         workspace: st.meta(META_WORKSPACE).map_err(err)?.unwrap_or_default(),
         checked: st.meta(META_CHECKED).map_err(err)?.and_then(|t| t.parse().ok()),
-        orders: st.meta(META_ORDERS).map_err(err)?.as_deref() != Some("0"),
+        features: FEATURES.iter().map(|f| (f.0, feature_on(st, f.0))).collect(),
+        orders: feature_on(st, "orders"),
         model: ai::model_title(ai::MODEL_DOCS),
+        chat_model: ai::model_title(ai::MODEL_CHAT),
         month,
         total,
     })
@@ -193,10 +237,12 @@ pub fn ai_workspace_set(state: State<AppState>, today: String, workspace: String
     status(&st, Some(&today))
 }
 
+/// Включить или выключить функцию: orders, docs, phrase, chat, write, review.
 #[tauri::command]
-pub fn ai_set(state: State<AppState>, today: String, orders: bool) -> Res<AiStatus> {
+pub fn ai_set(state: State<AppState>, today: String, feature: String, on: bool) -> Res<AiStatus> {
+    let (_, key, _) = FEATURES.iter().find(|f| f.0 == feature).ok_or_else(|| format!("нет функции «{feature}»"))?;
     let st = state.store()?;
-    st.set_meta(META_ORDERS, if orders { "1" } else { "0" }).map_err(err)?;
+    st.set_meta(key, if on { "1" } else { "0" }).map_err(err)?;
     status(&st, Some(&today))
 }
 
@@ -226,9 +272,7 @@ pub async fn ai_order_scan(state: State<'_, AppState>, today: String, trip: Stri
     let (key, ws) = credentials(&state)?;
     let (files, t, who, rules) = {
         let st = state.store()?;
-        if st.meta(META_ORDERS).map_err(err)?.as_deref() == Some("0") {
-            return Err("Распознавание нарядов выключено: Настройки → ИИ".into());
-        }
+        need(&st, "orders", "Распознавание нарядов")?;
         let t = st.trips().map_err(err)?.into_iter().find(|t| t.id == trip).ok_or("Поездка не найдена")?;
         let settings = st.settings().map_err(err)?;
         let mut files: Vec<(String, Vec<u8>)> = Vec::new();
@@ -268,6 +312,346 @@ pub async fn ai_order_scan(state: State<'_, AppState>, today: String, trip: Stri
     Ok(Scan { scan, usd })
 }
 
+/// Файлы документа из базы: только снимки и PDF, не больше 20 листов и 24 МБ за раз.
+fn load_files(st: &Store, att: &[String], what: &str) -> Res<Vec<(String, Vec<u8>)>> {
+    let mut files = Vec::new();
+    let mut size = 0usize;
+    for id in att.iter().take(MAX_FILES + 1) {
+        let (mime, data) = st.blob(id).map_err(err)?.ok_or_else(|| format!("Снимок {what} ещё не пришёл с другого устройства — дождитесь обмена"))?;
+        if !ai::doc_supported(&mime) {
+            continue;
+        }
+        size += data.len();
+        files.push((mime, data));
+    }
+    if files.is_empty() {
+        return Err(format!("Добавьте снимок или PDF {what} — распознавать нечего"));
+    }
+    if files.len() > MAX_FILES {
+        return Err(format!("Не больше {MAX_FILES} листов за раз"));
+    }
+    if size > MAX_BYTES {
+        return Err(format!("Файлы {what} слишком большие для одного запроса — уберите лишние листы"));
+    }
+    Ok(files)
+}
+
+fn docs_of(files: &[(String, Vec<u8>)]) -> Vec<Doc<'_>> {
+    files.iter().map(|(m, d)| Doc { mime: m, data: d }).collect()
+}
+
+/// Один запрос с ответом по схеме: учтён в счётчике, даже если ответ потом не разобрался.
+async fn ask(state: &AppState, today: &str, model: &'static str, body: Value, secs: u64) -> Res<(String, f64)> {
+    let (key, ws) = credentials(state)?;
+    let resp = tauri::async_runtime::spawn_blocking(move || send(&key, &ws, &body, secs)).await.map_err(err)??;
+    let usd = count(&*state.store()?, today, model, ai::usage(&resp));
+    Ok((ai::reply_text(&resp)?, usd))
+}
+
+#[derive(Serialize)]
+pub struct Phrase {
+    #[serde(flatten)]
+    draft: PhraseDraft,
+    usd: f64,
+}
+
+/// Фраза → черновик окна ввода (Claude Haiku 5.5). Ничего не записывает: сохраняет человек.
+#[tauri::command]
+pub async fn ai_phrase(state: State<'_, AppState>, today: String, text: String) -> Res<Phrase> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("Напишите, что записать: например «такси 640 до объекта, чек есть»".into());
+    }
+    if text.chars().count() > 500 {
+        return Err("Слишком длинная фраза — одна операция за раз".into());
+    }
+    let d = day(&today)?;
+    let (body, snap) = {
+        let st = state.store()?;
+        need(&st, "phrase", "Ввод фразой")?;
+        let snap = book::snapshot(&st, d).map_err(err)?;
+        let mut ctx = tools::read(&st, d, "categories", &json!({}))?;
+        let trips: Vec<_> = snap.trips.iter().map(|t| t.trip.clone()).collect();
+        if let Some(t) = tools::active_trip(&trips, d) {
+            ctx["active_trip"] = json!(t.id);
+        }
+        (ai::phrase_request(&text, d, &ctx), snap)
+    };
+    let (reply, usd) = ask(&state, &today, ai::MODEL_SHORT, body, 60).await?;
+    Ok(Phrase { draft: ai::phrase_draft(&ai::parse_phrase(&reply)?, &snap), usd })
+}
+
+#[derive(Serialize)]
+pub struct ExpenseScan {
+    #[serde(flatten)]
+    draft: ExpenseDraft,
+    usd: f64,
+}
+
+/// Билет, счёт гостиницы или чек → сумма, дата, статья и комментарий (Claude Opus 5.5).
+#[tauri::command]
+pub async fn ai_doc_scan(state: State<'_, AppState>, today: String, att: Vec<String>, trip: Option<String>) -> Res<ExpenseScan> {
+    let d = day(&today)?;
+    let body = {
+        let st = state.store()?;
+        need(&st, "docs", "Распознавание документов")?;
+        let files = load_files(&st, &att, "документа")?;
+        let dates = trip.and_then(|id| st.trips().ok()?.into_iter().find(|t| t.id == id)).map(|t| (t.start, t.end));
+        ai::expense_request(&docs_of(&files), d, dates)
+    };
+    let (reply, usd) = ask(&state, &today, ai::MODEL_DOCS, body, 240).await?;
+    let draft = ai::expense_draft(&ai::parse_expense(&reply)?);
+    if draft.not_document {
+        return Err("Claude не нашёл на снимке билета, счёта или чека".into());
+    }
+    Ok(ExpenseScan { draft, usd })
+}
+
+#[derive(Serialize)]
+pub struct TripScan {
+    #[serde(flatten)]
+    draft: TripDraft,
+    usd: f64,
+}
+
+/// Приказ или заявка на командировку → поля новой поездки (Claude Opus 5.5).
+#[tauri::command]
+pub async fn ai_trip_scan(state: State<'_, AppState>, today: String, att: Vec<String>) -> Res<TripScan> {
+    let d = day(&today)?;
+    let body = {
+        let st = state.store()?;
+        need(&st, "docs", "Распознавание документов")?;
+        let files = load_files(&st, &att, "документа")?;
+        ai::trip_request(&docs_of(&files), d)
+    };
+    let (reply, usd) = ask(&state, &today, ai::MODEL_DOCS, body, 240).await?;
+    let draft = ai::trip_draft(&ai::parse_trip_doc(&reply)?);
+    if draft.not_document {
+        return Err("Claude не нашёл на снимке приказа или заявки на командировку".into());
+    }
+    Ok(TripScan { draft, usd })
+}
+
+// ——— «Спросить Claude» ———
+
+#[derive(Clone, Serialize)]
+pub struct ChatItem {
+    /// user — человек, assistant — Claude.
+    role: &'static str,
+    text: String,
+    /// Что Claude записал за этот ответ — каждое отменяется «Вернуть».
+    actions: Vec<String>,
+    error: bool,
+}
+
+/// Разговор живёт в памяти, пока открыт «Карман»: история сообщений для Claude API как есть
+/// (с блоками рассуждения) и то, что видно на экране.
+struct Chat {
+    system: String,
+    messages: Vec<Value>,
+    items: Vec<ChatItem>,
+    usd: f64,
+}
+
+static CHAT: Mutex<Chat> = Mutex::new(Chat { system: String::new(), messages: Vec::new(), items: Vec::new(), usd: 0.0 });
+
+/// Шагов с инструментами на один вопрос — не больше.
+const MAX_STEPS: usize = 8;
+
+#[derive(Serialize)]
+pub struct ChatView {
+    items: Vec<ChatItem>,
+    /// Сколько стоил разговор — оценка.
+    usd: f64,
+    /// Разрешена ли запись.
+    write: bool,
+}
+
+fn chat_view(chat: &Chat, write: bool) -> ChatView {
+    ChatView { items: chat.items.clone(), usd: chat.usd, write }
+}
+
+fn chat_turn(app: &AppHandle, today: &str, text: &str) -> Res<ChatView> {
+    let state = app.state::<AppState>();
+    let d = day(today)?;
+    let (key, ws) = {
+        let st = state.store()?;
+        need(&st, "chat", "«Спросить Claude»")?;
+        let key = stored_key(&st)?.ok_or("Сначала введите ключ API Claude: Настройки → ИИ")?;
+        (key, st.meta(META_WORKSPACE).map_err(err)?.unwrap_or_default())
+    };
+    let mut guard = CHAT.lock().map_err(err)?;
+    let chat = &mut *guard;
+    if chat.messages.is_empty() {
+        chat.system = ai::chat_system(d);
+    }
+    let start = chat.messages.len();
+    chat.messages.push(json!({ "role": "user", "content": text }));
+    chat.items.push(ChatItem { role: "user", text: text.to_string(), actions: Vec::new(), error: false });
+    let mut actions = Vec::new();
+    let mut outcome: Res<String> = Err(format!("Claude не уложился в {MAX_STEPS} шагов — спросите проще или по частям"));
+    for _ in 0..MAX_STEPS {
+        let body = ai::chat_request(&chat.system, &chat.messages);
+        let resp = match send(&key, &ws, &body, 120) {
+            Ok(r) => r,
+            Err(e) => {
+                outcome = Err(e);
+                break;
+            }
+        };
+        chat.usd += count(&*state.store()?, today, ai::MODEL_CHAT, ai::usage(&resp));
+        let calls = ai::tool_calls(&resp);
+        chat.messages.push(json!({ "role": "assistant", "content": resp["content"].clone() }));
+        if calls.is_empty() {
+            outcome = match resp["stop_reason"].as_str() {
+                Some("refusal") => Err("Claude отказался отвечать на этот вопрос".into()),
+                _ => Ok(ai::answer_text(&resp)),
+            };
+            break;
+        }
+        let results: Vec<Value> = calls
+            .iter()
+            .map(|(id, name, input)| match run_tool(app, Caller::Chat, name, input) {
+                Ok(v) => {
+                    if tools::is_write(name) {
+                        if let Some(t) = v["done"].as_str() {
+                            actions.push(t.to_string());
+                        }
+                    }
+                    json!({ "type": "tool_result", "tool_use_id": id, "content": v.to_string() })
+                }
+                Err(e) => json!({ "type": "tool_result", "tool_use_id": id, "content": e, "is_error": true }),
+            })
+            .collect();
+        chat.messages.push(json!({ "role": "user", "content": results }));
+    }
+    match outcome {
+        Ok(answer) => {
+            let answer = if answer.is_empty() { "Готово.".to_string() } else { answer };
+            chat.items.push(ChatItem { role: "assistant", text: answer, actions, error: false });
+        }
+        Err(e) => {
+            // Разговор для Claude возвращается к началу вопроса; записанное остаётся — с «Вернуть».
+            chat.messages.truncate(start);
+            chat.items.push(ChatItem { role: "assistant", text: e, actions, error: true });
+        }
+    }
+    let write = chat_write_on(&*state.store()?);
+    Ok(chat_view(chat, write))
+}
+
+/// Вопрос Claude (Sonnet 5.5) о деньгах и поездках. Данные Claude получает только через
+/// инструменты «Кармана» — те же, что у коннектора; запись — если разрешена.
+#[tauri::command]
+pub async fn ai_chat_send(app: AppHandle, today: String, text: String) -> Res<ChatView> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("Напишите вопрос".into());
+    }
+    if text.chars().count() > 2000 {
+        return Err("Слишком длинный вопрос".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || chat_turn(&app, &today, &text)).await.map_err(err)?
+}
+
+#[tauri::command]
+pub fn ai_chat_view(state: State<AppState>) -> Res<ChatView> {
+    let write = chat_write_on(&*state.store()?);
+    Ok(chat_view(&*CHAT.lock().map_err(err)?, write))
+}
+
+/// Новый разговор: прежний забывается.
+#[tauri::command]
+pub fn ai_chat_reset(state: State<AppState>) -> Res<ChatView> {
+    let write = chat_write_on(&*state.store()?);
+    let mut chat = CHAT.lock().map_err(err)?;
+    *chat = Chat { system: String::new(), messages: Vec::new(), items: Vec::new(), usd: 0.0 };
+    Ok(chat_view(&chat, write))
+}
+
+// ——— Проверка отчёта и сводка месяца ———
+
+fn rub_text(k: i64) -> String {
+    karman_core::money::rub_text(k)
+}
+
+/// Что «Карман» находит сам: расходы без документов, превышения по статьям, долг, снимков нет.
+fn trip_checks(tv: &book::TripView, snap: &book::Snapshot) -> Vec<String> {
+    use karman_core::trip::{DocKind, OpKind};
+    let mut out = Vec::new();
+    for o in snap.ops.iter().filter(|o| o.trip.as_deref() == Some(tv.trip.id.as_str()) && o.kind == OpKind::Work) {
+        match o.doc {
+            None => out.push(format!("Без документа: {}, {} ({}) — в отчёт не войдёт, идёт из суточных", o.title, rub_text(o.amount), o.date.dotted())),
+            Some(DocKind::Photo) | Some(DocKind::File) if o.att.is_empty() => out.push(format!("Чек отмечен, но снимка нет: {}, {} ({})", o.title, rub_text(o.amount), o.date.dotted())),
+            _ => {}
+        }
+    }
+    for r in tv.rows.iter().filter(|r| r.over > 0) {
+        out.push(format!("Статья {} {}: расход {} больше заявки {} на {}", r.code, r.name, rub_text(r.fact), rub_text(r.plan), rub_text(r.over)));
+    }
+    if tv.s.debt > 0 {
+        out.push(format!("Долг перед компанией: {}", rub_text(tv.s.debt)));
+    }
+    out.truncate(30);
+    out
+}
+
+#[derive(Serialize)]
+pub struct Review {
+    #[serde(flatten)]
+    findings: Findings,
+    /// Что нашёл сам «Карман».
+    checks: Vec<String>,
+    usd: f64,
+}
+
+/// Проверка авансового отчёта поездки перед сдачей (Claude Sonnet 5.5).
+#[tauri::command]
+pub async fn ai_trip_check(state: State<'_, AppState>, today: String, trip: String) -> Res<Review> {
+    let d = day(&today)?;
+    let (body, checks) = {
+        let st = state.store()?;
+        need(&st, "review", "Проверка отчёта и сводка")?;
+        let data = tools::read(&st, d, "trip", &json!({ "id": trip }))?;
+        let snap = book::snapshot(&st, d).map_err(err)?;
+        let tv = snap.trips.iter().find(|t| t.trip.id == trip).ok_or("Поездка не найдена")?;
+        let checks = trip_checks(tv, &snap);
+        (ai::trip_check_request(&data, &checks), checks)
+    };
+    let (reply, usd) = ask(&state, &today, ai::MODEL_CHAT, body, 120).await?;
+    Ok(Review { findings: ai::parse_findings(&reply)?, checks, usd })
+}
+
+/// Сводка месяца без ИИ: траты против обычного, подписки, крупные покупки, прогноз.
+#[tauri::command]
+pub fn month_insights(state: State<AppState>, today: String) -> Res<Insights> {
+    let st = state.store()?;
+    let snap = book::snapshot(&st, day(&today)?).map_err(err)?;
+    Ok(insights::insights(&snap))
+}
+
+#[derive(Serialize)]
+pub struct MonthSummary {
+    #[serde(flatten)]
+    findings: Findings,
+    usd: f64,
+}
+
+/// Сводка месяца словами: Claude (Sonnet 5.5) пересказывает цифры, посчитанные «Карманом».
+#[tauri::command]
+pub async fn ai_month_summary(state: State<'_, AppState>, today: String) -> Res<MonthSummary> {
+    let d = day(&today)?;
+    let body = {
+        let st = state.store()?;
+        need(&st, "review", "Проверка отчёта и сводка")?;
+        let snap = book::snapshot(&st, d).map_err(err)?;
+        let i = insights::insights(&snap);
+        ai::month_request(&insights::facts(&i, &snap))
+    };
+    let (reply, usd) = ask(&state, &today, ai::MODEL_CHAT, body, 120).await?;
+    Ok(MonthSummary { findings: ai::parse_findings(&reply)?, usd })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,15 +660,20 @@ mod tests {
     fn usage_is_counted_by_month() {
         let dir = tempfile::tempdir().unwrap();
         let st = Store::open(&dir.path().join("t.db"), &[7u8; 32], "dev").unwrap();
-        let u = Usage { input: 18_000, output: 2_500 };
+        let u = Usage { input: 18_000, output: 2_500, ..Usage::default() };
         let usd = count(&st, "2026-11-10", ai::MODEL_DOCS, u);
-        count(&st, "2026-11-11", ai::MODEL_SHORT, Usage { input: 20, output: 5 });
+        count(&st, "2026-11-11", ai::MODEL_SHORT, Usage { input: 20, output: 5, ..Usage::default() });
         count(&st, "2026-10-31", ai::MODEL_DOCS, u);
         let s = status(&st, Some("2026-11-20")).unwrap();
         assert!((usd - 0.122).abs() < 1e-9);
         assert_eq!((s.month.n, s.total.n), (2, 3));
         assert!((s.total.usd - (0.244 + 0.0000045)).abs() < 1e-9);
         assert!(!s.key && s.orders && s.checked.is_none());
+        assert_eq!(s.features.get("write"), Some(&false), "запись из чата по умолчанию выключена");
+        assert!(s.features.iter().filter(|(k, _)| **k != "write").all(|(_, v)| *v));
+        st.set_meta("ai.write", "1").unwrap();
+        st.set_meta("ai.docs", "0").unwrap();
+        assert!(chat_write_on(&st) && !feature_on(&st, "docs") && need(&st, "docs", "Документы").unwrap_err().contains("выключено"));
     }
 
     #[test]

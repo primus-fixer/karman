@@ -199,7 +199,7 @@ const EVERY: { id: BackupStatus['every']; label: string }[] = [
 ];
 
 /** Пароль копии: два поля, не короче восьми символов. */
-function PasswordForm({ first, onSaved, onCancel }: { first: boolean; onSaved: (s: BackupStatus) => void; onCancel?: () => void }) {
+function PasswordForm({ first, cloud, onSaved, onCancel }: { first: boolean; cloud: boolean; onSaved: (s: BackupStatus) => void; onCancel?: () => void }) {
   const [a, setA] = useState('');
   const [b, setB] = useState('');
   const [busy, setBusy] = useState(false);
@@ -232,6 +232,7 @@ function PasswordForm({ first, onSaved, onCancel }: { first: boolean; onSaved: (
       <p className="note">
         Не короче 8 символов, лучше — фраза из нескольких слов. Пароль нигде не хранится и не восстанавливается: забудете — копию не открыть.
         {first ? '' : ' Прежние копии открываются прежним паролем.'}
+        {cloud ? ' Этим же паролем зашифровано облако: новый пароль уйдёт туда при ближайшем обмене.' : ''}
       </p>
       <input className="field" type="password" autoComplete="new-password" aria-label="Новый пароль копии" placeholder="Пароль копии" value={a} onChange={(e) => setA(e.target.value)} />
       <input className="field" type="password" autoComplete="new-password" aria-label="Пароль копии ещё раз" placeholder="Ещё раз" value={b} onChange={(e) => setB(e.target.value)} />
@@ -329,7 +330,7 @@ export default function BackupSection({ snap, mobile, run, flash }: { snap: Snap
           <div className="setrow" style={{ cursor: 'default' }}>
             <span>
               <span>Пароль копии</span>
-              <span className={'note' + (st && !st.password ? ' warn' : '')}>{st ? (st.password ? 'Задан' : 'Не задан — без него копии не делаются') : '…'}</span>
+              <span className={'note' + (st && !st.password ? ' warn' : '')}>{st ? (st.password ? (st.cloud ? 'Задан, им же зашифровано облако' : 'Задан') : 'Не задан — без него копии не делаются') : '…'}</span>
             </span>
             {st?.password && !changing && (
               <button type="button" className="btn ghost" style={{ flex: 'none' }} onClick={() => setChanging(true)}>
@@ -340,6 +341,7 @@ export default function BackupSection({ snap, mobile, run, flash }: { snap: Snap
           {st && (!st.password || changing) && (
             <PasswordForm
               first={!st.password}
+              cloud={st.cloud}
               onSaved={(s) => {
                 setSt(s);
                 setChanging(false);
@@ -391,7 +393,7 @@ export default function BackupSection({ snap, mobile, run, flash }: { snap: Snap
       ) : (
         <>
           <p className="note" style={{ marginBottom: 8 }}>
-            Копии делает «Карман» на компьютере: задайте там пароль копии. Записи телефона попадают в копию после синхронизации по Wi-Fi, а новый телефон получит всё обратно, когда вы свяжете его с компьютером.
+            Копии делает «Карман» на компьютере: задайте там пароль копии. Записи телефона попадают в копию после обмена по Wi-Fi или через облако, а новый телефон получит всё обратно из облака или от компьютера.
           </p>
           <div className="row" style={{ alignItems: 'baseline' }}>
             <span>Последняя копия</span>

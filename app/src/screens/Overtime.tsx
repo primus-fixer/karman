@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { api, LOCKED, message, type AiDay, type AiRule, type Attachment, type OrderScan, type OtExported, type OtHours, type OtMonth, type OtPay, type OtRow, type OtRules, type OtSheet, type Snapshot, type Trip, type TripView, type WorkDay, type WorkOrder } from '../api';
 import { costText } from './Ai';
+import { aiOn, useAi } from '../aiState';
 import { NB, addDays, amountText, dMon, dNum, dRange, monthName, parseAmount, plural, rub, toDate, todayIso } from '../format';
 import { ORDER_PHOTO, attachFile, pickFiles } from '../media';
 import { ErrorText, Icon, Seg, Thumbs } from '../ui';
@@ -740,17 +741,8 @@ function Orders({ tv, act }: { tv: TripView; act: OtActions }) {
   const orders = tv.ot.orders;
   const [form, setForm] = useState<WorkOrder | null>(null);
   const [review, setReview] = useState<{ base: WorkOrder; scan: OrderScan } | null>(null);
-  const [ai, setAi] = useState<AiState>({ ready: false, key: true });
-  useEffect(() => {
-    let alive = true;
-    api.aiStatus().then(
-      (s) => alive && setAi({ ready: s.key && s.orders, key: s.key }),
-      () => undefined,
-    );
-    return () => {
-      alive = false;
-    };
-  }, []);
+  const status = useAi();
+  const ai: AiState = { ready: aiOn(status, 'orders'), key: status ? status.key : true };
   const scanned = (base: WorkOrder, scan: OrderScan) => {
     setForm(null);
     setReview({ base, scan });
