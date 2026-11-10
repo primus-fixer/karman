@@ -41,13 +41,25 @@ export default function ChatSheet({ snap, isPhone, onClose, locked }: { snap: Sn
     setError(null);
     setText('');
     // Вопрос виден сразу, пока Claude думает.
-    setView((v) => (v ? { ...v, items: [...v.items, { role: 'user', text: question, actions: [], error: false }] } : v));
+    setView((v) => (v ? { ...v, items: [...v.items, { role: 'user', text: question, actions: [], error: false, confirm: [] }] } : v));
     try {
       setView(await api.aiChatSend(question));
     } catch (e) {
       if (message(e) === LOCKED) return locked();
       setError(message(e));
       api.aiChatView().then(setView, () => undefined);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const decide = async (id: number, yes: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      setView(await api.aiChatConfirm(id, yes));
+    } catch (e) {
+      if (message(e) === LOCKED) return locked();
+      setError(message(e));
     } finally {
       setBusy(false);
     }
@@ -110,6 +122,23 @@ export default function ChatSheet({ snap, isPhone, onClose, locked }: { snap: Sn
                 <span className="note">Отменить — кнопкой «Вернуть» в сообщении внизу или в Настройки → Claude</span>
               </span>
             )}
+            {(m.confirm ?? []).map((c) => (
+              <span key={c.id} className="chatconfirm" role="group" aria-label="Claude предлагает удалить">
+                <span>{c.text}</span>
+                {c.state === 'wait' ? (
+                  <span className="wrap">
+                    <button type="button" className="btn warn" disabled={busy} onClick={() => decide(c.id, true)}>
+                      {c.button}
+                    </button>
+                    <button type="button" className="btn ghost" disabled={busy} onClick={() => decide(c.id, false)}>
+                      Оставить
+                    </button>
+                  </span>
+                ) : (
+                  <span className="note">{c.state === 'done' ? '✓ Сделано — отменить можно кнопкой «Вернуть»' : c.state === 'kept' ? 'Оставлено как есть' : 'Не получилось'}</span>
+                )}
+              </span>
+            ))}
           </div>
         ))}
         {busy && <div className="chatmsg assistant faint">Claude думает…</div>}

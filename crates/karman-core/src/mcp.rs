@@ -28,6 +28,22 @@ fn fail(id: &Value, code: i64, message: &str) -> String {
 }
 
 /// Описание инструментов для `tools/list`.
+/// Доказательство ключа связи посредника (`karman --mcp`) и запущенного «Кармана»: MAC от одноразового
+/// числа другой стороны. Сам ключ по сети не ходит, и программа, занявшая порт, ничего не узнает.
+pub fn link_proof(token: &str, role: &str, nonce: &str) -> String {
+    use blake2::digest::consts::U32;
+    use blake2::digest::Mac;
+    // Ключ BLAKE2b — не длиннее 64 байт (ключ связи — 64 шестнадцатеричных знака).
+    if token.is_empty() || token.len() > 64 {
+        return String::new();
+    }
+    let Ok(mut mac) = blake2::Blake2bMac::<U32>::new_with_salt_and_personal(token.as_bytes(), &[], b"karman-link") else { return String::new() };
+    mac.update(role.as_bytes());
+    mac.update(b"|");
+    mac.update(nonce.as_bytes());
+    mac.finalize().into_bytes().iter().map(|b| format!("{b:02x}")).collect()
+}
+
 pub fn tool_list() -> Value {
     let tools: Vec<Value> = tools::list()
         .into_iter()
@@ -106,6 +122,20 @@ pub fn handle(line: &str, version: &str, call: &mut dyn FnMut(&str, &Value) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn link_proof_depends_on_key_role_and_nonce() {
+        let token = "ab".repeat(32);
+        let p = link_proof(&token, "karman", "01".repeat(32).as_str());
+        assert_eq!(p.len(), 64);
+        assert_eq!(p, link_proof(&token, "karman", "01".repeat(32).as_str()), "одинаково для одних и тех же данных");
+        assert_ne!(p, link_proof(&token, "bridge", "01".repeat(32).as_str()), "у сторон разные доказательства");
+        assert_ne!(p, link_proof(&token, "karman", "02".repeat(32).as_str()));
+        assert_ne!(p, link_proof(&"cd".repeat(32), "karman", "01".repeat(32).as_str()));
+        assert!(!p.contains(&token));
+        assert_eq!(link_proof(&"x".repeat(65), "karman", "01"), "", "ключ длиннее 64 байт не подходит");
+        assert_eq!(link_proof("", "karman", "01"), "");
+    }
 
     fn run(line: &str) -> Value {
         let mut calls = Vec::new();

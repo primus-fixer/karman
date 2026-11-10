@@ -660,6 +660,14 @@ fn set_password(app: &AppHandle, password: &str) -> Res<Status> {
         (open(&st)?, meta(&st, crate::backup::META_KEY))
     };
     let existing = kc::read_key_file(&session).map_err(err)?;
+    // Новое облако — новый пароль на Диске: файлы там может скачать любой, кто войдёт в аккаунт,
+    // поэтому самые простые пароли не годятся. Пароль облака, которое уже есть, не проверяем.
+    if existing.is_none() {
+        if let Err(e) = karman_core::backup::check_new_password(password) {
+            let hint = if cfg!(desktop) && backup_meta.is_some() { " Смените пароль копий в разделе «Резервная копия» и подключите облако снова." } else { "" };
+            return Err(format!("{e}{hint}"));
+        }
+    }
     // На компьютере пароль облака и пароль копий — один и тот же.
     let mut set_backup = false;
     let mut notice = None;
