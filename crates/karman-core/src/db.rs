@@ -265,6 +265,20 @@ impl Store {
         Ok(out)
     }
 
+    /// События одного устройства с номерами from..=to, по порядку.
+    pub fn events_range(&self, device: &str, from: u64, to: u64) -> Result<Vec<Event>> {
+        let mut st = self.conn.prepare("SELECT device, seq, lamport, body FROM events WHERE device = ?1 AND seq BETWEEN ?2 AND ?3 ORDER BY seq")?;
+        let rows = st.query_map(params![device, from as i64, to as i64], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (device, seq, lamport, body) = row?;
+            out.push(Event { device, seq: seq as u64, lamport: lamport as u64, body: serde_json::from_str(&body)? });
+        }
+        Ok(out)
+    }
+
     fn items<T: DeserializeOwned>(&self, kind: &str) -> Result<Vec<T>> {
         let mut st = self.conn.prepare("SELECT body FROM items WHERE kind = ?1 AND deleted = 0 AND body IS NOT NULL")?;
         let rows = st.query_map([kind], |r| r.get::<_, String>(0))?;

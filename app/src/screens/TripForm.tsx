@@ -1,8 +1,13 @@
 import { useState, type FormEvent } from 'react';
-import type { Snapshot, Trip } from '../api';
+import { api, message, type Attachment, type Snapshot, type Trip } from '../api';
+import { aiOn, useAi } from '../aiState';
 import { addDays, amountText, diffDays, parseAmount, rub } from '../format';
 import { statusIndex } from '../logic';
+import { attachFile, pickFiles } from '../media';
 import { ErrorText, Icon } from '../ui';
+
+/** Снимок приказа или заявки — как наряд: мелкий текст должен читаться. */
+const DOC_PHOTO = { side: 2200, name: 'приказ.jpg' };
 
 const ARTICLES = [
   ['03.01.04.01', 'Билеты'],
@@ -56,14 +61,19 @@ function toDraft(t: Trip | null, today: string): Draft {
 export default function TripForm({
   snap,
   tripId,
+  mobile = false,
   onSave,
   onCancel,
 }: {
   snap: Snapshot;
   tripId: string | null;
+  /** Телефон: приказ можно снять камерой. */
+  mobile?: boolean;
   onSave: (trip: Trip, isNew: boolean) => Promise<boolean>;
   onCancel: () => void;
 }) {
+  const ai = useAi();
+  const [scan, setScan] = useState<{ busy: boolean; note: string; warn: boolean } | null>(null);
   const existing = tripId ? snap.trips.find((x) => x.trip.id === tripId)?.trip ?? null : null;
   const [d, setD] = useState<Draft>(() => toDraft(existing, snap.today));
   const [factTouched, setFactTouched] = useState(!!existing);
@@ -86,6 +96,38 @@ export default function TripForm({
   const perDiemHint = planDays > 0 ? planDays * rate : 0;
   const st = existing ? statusIndex(existing.status) : 0;
   const issued = existing ? snap.trips.find((x) => x.trip.id === existing.id)?.s.issued ?? 0 : 0;
+
+  /** Приказ или заявка → поля формы (Claude Opus 5.5). Сохраняет человек. */
+  const fromDocument = async (camera: boolean) => {
+    const files = await pickFiles({ accept: camera ? 'image/*' : 'image/*,application/pdf', capture: camera, multiple: !camera });
+    if (!files.length) return;
+    setScan({ busy: true, note: 'Claude читает документ — обычно до минуты…', warn: false });
+    try {
+      const att: Attachment[] = [];
+      for (const f of files) att.push(await attachFile(f, DOC_PHOTO));
+      const r = await api.aiTripScan(att.map((a) => a.id));
+      setD((x) => ({
+        ...x,
+        id: r.id && !snap.trips.some((t) => t.trip.id === r.id) ? r.id : x.id,
+        city: r.city || x.city,
+        region: r.region || x.region,
+        reqNo: r.req_no || x.reqNo,
+        reqDate: r.req_date || x.reqDate,
+        goal: r.goal || x.goal,
+        planStart: r.start || x.planStart,
+        planEnd: r.end || x.planEnd,
+        start: factTouched ? x.start : r.start || x.start,
+        end: factTouched ? x.end : r.end || x.end,
+        plan: x.plan.map((v, i) => (r.plan[i] > 0 ? amountText(r.plan[i]) : v)),
+      }));
+      const parts = ['Заполнено по документу — проверьте и сохраните'];
+      if (!r.id) parts.push('номер поездки впишите сами');
+      if (r.employee) parts.push('командируемый: ' + r.employee);
+      setScan({ busy: false, note: parts.join('; ') + (r.problems ? '. Claude не уверен: ' + r.problems : ''), warn: !!r.problems });
+    } catch (e) {
+      setScan({ busy: false, note: message(e), warn: true });
+    }
+  };
 
   const submit = async (ev: FormEvent) => {
     ev.preventDefault();
@@ -132,6 +174,32 @@ export default function TripForm({
         <h1 className="h1">{existing ? `Поездка ${existing.id}` : 'Новая поездка'}</h1>
       </div>
       {!existing && <p className="note" style={{ marginTop: -10 }}>Перенесите данные из заявки в 1С. Аванс будет равен сумме заявки, суточные посчитаются по ставке из настроек.</p>}
+      {!existing && aiOn(ai, 'docs') && (
+        <section className="card stack gap6" aria-label="Из приказа или заявки">
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 500 }}>
+            <Icon name="spark" size={18} />
+            Из приказа или заявки
+          </span>
+          <span className="note">Снимок или PDF — Claude заполнит номер, город, даты, цель и суммы по статьям. Проверьте перед сохранением.</span>
+          <div className="wrap">
+            {mobile && (
+              <button type="button" className="btn ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={scan?.busy} onClick={() => fromDocument(true)}>
+                <Icon name="camera" size={18} />
+                Снять
+              </button>
+            )}
+            <button type="button" className="btn ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={scan?.busy} onClick={() => fromDocument(false)}>
+              <Icon name="file" size={18} />
+              {mobile ? 'Из файлов' : 'Снимок или PDF'}
+            </button>
+          </div>
+          {scan && (
+            <p className={'note' + (scan.warn ? ' warn' : '')} role="status">
+              {scan.note}
+            </p>
+          )}
+        </section>
+      )}
 
       <section className="stack gap12">
         <h2 className="h2">Заявка</h2>

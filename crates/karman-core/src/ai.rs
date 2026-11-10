@@ -22,8 +22,10 @@ pub const API_URL: &str = "https://api.anthropic.com/v1/messages";
 pub const API_VERSION: &str = "2026-10-21";
 /// Документы — снимки и PDF нарядов — читает старшая модель.
 pub const MODEL_DOCS: &str = "claude-opus-5-5";
-/// Короткие задачи: проверка ключа.
+/// Короткие задачи: проверка ключа, ввод фразой.
 pub const MODEL_SHORT: &str = "claude-haiku-5-5";
+/// Вопросы о деньгах и поездках, проверка отчёта, сводка месяца.
+pub const MODEL_CHAT: &str = "claude-sonnet-5-5";
 /// Ответ с рассуждением модели и JSON наряда умещается с запасом.
 const MAX_TOKENS: u32 = 16_000;
 
@@ -32,6 +34,7 @@ pub fn model_title(model: &str) -> &'static str {
     match model {
         MODEL_DOCS => "Claude Opus 5.5",
         MODEL_SHORT => "Claude Haiku 5.5",
+        MODEL_CHAT => "Claude Sonnet 5.5",
         _ => "Claude",
     }
 }
@@ -40,22 +43,35 @@ pub fn model_title(model: &str) -> &'static str {
 pub fn price(model: &str) -> (f64, f64) {
     match model {
         MODEL_SHORT => (0.10, 0.50),
-        "claude-sonnet-5-5" => (2.0, 10.0),
+        MODEL_CHAT => (2.0, 10.0),
         _ => (4.0, 20.0),
     }
 }
 
-/// Токены одного запроса.
+/// Токены одного запроса: обычный вход, выход и кэш подсказки (запись и чтение).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Usage {
     pub input: u64,
     pub output: u64,
+    #[serde(default)]
+    pub cache_write: u64,
+    #[serde(default)]
+    pub cache_read: u64,
+}
+
+/// Чтение из кэша — доля цены входа: у Opus и Sonnet 5.5 — 5 %, у остальных — 10 %; запись — 125 %.
+fn cache_read_share(model: &str) -> f64 {
+    if model == MODEL_DOCS || model == MODEL_CHAT {
+        0.05
+    } else {
+        0.10
+    }
 }
 
 /// Оценка стоимости запроса, в долларах США.
 pub fn cost_usd(model: &str, u: Usage) -> f64 {
     let (i, o) = price(model);
-    (u.input as f64 * i + u.output as f64 * o) / 1_000_000.0
+    (u.input as f64 * i + u.cache_write as f64 * i * 1.25 + u.cache_read as f64 * i * cache_read_share(model) + u.output as f64 * o) / 1_000_000.0
 }
 
 /// Ключ API похож на настоящий: «sk-ant-…», без пробелов.
@@ -187,10 +203,9 @@ pub fn order_schema() -> Value {
     })
 }
 
-/// Запрос распознавания наряда: сначала листы, потом задание. Поездка нужна для года и проверки дат.
-pub fn order_request(docs: &[Doc], trip_from: Date, trip_to: Date) -> Value {
-    let mut content: Vec<Value> = docs
-        .iter()
+/// Листы документа — блоками снимков и PDF; Claude лучше читает, когда задание идёт после них.
+fn files_content(docs: &[Doc]) -> Vec<Value> {
+    docs.iter()
         .map(|d| {
             let data = B64.encode(d.data);
             if d.mime == "application/pdf" {
@@ -199,29 +214,42 @@ pub fn order_request(docs: &[Doc], trip_from: Date, trip_to: Date) -> Value {
                 json!({"type": "image", "source": {"type": "base64", "media_type": d.mime, "data": data}})
             }
         })
-        .collect();
-    let sheets = match docs.len() {
+        .collect()
+}
+
+/// Запрос с ответом строго по схеме (structured outputs).
+fn structured(model: &str, max_tokens: u32, system: &str, content: Vec<Value>, schema: Value) -> Value {
+    json!({
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": system,
+        "messages": [{"role": "user", "content": content}],
+        "output_config": {"format": {"type": "json_schema", "schema": schema}},
+    })
+}
+
+fn sheets_text(n: usize, what: &str) -> String {
+    match n {
         1 => "Один файл".to_string(),
-        n => format!("Файлов: {n} — это листы наряда по порядку"),
-    };
+        n => format!("Файлов: {n} — это листы {what} по порядку"),
+    }
+}
+
+/// Запрос распознавания наряда: сначала листы, потом задание. Поездка нужна для года и проверки дат.
+pub fn order_request(docs: &[Doc], trip_from: Date, trip_to: Date) -> Value {
+    let mut content = files_content(docs);
     content.push(json!({
         "type": "text",
-        "text": format!("{sheets}. Командировка, в которой выдан наряд: с {} по {}. Перепиши наряд по схеме.", trip_from.dotted(), trip_to.dotted())
+        "text": format!("{}. Командировка, в которой выдан наряд: с {} по {}. Перепиши наряд по схеме.", sheets_text(docs.len(), "наряда"), trip_from.dotted(), trip_to.dotted())
     }));
-    json!({
-        "model": MODEL_DOCS,
-        "max_tokens": MAX_TOKENS,
-        "system": ORDER_SYSTEM,
-        "messages": [{"role": "user", "content": content}],
-        "output_config": {"format": {"type": "json_schema", "schema": order_schema()}},
-    })
+    structured(MODEL_DOCS, MAX_TOKENS, ORDER_SYSTEM, content, order_schema())
 }
 
 /// Токены из ответа Claude API.
 pub fn usage(v: &Value) -> Usage {
     let u = &v["usage"];
     let n = |k: &str| u[k].as_u64().unwrap_or(0);
-    Usage { input: n("input_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens"), output: n("output_tokens") }
+    Usage { input: n("input_tokens"), output: n("output_tokens"), cache_write: n("cache_creation_input_tokens"), cache_read: n("cache_read_input_tokens") }
 }
 
 /// Текст ответа: блоки «text» по порядку; рассуждения модели («thinking») пропускаются.
@@ -388,7 +416,7 @@ pub fn parse_clock(s: &str) -> Option<u32> {
 
 // ——— Кто есть кто ———
 
-/// Фамилия и инициалы: «Просолов С.В.», «Просолов Семён Викторович», «С.В. Просолов».
+/// Фамилия и инициалы: «Образцов С.В.», «Образцов Сергей Викторович», «С.В. Образцов».
 #[derive(Clone, Debug, PartialEq)]
 pub struct Person {
     pub surname: String,
@@ -656,6 +684,578 @@ pub fn plan(raw: &RawOrder, who: &str, trip_from: Date, trip_to: Date, rules: &R
     }
 }
 
+// ——— Ввод фразой ———
+
+const PHRASE_SYSTEM: &str = "Ты помогаешь записать операцию в приложение личных и командировочных финансов «Карман». Человек пишет или говорит одну фразу — например «такси 640 до объекта, чек есть» или «зарплата 95 тысяч». Разбери её в поля по схеме, пользуясь списками счетов, поездок и категорий из контекста.
+
+Правила:
+- kind: expense — расход, income — доход, transfer — перевод между своими счетами (снял наличные, положил на карту, обмен валюты).
+- scope: trip — рабочий расход или доход поездки (аванс, возмещение, всё, что для работы в командировке); personal — личное; family — семейный расход; personal_tagged — личный расход во время поездки (сувениры, личные покупки).
+- Если человек не сказал иначе, а сейчас идёт поездка (active в контексте), расход на транспорт, проживание, билеты, питание и материалы — это trip этой поездки; продукты домой, подписки и личное — personal.
+- category — только код из списков контекста для этого вида и scope.
+- account — код счёта из контекста: для поездки обычно рабочая карта (kind work), для личного — личная (personal); наличные — если сказано «наличными».
+- amount — число в валюте счёта; «тыс», «тысяч» — умножь на 1000. Не назвал сумму — 0.
+- date — ГГГГ-ММ-ДД; «вчера», «в пятницу» — от сегодняшней даты из контекста; не сказано — пусто.
+- title — короткий комментарий как в ленте: «Такси до объекта». Не придумывай лишнего.
+- has_document — сказал, что есть чек, билет, квитанция или документ.
+- Чего не понял — коротко в unclear, остальное заполни как можно точнее.";
+
+/// Схема ответа для фразы.
+pub fn phrase_schema() -> Value {
+    let s = |d: &str| json!({"type": "string", "description": d});
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "amount", "currency", "scope", "trip", "category", "account", "to_account", "date", "title", "has_document", "unclear"],
+        "properties": {
+            "kind": {"type": "string", "enum": ["expense", "income", "transfer"]},
+            "amount": {"type": "number", "description": "Сумма в валюте счёта; 0 — если не названа"},
+            "currency": s("Валюта, если названа: RUB, KZT, USD, EUR; иначе пусто"),
+            "scope": {"type": "string", "enum": ["trip", "personal", "family", "personal_tagged"]},
+            "trip": s("Номер поездки из контекста или пусто"),
+            "category": s("Код категории из контекста"),
+            "account": s("Код счёта из контекста или пусто"),
+            "to_account": s("Перевод: код счёта, куда; иначе пусто"),
+            "date": s("ГГГГ-ММ-ДД или пусто — сегодня"),
+            "title": s("Короткий комментарий"),
+            "has_document": {"type": "boolean", "description": "Есть чек или документ"},
+            "unclear": s("Что непонятно; пусто, если всё ясно")
+        }
+    })
+}
+
+/// Запрос для фразы: контекст (счета, поездки, категории) и сама фраза — младшей модели.
+pub fn phrase_request(text: &str, today: Date, context: &Value) -> Value {
+    let content = vec![json!({
+        "type": "text",
+        "text": format!("Сегодня {} ({}). Контекст «Кармана»:\n{}\n\nФраза человека: «{}»", today, WEEKDAYS_FULL[(today.weekday() - 1) as usize], context, text.trim())
+    })];
+    structured(MODEL_SHORT, 2000, PHRASE_SYSTEM, content, phrase_schema())
+}
+
+const WEEKDAYS_FULL: [&str; 7] = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"];
+
+/// Фраза, как её разобрал Claude.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct RawPhrase {
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub amount: f64,
+    #[serde(default)]
+    pub currency: String,
+    #[serde(default)]
+    pub scope: String,
+    #[serde(default)]
+    pub trip: String,
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub account: String,
+    #[serde(default)]
+    pub to_account: String,
+    #[serde(default)]
+    pub date: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub has_document: bool,
+    #[serde(default)]
+    pub unclear: String,
+}
+
+/// Черновик для окна ввода: те же поля, что в нём. Сохраняет человек.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PhraseDraft {
+    /// out, in, move
+    pub dir: &'static str,
+    /// Сумма в валюте счёта; 0 — не названа.
+    pub amount: f64,
+    /// own, family, trip:573, tag:573
+    pub scope: String,
+    pub cat: String,
+    pub acc: String,
+    pub to: String,
+    pub date: Date,
+    pub comment: String,
+    /// Чек есть (для рабочего расхода поездки).
+    pub document: bool,
+    pub unclear: String,
+}
+
+fn json_part<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, String> {
+    let t = text.trim();
+    let t = t.strip_prefix("```json").or_else(|| t.strip_prefix("```")).unwrap_or(t);
+    let t = t.strip_suffix("```").unwrap_or(t).trim();
+    serde_json::from_str(t).map_err(|_| "Claude ответил не по форме — попробуйте ещё раз".to_string())
+}
+
+pub fn parse_phrase(text: &str) -> Result<RawPhrase, String> {
+    json_part(text)
+}
+
+/// Разобранная фраза → черновик по правилам окна ввода: только существующие счета, поездки и категории.
+pub fn phrase_draft(raw: &RawPhrase, s: &crate::book::Snapshot) -> PhraseDraft {
+    use crate::tools::{OWN_IN, OWN_OUT, TRIP_IN, TRIP_OUT};
+    use crate::trip::TripStatus;
+    let dir = match raw.kind.as_str() {
+        "income" => "in",
+        "transfer" => "move",
+        _ => "out",
+    };
+    let live: Vec<&crate::book::Account> = s.accounts.iter().map(|a| &a.account).filter(|a| !a.archived).collect();
+    let open: Vec<&crate::trip::Trip> = s.trips.iter().map(|t| &t.trip).filter(|t| t.status != TripStatus::Closed).collect();
+    let active = crate::tools::active_trip(&s.trips.iter().map(|t| t.trip.clone()).collect::<Vec<_>>(), s.today).map(|t| t.id.clone());
+    let trip = open.iter().find(|t| t.id == raw.trip.trim()).map(|t| t.id.clone()).or(active);
+    let mut scope = match (dir, raw.scope.as_str(), &trip) {
+        ("move", _, _) => "own".to_string(),
+        (_, "trip", Some(t)) => format!("trip:{t}"),
+        ("out", "personal_tagged", Some(t)) => format!("tag:{t}"),
+        ("out", "family", _) => "family".to_string(),
+        _ => "own".to_string(),
+    };
+    let list: &[&str] = match (dir, scope.starts_with("trip:")) {
+        ("move", _) => &["transfer"],
+        ("out", true) => &TRIP_OUT,
+        ("in", true) => &TRIP_IN,
+        ("in", false) => &OWN_IN,
+        _ => &OWN_OUT,
+    };
+    let cat = if list.contains(&raw.category.as_str()) {
+        raw.category.clone()
+    } else if dir == "out" && scope.starts_with("trip:") {
+        "taxi".to_string()
+    } else {
+        list[0].to_string()
+    };
+    // Аванс и возмещение — доходы поездки; если модель отнесла их к личному — поправим.
+    if dir == "in" && !scope.starts_with("trip:") && ["advance", "reimb"].contains(&raw.category.as_str()) {
+        if let Some(t) = &trip {
+            scope = format!("trip:{t}");
+        }
+    }
+    let cat = if dir == "in" && scope.starts_with("trip:") && !TRIP_IN.contains(&cat.as_str()) { "advance".to_string() } else { cat };
+    let want_kind = if scope.starts_with("trip:") { "work" } else { "personal" };
+    let by_kind = |k: &str| live.iter().find(|a| a.kind == k).or(live.first()).map(|a| a.id.clone()).unwrap_or_default();
+    let mut acc = live.iter().find(|a| a.id == raw.account.trim()).map(|a| a.id.clone()).unwrap_or_else(|| by_kind(want_kind));
+    // Названа валюта, а у выбранного счёта другая — берём счёт в этой валюте, если он есть.
+    let cur = raw.currency.trim().to_uppercase();
+    if !cur.is_empty() && live.iter().find(|a| a.id == acc).is_some_and(|a| a.currency != cur) {
+        if let Some(a) = live.iter().find(|a| a.currency == cur) {
+            acc = a.id.clone();
+        }
+    }
+    let to = if dir == "move" { live.iter().find(|a| a.id == raw.to_account.trim() && a.id != acc).map(|a| a.id.clone()).unwrap_or_default() } else { String::new() };
+    let amount = if raw.amount.is_finite() && raw.amount > 0.0 && raw.amount < 1e10 { (raw.amount * 100.0).round() / 100.0 } else { 0.0 };
+    let date = parse_date(&raw.date).filter(|d| s.today.days_until(*d).abs() <= 400).unwrap_or(s.today);
+    let document = raw.has_document && dir == "out" && scope.starts_with("trip:") && cat != "food";
+    PhraseDraft { dir, amount, scope, cat, acc, to, date, comment: clean(&raw.title, 200), document, unclear: clean(&raw.unclear, 300) }
+}
+
+// ——— Документ расхода: билет, счёт гостиницы, чек ———
+
+const EXPENSE_SYSTEM: &str = "Ты читаешь документ о расходе в командировке — электронный билет, маршрутную квитанцию, счёт или чек гостиницы, кассовый чек — снимки или PDF. Перепиши данные по схеме.
+
+Правила:
+- Ничего не придумывай: чего не видно, оставь пустым (число — 0) и назови в problems.
+- kind: ticket — билет (самолёт, поезд, автобус), hotel — проживание в гостинице, receipt — другой кассовый чек, other — не документ о расходе.
+- category: tickets — билеты, lodging — проживание, taxi — такси и транспорт, car — аренда авто и топливо, food — питание, tools — материалы и инструменты.
+- amount — итог к оплате, число; currency — RUB, KZT, USD, EUR.
+- date — дата оплаты или документа, ГГГГ-ММ-ДД.
+- Для билета: route — откуда и куда («Уфа — Москва»), travel_date — дата поездки, number — номер билета.
+- Для гостиницы: seller — название гостиницы, stay_from и stay_to — даты заезда и выезда, nights — ночей, number — номер счёта.
+- title — короткий комментарий для ленты: «Билет Уфа — Москва» или «Гостиница «Башкирия»».";
+
+pub fn expense_schema() -> Value {
+    let s = |d: &str| json!({"type": "string", "description": d});
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "category", "amount", "currency", "date", "number", "seller", "route", "travel_date", "stay_from", "stay_to", "nights", "title", "problems"],
+        "properties": {
+            "kind": {"type": "string", "enum": ["ticket", "hotel", "receipt", "other"]},
+            "category": {"type": "string", "enum": ["tickets", "lodging", "taxi", "car", "food", "tools"]},
+            "amount": {"type": "number", "description": "Итог к оплате"},
+            "currency": s("RUB, KZT, USD, EUR"),
+            "date": s("Дата оплаты или документа, ГГГГ-ММ-ДД"),
+            "number": s("Номер билета или счёта"),
+            "seller": s("Перевозчик, гостиница или продавец"),
+            "route": s("Билет: откуда и куда"),
+            "travel_date": s("Билет: дата поездки, ГГГГ-ММ-ДД"),
+            "stay_from": s("Гостиница: заезд, ГГГГ-ММ-ДД"),
+            "stay_to": s("Гостиница: выезд, ГГГГ-ММ-ДД"),
+            "nights": {"type": "number", "description": "Гостиница: ночей"},
+            "title": s("Короткий комментарий"),
+            "problems": s("Что не удалось прочитать; пусто, если всё ясно")
+        }
+    })
+}
+
+/// Запрос распознавания документа расхода. Даты поездки — для года и проверки.
+pub fn expense_request(docs: &[Doc], today: Date, trip: Option<(Date, Date)>) -> Value {
+    let mut content = files_content(docs);
+    let when = trip.map(|(a, b)| format!(" Командировка: с {} по {}.", a.dotted(), b.dotted())).unwrap_or_default();
+    content.push(json!({"type": "text", "text": format!("{}. Сегодня {}.{when} Перепиши документ по схеме.", sheets_text(docs.len(), "документа"), today.dotted())}));
+    structured(MODEL_DOCS, MAX_TOKENS, EXPENSE_SYSTEM, content, expense_schema())
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct RawExpense {
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub amount: f64,
+    #[serde(default)]
+    pub currency: String,
+    #[serde(default)]
+    pub date: String,
+    #[serde(default)]
+    pub number: String,
+    #[serde(default)]
+    pub seller: String,
+    #[serde(default)]
+    pub route: String,
+    #[serde(default)]
+    pub travel_date: String,
+    #[serde(default)]
+    pub stay_from: String,
+    #[serde(default)]
+    pub stay_to: String,
+    #[serde(default)]
+    pub nights: f64,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub problems: String,
+}
+
+pub fn parse_expense(text: &str) -> Result<RawExpense, String> {
+    json_part(text)
+}
+
+/// Документ расхода → поля окна ввода.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ExpenseDraft {
+    pub not_document: bool,
+    /// ticket, hotel, receipt
+    pub kind: String,
+    pub cat: String,
+    pub amount: f64,
+    pub currency: String,
+    pub date: Option<Date>,
+    pub comment: String,
+    pub problems: String,
+}
+
+fn nights_word(n: u32) -> &'static str {
+    match (n % 10, n % 100) {
+        (1, x) if x != 11 => "ночь",
+        (2..=4, x) if !(12..=14).contains(&x) => "ночи",
+        _ => "ночей",
+    }
+}
+
+pub fn expense_draft(raw: &RawExpense) -> ExpenseDraft {
+    let ddmm = |s: &str| parse_date(s).map(|d| d.dotted()[..5].to_string());
+    let cat = match raw.kind.as_str() {
+        "ticket" => "tickets",
+        "hotel" => "lodging",
+        _ if crate::tools::TRIP_OUT.contains(&raw.category.as_str()) => raw.category.as_str(),
+        _ => "taxi",
+    }
+    .to_string();
+    let route = clean(&raw.route, 80);
+    let seller = clean(&raw.seller, 80);
+    let comment = match raw.kind.as_str() {
+        "ticket" if !route.is_empty() => match ddmm(&raw.travel_date) {
+            Some(d) => format!("Билет {route}, {d}"),
+            None => format!("Билет {route}"),
+        },
+        "hotel" => {
+            let name = if seller.is_empty() { "Проживание".to_string() } else { format!("Проживание: {seller}") };
+            let n = if raw.nights.is_finite() && raw.nights >= 1.0 && raw.nights < 400.0 { raw.nights.round() as u32 } else { 0 };
+            match (ddmm(&raw.stay_from), ddmm(&raw.stay_to)) {
+                (Some(a), Some(b)) if n > 0 => format!("{name}, {a}–{b}, {n} {}", nights_word(n)),
+                (Some(a), Some(b)) => format!("{name}, {a}–{b}"),
+                _ => name,
+            }
+        }
+        _ => {
+            let t = clean(&raw.title, 120);
+            if t.is_empty() { seller } else { t }
+        }
+    };
+    let amount = if raw.amount.is_finite() && raw.amount > 0.0 && raw.amount < 1e10 { (raw.amount * 100.0).round() / 100.0 } else { 0.0 };
+    ExpenseDraft {
+        not_document: raw.kind == "other",
+        kind: raw.kind.clone(),
+        cat,
+        amount,
+        currency: clean(&raw.currency, 3).to_uppercase(),
+        date: parse_date(&raw.date),
+        comment: clean(&comment, 200),
+        problems: clean(&raw.problems, 400),
+    }
+}
+
+// ——— Поездка из приказа или заявки ———
+
+const TRIP_SYSTEM: &str = "Ты читаешь документ о командировке — приказ о направлении в командировку, служебное задание или заявку на командировку с расчётом расходов — снимки или PDF. Перепиши данные по схеме.
+
+Правила:
+- Ничего не придумывай: чего нет в документе, оставь пустым (суммы — 0) и назови в problems, если это важно.
+- doc_kind: order — приказ или служебное задание, request — заявка с расчётом сумм, other — не документ о командировке.
+- city — населённый пункт назначения (без «г.»), region — регион, область или округ, если указан.
+- start и end — даты командировки, ГГГГ-ММ-ДД. request_no и request_date — номер и дата документа.
+- trip_number — номер командировки, если он указан отдельно от номера документа; иначе пусто.
+- goal — цель командировки, как в документе, коротко.
+- Суммы по статьям, в рублях числом: tickets — проезд и билеты, hospitality — представительские, lodging — проживание, per_diem — суточные, transport — транспорт и бензин на месте.
+- employee — ФИО командируемого, как написано.";
+
+pub fn trip_schema() -> Value {
+    let s = |d: &str| json!({"type": "string", "description": d});
+    let n = |d: &str| json!({"type": "number", "description": d});
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["doc_kind", "trip_number", "request_no", "request_date", "city", "region", "start", "end", "goal", "tickets", "hospitality", "lodging", "per_diem", "transport", "employee", "problems"],
+        "properties": {
+            "doc_kind": {"type": "string", "enum": ["order", "request", "other"]},
+            "trip_number": s("Номер командировки, если указан отдельно"),
+            "request_no": s("Номер документа"),
+            "request_date": s("Дата документа, ГГГГ-ММ-ДД"),
+            "city": s("Населённый пункт назначения"),
+            "region": s("Регион, область или округ"),
+            "start": s("Начало командировки, ГГГГ-ММ-ДД"),
+            "end": s("Окончание командировки, ГГГГ-ММ-ДД"),
+            "goal": s("Цель командировки"),
+            "tickets": n("Проезд, билеты, рублей"),
+            "hospitality": n("Представительские, рублей"),
+            "lodging": n("Проживание, рублей"),
+            "per_diem": n("Суточные, рублей"),
+            "transport": n("Транспорт и бензин на месте, рублей"),
+            "employee": s("ФИО командируемого"),
+            "problems": s("Что не удалось прочитать; пусто, если всё ясно")
+        }
+    })
+}
+
+pub fn trip_request(docs: &[Doc], today: Date) -> Value {
+    let mut content = files_content(docs);
+    content.push(json!({"type": "text", "text": format!("{}. Сегодня {}. Перепиши документ о командировке по схеме.", sheets_text(docs.len(), "документа"), today.dotted())}));
+    structured(MODEL_DOCS, MAX_TOKENS, TRIP_SYSTEM, content, trip_schema())
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct RawTripDoc {
+    #[serde(default)]
+    pub doc_kind: String,
+    #[serde(default)]
+    pub trip_number: String,
+    #[serde(default)]
+    pub request_no: String,
+    #[serde(default)]
+    pub request_date: String,
+    #[serde(default)]
+    pub city: String,
+    #[serde(default)]
+    pub region: String,
+    #[serde(default)]
+    pub start: String,
+    #[serde(default)]
+    pub end: String,
+    #[serde(default)]
+    pub goal: String,
+    #[serde(default)]
+    pub tickets: f64,
+    #[serde(default)]
+    pub hospitality: f64,
+    #[serde(default)]
+    pub lodging: f64,
+    #[serde(default)]
+    pub per_diem: f64,
+    #[serde(default)]
+    pub transport: f64,
+    #[serde(default)]
+    pub employee: String,
+    #[serde(default)]
+    pub problems: String,
+}
+
+pub fn parse_trip_doc(text: &str) -> Result<RawTripDoc, String> {
+    json_part(text)
+}
+
+/// Документ о командировке → поля формы новой поездки. Суммы — в копейках, по статьям 01–05.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TripDraft {
+    pub not_document: bool,
+    pub id: String,
+    pub city: String,
+    pub region: String,
+    pub req_no: String,
+    pub req_date: Option<Date>,
+    pub start: Option<Date>,
+    pub end: Option<Date>,
+    pub goal: String,
+    pub plan: [i64; 5],
+    pub employee: String,
+    pub problems: String,
+}
+
+pub fn trip_draft(raw: &RawTripDoc) -> TripDraft {
+    let kop = |v: f64| if v.is_finite() && v > 0.0 && v < 1e10 { (v * 100.0).round() as i64 } else { 0 };
+    let (start, end) = match (parse_date(&raw.start), parse_date(&raw.end)) {
+        (Some(a), Some(b)) if b < a => (Some(b), Some(a)),
+        x => x,
+    };
+    let city = clean(&raw.city, 80);
+    let city = city.strip_prefix("г. ").or_else(|| city.strip_prefix("г.")).unwrap_or(&city).trim().to_string();
+    TripDraft {
+        not_document: raw.doc_kind == "other",
+        id: clean(&raw.trip_number, 20),
+        city,
+        region: clean(&raw.region, 80),
+        req_no: clean(&raw.request_no, 40),
+        req_date: parse_date(&raw.request_date),
+        start,
+        end,
+        goal: clean(&raw.goal, 500),
+        plan: [kop(raw.tickets), kop(raw.hospitality), kop(raw.lodging), kop(raw.per_diem), kop(raw.transport)],
+        employee: clean(&raw.employee, 80),
+        problems: clean(&raw.problems, 400),
+    }
+}
+
+// ——— Вопросы о деньгах и поездках ———
+
+/// Инструменты «Кармана» для Claude API — те же, что у коннектора. Список не меняется
+/// от настроек: запрет записи проверяется при вызове, а неизменный список нужен для рассуждений модели.
+pub fn api_tools() -> Vec<Value> {
+    crate::tools::list().into_iter().map(|t| json!({"name": t.name, "description": t.description, "input_schema": t.input_schema})).collect()
+}
+
+/// Начало разговора: правила «Кармана», сегодняшняя дата и что умеет запись.
+pub fn chat_system(today: Date) -> String {
+    format!(
+        "Ты — Claude внутри приложения «Карман»: отвечаешь человеку о его деньгах и командировках и по его просьбе записываешь операции. Сегодня {} ({}).\n\n{}\n\nОтвечай по-русски, коротко и по делу; числа — как в «Кармане», суммы в рублях. Данные бери только из инструментов «Кармана», не придумывай. Если запись выключена, скажи, что её можно разрешить в «Кармане»: Настройки → ИИ.",
+        today,
+        WEEKDAYS_FULL[(today.weekday() - 1) as usize],
+        crate::mcp::INSTRUCTIONS
+    )
+}
+
+/// Ход разговора: история сообщений как есть (вместе с блоками рассуждения) и инструменты.
+/// Инструменты и правила одинаковы весь разговор — их начало кэшируется: повторные шаги
+/// читают его по 5 % цены входа.
+pub fn chat_request(system: &str, messages: &[Value]) -> Value {
+    json!({
+        "model": MODEL_CHAT,
+        "max_tokens": 8000,
+        "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+        "tools": api_tools(),
+        "messages": messages,
+    })
+}
+
+/// Вызовы инструментов из ответа: (id, имя, аргументы).
+pub fn tool_calls(v: &Value) -> Vec<(String, String, Value)> {
+    v["content"]
+        .as_array()
+        .map(|blocks| {
+            blocks
+                .iter()
+                .filter(|b| b["type"] == "tool_use")
+                .map(|b| (b["id"].as_str().unwrap_or_default().to_string(), b["name"].as_str().unwrap_or_default().to_string(), b["input"].clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Текст ответа без рассуждений; пусто — если только вызовы инструментов.
+pub fn answer_text(v: &Value) -> String {
+    v["content"].as_array().map(|blocks| blocks.iter().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("\n\n")).unwrap_or_default().trim().to_string()
+}
+
+// ——— Проверка отчёта и сводка месяца ———
+
+const REVIEW_SYSTEM: &str = "Ты проверяешь данные приложения «Карман» и коротко объясняешь человеку, что важно. Пиши по-русски, просто и конкретно, с числами из данных. Не придумывай того, чего нет в данных, и не давай финансовых советов сверх очевидного.";
+
+/// Схема находок: итог одной фразой и список пунктов с важностью.
+pub fn findings_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["summary", "items"],
+        "properties": {
+            "summary": {"type": "string", "description": "Итог одной-двумя фразами"},
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["level", "text"],
+                    "properties": {
+                        "level": {"type": "string", "enum": ["problem", "check", "fine"]},
+                        "text": {"type": "string", "description": "Пункт: что не так или что проверить и что сделать"}
+                    }
+                }
+            }
+        }
+    })
+}
+
+/// Проверка авансового отчёта поездки перед сдачей: данные поездки и находки «Кармана».
+pub fn trip_check_request(trip: &Value, checks: &[String]) -> Value {
+    let text = format!(
+        "Проверь авансовый отчёт командировки перед сдачей в бухгалтерию. Найди, чего не хватает (документы, чеки, отчёт по статьям), где расход больше заявки, что с суточными и долгом перед компанией, нет ли ошибок в датах и суммах. level: problem — исправить до сдачи, check — стоит проверить, fine — в порядке. Не больше 8 пунктов.\n\nЧто уже нашёл «Карман»:\n{}\n\nДанные поездки (JSON):\n{}",
+        if checks.is_empty() { "—".to_string() } else { checks.iter().map(|c| format!("- {c}")).collect::<Vec<_>>().join("\n") },
+        trip
+    );
+    structured(MODEL_CHAT, 6000, REVIEW_SYSTEM, vec![json!({"type": "text", "text": text})], findings_schema())
+}
+
+/// Сводка месяца: цифры месяца, подписки, необычные траты и прогноз — посчитаны «Карманом».
+pub fn month_request(facts: &Value) -> Value {
+    let text = format!(
+        "Сделай сводку месяца по личным деньгам человека: что главное, куда ушло больше обычного, какие подписки и регулярные траты стоит проверить, что ждать к концу месяца по прогнозу. level: problem — требует внимания, check — стоит посмотреть, fine — хорошо. Не больше 7 пунктов. Цифры — только из данных.\n\nДанные (JSON):\n{}",
+        facts
+    );
+    structured(MODEL_CHAT, 6000, REVIEW_SYSTEM, vec![json!({"type": "text", "text": text})], findings_schema())
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Finding {
+    #[serde(default)]
+    pub level: String,
+    #[serde(default)]
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Findings {
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub items: Vec<Finding>,
+}
+
+pub fn parse_findings(text: &str) -> Result<Findings, String> {
+    let mut f: Findings = json_part(text)?;
+    f.summary = clean(&f.summary, 600);
+    f.items.retain(|i| !i.text.trim().is_empty());
+    f.items.truncate(10);
+    for i in &mut f.items {
+        i.text = clean(&i.text, 500);
+        if !["problem", "check", "fine"].contains(&i.level.as_str()) {
+            i.level = "check".into();
+        }
+    }
+    Ok(f)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -816,9 +1416,9 @@ mod tests {
 
     #[test]
     fn names_dates_and_times() {
-        let p = person("Просолов Семён Викторович").unwrap();
-        assert_eq!(p, Person { surname: "просолов".into(), initials: vec!['с', 'в'] });
-        assert_eq!(person("С.В. Просолов").unwrap(), p);
+        let p = person("Образцов Сергей Викторович").unwrap();
+        assert_eq!(p, Person { surname: "образцов".into(), initials: vec!['с', 'в'] });
+        assert_eq!(person("С.В. Образцов").unwrap(), p);
         assert_eq!(person("Фирсовым К.С. гр.V").unwrap(), Person { surname: "фирсовым".into(), initials: vec!['к', 'с'] });
         assert!(person("  ").is_none() && person("С. В.").is_none());
         let a = person("Фирсов К.С.").unwrap();
@@ -881,7 +1481,11 @@ mod tests {
         });
         let raw = parse_order(&reply_text(&reply).unwrap()).unwrap();
         assert_eq!(raw.number, "4/30");
-        assert_eq!(usage(&reply), Usage { input: 18_000, output: 2_500 });
+        assert_eq!(usage(&reply), Usage { input: 18_000, output: 2_500, ..Usage::default() });
+        let cached = Usage { input: 1_000, output: 500, cache_write: 8_000, cache_read: 0 };
+        assert!((cost_usd(MODEL_CHAT, cached) - (1_000.0 * 2.0 + 8_000.0 * 2.5 + 500.0 * 10.0) / 1e6).abs() < 1e-12);
+        let read = Usage { input: 1_000, output: 500, cache_write: 0, cache_read: 8_000 };
+        assert!((cost_usd(MODEL_CHAT, read) - (1_000.0 * 2.0 + 8_000.0 * 0.1 + 500.0 * 10.0) / 1e6).abs() < 1e-12, "чтение кэша — 5 % цены входа");
         assert!((cost_usd(MODEL_DOCS, usage(&reply)) - 0.122).abs() < 1e-9);
         assert!(parse_order("```json\n{\"number\": \"7\"}\n```").is_ok_and(|o| o.number == "7" && o.is_order));
         assert!(parse_order("не JSON").is_err());
@@ -904,5 +1508,129 @@ mod tests {
         assert_eq!(key_tail("sk-ant-api03-abcdefghijklmnopqrstuvwxyzA1b2"), "sk-ant-…A1b2");
         assert!(check_workspace("").is_ok() && check_workspace("wrkspc_01JwQvzr7rXLA5AGx3HKfFUJ").is_ok() && check_workspace("ws-1").is_err());
         assert!(doc_supported("image/jpeg") && doc_supported("application/pdf") && !doc_supported("image/heic"));
+    }
+
+    /// Все схемы ответа закрыты и без неподдерживаемых ключевых слов.
+    fn closed(v: &Value) -> bool {
+        match v {
+            Value::Object(o) => {
+                let ok = if o.get("type").and_then(Value::as_str) == Some("object") {
+                    let props: Vec<&String> = o["properties"].as_object().unwrap().keys().collect();
+                    let req: Vec<&str> = o["required"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+                    o["additionalProperties"] == false && props.len() == req.len() && props.iter().all(|p| req.contains(&p.as_str()))
+                } else {
+                    true
+                };
+                ok && o.values().all(closed)
+            }
+            Value::Array(a) => a.iter().all(closed),
+            _ => true,
+        }
+    }
+
+    #[test]
+    fn every_schema_is_closed() {
+        for (name, s) in [("phrase", phrase_schema()), ("expense", expense_schema()), ("trip", trip_schema()), ("findings", findings_schema()), ("order", order_schema())] {
+            assert!(closed(&s), "{name}");
+            let t = s.to_string();
+            for banned in ["minLength", "maxLength", "minimum", "maximum", "pattern", "format\":"] {
+                assert!(!t.contains(banned), "{name}: {banned}");
+            }
+        }
+    }
+
+    fn demo_snapshot() -> crate::book::Snapshot {
+        let dir = tempfile::tempdir().unwrap();
+        let mut st = crate::db::Store::open(&dir.path().join("t.db"), &[7u8; 32], "dev").unwrap();
+        crate::book::ensure_defaults(&mut st).unwrap();
+        st.append_all(crate::demo::book_events()).unwrap();
+        crate::book::snapshot(&st, crate::demo::today()).unwrap()
+    }
+
+    #[test]
+    fn phrase_becomes_an_entry_draft_by_the_entry_rules() {
+        let s = demo_snapshot();
+        let active = crate::tools::active_trip(&s.trips.iter().map(|t| t.trip.clone()).collect::<Vec<_>>(), s.today).map(|t| t.id.clone()).expect("в демо идёт поездка");
+        let raw = |v: Value| -> RawPhrase { serde_json::from_value(v).unwrap() };
+        // Такси в поездке с чеком — на рабочую карту, с документом.
+        let d = phrase_draft(&raw(json!({"kind": "expense", "amount": 640, "scope": "trip", "trip": "", "category": "taxi", "account": "", "date": "", "title": "Такси до объекта", "has_document": true})), &s);
+        assert_eq!((d.dir, d.amount, d.scope.clone(), d.cat.as_str(), d.document, d.date), ("out", 640.0, format!("trip:{active}"), "taxi", true, s.today));
+        assert_eq!(s.accounts.iter().find(|a| a.account.id == d.acc).unwrap().account.kind, "work");
+        // Неизвестная категория и чужой счёт — по умолчанию; питание без документа.
+        let d = phrase_draft(&raw(json!({"kind": "expense", "amount": 450, "scope": "trip", "category": "food", "account": "нет-такого", "has_document": true, "title": "Обед"})), &s);
+        assert!(!d.document && d.cat == "food", "питание — из суточных, без чека");
+        let d = phrase_draft(&raw(json!({"kind": "expense", "amount": 1200.456, "scope": "personal", "category": "spaceships", "date": "2026-11-05", "title": "Продукты"})), &s);
+        assert_eq!((d.scope.as_str(), d.cat.as_str(), d.amount, d.date.to_string()), ("own", "groceries", 1200.46, "2026-11-05".to_string()));
+        assert_eq!(s.accounts.iter().find(|a| a.account.id == d.acc).unwrap().account.kind, "personal");
+        // Зарплата — личный доход; аванс, отнесённый к личному, — в поездку.
+        let d = phrase_draft(&raw(json!({"kind": "income", "amount": 95000, "scope": "personal", "category": "salary"})), &s);
+        assert_eq!((d.dir, d.scope.as_str(), d.cat.as_str()), ("in", "own", "salary"));
+        let d = phrase_draft(&raw(json!({"kind": "income", "amount": 30000, "scope": "personal", "category": "advance"})), &s);
+        assert_eq!((d.scope.clone(), d.cat.as_str()), (format!("trip:{active}"), "advance"));
+        // Семья и метка поездки; перевод — между двумя разными счетами.
+        assert_eq!(phrase_draft(&raw(json!({"kind": "expense", "amount": 3000, "scope": "family", "category": "groceries"})), &s).scope, "family");
+        assert_eq!(phrase_draft(&raw(json!({"kind": "expense", "amount": 900, "scope": "personal_tagged", "category": "gifts"})), &s).scope, format!("tag:{active}"));
+        let cash = s.accounts.iter().find(|a| a.account.kind == "cash").unwrap().account.id.clone();
+        let card = s.accounts.iter().find(|a| a.account.kind == "personal").unwrap().account.id.clone();
+        let d = phrase_draft(&raw(json!({"kind": "transfer", "amount": 5000, "account": card, "to_account": cash, "category": "x"})), &s);
+        assert_eq!((d.dir, d.cat.as_str(), d.acc.clone(), d.to.clone()), ("move", "transfer", card.clone(), cash));
+        assert_eq!(phrase_draft(&raw(json!({"kind": "transfer", "amount": 5000, "account": card, "to_account": card})), &s).to, "", "куда — не тот же счёт");
+        // Названа валюта — счёт в этой валюте, если он есть.
+        if let Some(kzt) = s.accounts.iter().find(|a| a.account.currency == "KZT") {
+            let d = phrase_draft(&raw(json!({"kind": "expense", "amount": 2500, "currency": "kzt", "scope": "personal", "category": "cafe"})), &s);
+            assert_eq!(d.acc, kzt.account.id);
+        }
+        // Мусор в сумме и дате — ноль и сегодня.
+        let d = phrase_draft(&raw(json!({"kind": "expense", "amount": -5, "date": "когда-то", "scope": "personal", "category": "cafe"})), &s);
+        assert_eq!((d.amount, d.date), (0.0, s.today));
+        let r = phrase_request("такси 640 до объекта, чек есть", s.today, &json!({"accounts": []}));
+        assert_eq!(r["model"], MODEL_SHORT);
+        assert!(r["messages"][0]["content"][0]["text"].as_str().unwrap().contains("«такси 640 до объекта, чек есть»"));
+        assert!(parse_phrase("{\"kind\": \"expense\", \"amount\": 1}").is_ok() && parse_phrase("не JSON").is_err());
+    }
+
+    #[test]
+    fn tickets_hotels_and_trip_documents() {
+        let raw = |v: Value| -> RawExpense { serde_json::from_value(v).unwrap() };
+        let t = expense_draft(&raw(json!({"kind": "ticket", "category": "taxi", "amount": 12850.0, "currency": "rub", "date": "2026-10-01", "route": "Уфа — Москва", "travel_date": "2026-10-06", "number": "555 1234567890"})));
+        assert_eq!((t.cat.as_str(), t.amount, t.currency.as_str(), t.comment.as_str(), t.date.unwrap().to_string()), ("tickets", 12850.0, "RUB", "Билет Уфа — Москва, 06.10", "2026-10-01".to_string()));
+        let h = expense_draft(&raw(json!({"kind": "hotel", "category": "lodging", "amount": 21000, "date": "12.10.2026", "seller": "Гостиница «Башкирия»", "stay_from": "2026-10-06", "stay_to": "2026-10-12", "nights": 6})));
+        assert_eq!((h.cat.as_str(), h.comment.as_str()), ("lodging", "Проживание: Гостиница «Башкирия», 06.10–12.10, 6 ночей"));
+        let r = expense_draft(&raw(json!({"kind": "receipt", "category": "tools", "amount": 1530.5, "title": "Изолента, хомуты"})));
+        assert_eq!((r.cat.as_str(), r.comment.as_str(), r.not_document), ("tools", "Изолента, хомуты", false));
+        assert!(expense_draft(&raw(json!({"kind": "other"}))).not_document);
+        assert_eq!(expense_draft(&raw(json!({"kind": "receipt", "category": "food??", "amount": 300}))).cat, "taxi");
+        assert_eq!(nights_word(1), "ночь");
+        let raw = |v: Value| -> RawTripDoc { serde_json::from_value(v).unwrap() };
+        let d = trip_draft(&raw(json!({"doc_kind": "request", "request_no": "КМ-000573", "request_date": "2026-10-15", "city": "г. Чекмагуш", "region": "Республика Башкортостан", "start": "2026-10-31", "end": "2026-10-21", "goal": "Наладка РЗА", "tickets": 15000, "lodging": 21000.5, "per_diem": 7700, "transport": -3})));
+        assert_eq!((d.city.as_str(), d.req_no.as_str(), d.start.unwrap().to_string(), d.end.unwrap().to_string()), ("Чекмагуш", "КМ-000573", "2026-10-21".to_string(), "2026-10-31".to_string()));
+        assert_eq!(d.plan, [1_500_000, 0, 2_100_050, 770_000, 0]);
+        assert!(trip_draft(&raw(json!({"doc_kind": "other"}))).not_document);
+        let docs = [Doc { mime: "application/pdf", data: b"%PDF" }];
+        let q = trip_request(&docs, Date::parse("2026-11-10").unwrap());
+        assert_eq!((q["model"].as_str(), q["messages"][0]["content"][0]["type"].as_str()), (Some(MODEL_DOCS), Some("document")));
+        let q = expense_request(&docs, Date::parse("2026-11-10").unwrap(), Some((Date::parse("2026-10-21").unwrap(), Date::parse("2026-10-31").unwrap())));
+        assert!(q["messages"][0]["content"][1]["text"].as_str().unwrap().contains("с 21.10.2026 по 31.10.2026"));
+    }
+
+    #[test]
+    fn chat_and_review_requests() {
+        let today = Date::parse("2026-11-10").unwrap();
+        let sys = chat_system(today);
+        assert!(sys.contains("2026-11-10 (вторник)") && sys.contains("order_days"));
+        let r = chat_request(&sys, &[json!({"role": "user", "content": "Сколько у меня денег?"})]);
+        assert_eq!(r["model"], MODEL_CHAT);
+        assert_eq!((r["system"][0]["text"].as_str(), r["system"][0]["cache_control"]["type"].as_str()), (Some(sys.as_str()), Some("ephemeral")));
+        let tools = r["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), crate::tools::list().len(), "все инструменты — и чтение, и запись: список не меняется от настроек");
+        assert!(tools.iter().all(|t| t["input_schema"]["type"] == "object" && t.get("strict").is_none()));
+        let reply = json!({"content": [{"type": "thinking", "thinking": "", "signature": "s"}, {"type": "text", "text": "Сейчас посмотрю."}, {"type": "tool_use", "id": "tu_1", "name": "summary", "input": {}}], "stop_reason": "tool_use"});
+        assert_eq!(tool_calls(&reply), vec![("tu_1".to_string(), "summary".to_string(), json!({}))]);
+        assert_eq!(answer_text(&reply), "Сейчас посмотрю.");
+        let q = trip_check_request(&json!({"id": "573"}), &["Нет документа: такси 640 ₽".to_string()]);
+        assert!(q["messages"][0]["content"][0]["text"].as_str().unwrap().contains("- Нет документа: такси 640 ₽"));
+        assert_eq!(month_request(&json!({"spent": 1}))["model"], MODEL_CHAT);
+        let f = parse_findings("{\"summary\": \" Всё  хорошо \", \"items\": [{\"level\": \"warning\", \"text\": \"Чек\"}, {\"level\": \"fine\", \"text\": \"  \"}]}").unwrap();
+        assert_eq!((f.summary.as_str(), f.items.len(), f.items[0].level.as_str()), ("Всё хорошо", 1, "check"));
     }
 }

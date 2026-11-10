@@ -92,24 +92,48 @@ fn locked_text() -> String {
     "«Карман» заблокирован: окно «Кармана» открыто — войдите по PIN-коду (или Windows Hello) и повторите запрос.".into()
 }
 
-/// Выполнить инструмент в запущенном «Кармане».
+/// Кто вызывает инструмент: приложение Claude через коннектор или «Спросить Claude» в самом «Кармане».
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Caller {
+    Connector,
+    Chat,
+}
+
+/// Выполнить инструмент в запущенном «Кармане» по запросу посредника.
 fn execute(app: &AppHandle, tool: &str, args: &Value) -> Result<Value, String> {
+    run_tool(app, Caller::Connector, tool, args)
+}
+
+/// Инструмент «Кармана» для Claude: чтение — когда подключение (или чат) включено, запись — только
+/// если она разрешена; каждое записанное действие можно отменить кнопкой «Вернуть».
+pub fn run_tool(app: &AppHandle, caller: Caller, tool: &str, args: &Value) -> Result<Value, String> {
     let state = app.state::<AppState>();
     let info = tools::find(tool).ok_or_else(|| format!("нет инструмента «{tool}»"))?;
     let store = match state.store() {
         Ok(st) => st,
         Err(e) if e == crate::guard::LOCKED => {
             #[cfg(desktop)]
-            crate::notify::show_main(app);
+            if caller == Caller::Connector {
+                crate::notify::show_main(app);
+            }
             return Err(locked_text());
         }
         Err(e) => return Err(e),
     };
-    if !meta_flag(&store, META_ON) {
-        return Err("Подключение для Claude выключено: включите его в «Кармане» — Настройки → Claude.".into());
-    }
-    if info.write && !meta_flag(&store, META_WRITE) {
-        return Err("Запись для Claude выключена: разрешите её в «Кармане» — Настройки → Claude → «Разрешить запись». Читать данные можно и так.".into());
+    match caller {
+        Caller::Connector => {
+            if !meta_flag(&store, META_ON) {
+                return Err("Подключение для Claude выключено: включите его в «Кармане» — Настройки → Claude.".into());
+            }
+            if info.write && !meta_flag(&store, META_WRITE) {
+                return Err("Запись для Claude выключена: разрешите её в «Кармане» — Настройки → Claude → «Разрешить запись». Читать данные можно и так.".into());
+            }
+        }
+        Caller::Chat => {
+            if info.write && !crate::ai::chat_write_on(&store) {
+                return Err("Запись для Claude в «Кармане» выключена: человек может разрешить её в Настройки → ИИ → «Claude может записывать». Читать данные можно и так.".into());
+            }
+        }
     }
     let today = local_today();
     if !info.write {
@@ -473,7 +497,7 @@ mod tests {
 
     #[test]
     fn bundle_is_a_zip_with_a_valid_manifest() {
-        let data = bundle(r"C:\Users\Семён\AppData\Local\Karman\karman.exe", r"C:\Users\Семён\AppData\Roaming\io.github.primusfixer.karman").unwrap();
+        let data = bundle(r"C:\Users\Пётр\AppData\Local\Karman\karman.exe", r"C:\Users\Пётр\AppData\Roaming\io.github.primusfixer.karman").unwrap();
         assert_eq!(&data[..4], b"PK\x03\x04");
         let text = String::from_utf8_lossy(&data);
         assert!(text.contains("manifest.json") && text.contains("icon.png"));

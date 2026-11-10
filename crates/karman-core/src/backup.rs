@@ -50,14 +50,14 @@ const REC_EVENTS: u8 = 2;
 const REC_BLOB: u8 = 3;
 const REC_END: u8 = 0xFF;
 
-fn random<const N: usize>() -> Result<[u8; N]> {
+pub(crate) fn random<const N: usize>() -> Result<[u8; N]> {
     let mut b = [0u8; N];
     getrandom::fill(&mut b).map_err(|e| Error::Random(e.to_string()))?;
     Ok(b)
 }
 
 /// Затирает ключ в памяти.
-fn wipe(b: &mut [u8]) {
+pub(crate) fn wipe(b: &mut [u8]) {
     b.fill(0);
     std::hint::black_box(b);
 }
@@ -78,15 +78,28 @@ impl Kdf {
     /// 64 МБ и 3 прохода: на телефоне около секунды, перебор паролей — дорогой.
     pub const DEFAULT: Kdf = Kdf { m_kib: 64 * 1024, t: 3, p: 1 };
 
+    /// Чужой или испорченный файл не должен заставить считать ключ часами или съесть всю память.
+    pub(crate) fn valid(self) -> bool {
+        (8 * 1024..=256 * 1024).contains(&self.m_kib) && (1..=10).contains(&self.t) && (1..=4).contains(&self.p)
+    }
+
     fn check(self) -> Result<()> {
-        // Чужой или испорченный файл не должен заставить считать ключ часами или съесть всю память.
-        let ok = (8 * 1024..=256 * 1024).contains(&self.m_kib) && (1..=10).contains(&self.t) && (1..=4).contains(&self.p);
-        if ok {
+        if self.valid() {
             Ok(())
         } else {
             Err(Error::Backup("Копия не открывается: неподходящие параметры ключа".into()))
         }
     }
+}
+
+/// Argon2id от пароля — общий для копий и облака. Параметры должны быть проверены (`Kdf::valid`).
+pub(crate) fn derive_raw(password: &str, salt: &[u8; 16], kdf: Kdf) -> Result<[u8; 32]> {
+    let params = Params::new(kdf.m_kib, kdf.t, kdf.p, Some(32)).map_err(|e| Error::Backup(e.to_string()))?;
+    let mut key = [0u8; 32];
+    Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
+        .hash_password_into(password.as_bytes(), salt, &mut key)
+        .map_err(|e| Error::Backup(e.to_string()))?;
+    Ok(key)
 }
 
 /// Пароль копии: не короче восьми символов.
@@ -125,12 +138,15 @@ impl BackupKey {
 
     pub fn derive(password: &str, salt: [u8; 16], kdf: Kdf) -> Result<BackupKey> {
         kdf.check()?;
-        let params = Params::new(kdf.m_kib, kdf.t, kdf.p, Some(32)).map_err(|e| Error::Backup(e.to_string()))?;
-        let mut key = [0u8; 32];
-        Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
-            .hash_password_into(password.as_bytes(), &salt, &mut key)
-            .map_err(|e| Error::Backup(e.to_string()))?;
-        Ok(BackupKey { salt, kdf, key })
+        Ok(BackupKey { salt, kdf, key: derive_raw(password, &salt, kdf)? })
+    }
+
+    /// Этот ли пароль у ключа копий: тот же пароль с той же солью даёт тот же ключ.
+    pub fn matches(&self, password: &str) -> Result<bool> {
+        let mut k = derive_raw(password, &self.salt, self.kdf)?;
+        let same = k.iter().zip(self.key.iter()).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0;
+        wipe(&mut k);
+        Ok(same)
     }
 
     /// Для хранения в базе: «1:память:проходы:потоки:соль:ключ».

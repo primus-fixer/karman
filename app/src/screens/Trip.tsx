@@ -4,6 +4,7 @@ import type { Nav } from '../App';
 import { daysText, dMon, dNum, dRange, fmt2, parseAmount, plain, plural, rub } from '../format';
 import { DOC_LABEL, NEXT, statusIndex, tripControls, tripSummary } from '../logic';
 import { Icon, OpRow, Rail, Seg, Thumbs, type OpActions } from '../ui';
+import { TripCheck } from './Review';
 import OvertimeTab, { type OtActions } from './Overtime';
 
 export type TripTab = 'summary' | 'report' | 'ops' | 'docs' | 'ot';
@@ -19,6 +20,8 @@ export type TripActions = {
   copy: (text: string, label: string) => void;
   /** Архив снимков и файлов чеков поездки (на компьютере). */
   zip: (tripId: string) => void;
+  /** Хранилище закрылось — на экран входа. */
+  locked: () => void;
 };
 
 function CopyField({ label, value, copy }: { label: string; value: string; copy: TripActions['copy'] }) {
@@ -322,6 +325,7 @@ function Report({ snap, tv, act, part, setPart, isPhone }: { snap: Snapshot; tv:
         </>
       ) : (
         <>
+          <TripCheck tripId={t.id} locked={act.locked} />
           {excluded.length > 0 && (
             <section className="warnbox">
               <h2 className="h2 warn" style={{ fontSize: 16 }}>

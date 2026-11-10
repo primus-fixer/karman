@@ -7,6 +7,7 @@ import { Checks, ErrorText, Icon, Seg } from '../ui';
 import AiSection from './Ai';
 import BackupSection from './Backup';
 import ClaudeSection from './Claude';
+import CloudSync from './Cloud';
 import { OvertimeSettings } from './Overtime';
 
 export type ThemeState = { scheme: string; mode: ThemeMode };
@@ -713,21 +714,17 @@ export default function Settings({
           </span>
         </div>
         <SyncWifi mobile={mobile} onSynced={refresh} />
-        {[
-          ['cloud', 'Личное облако', 'Яндекс Диск и Google Drive — позже'],
-          ['server', 'Личный сервер', 'VPS или NAS — вместе с совместным доступом'],
-        ].map(([icon, name, note]) => (
-          <div key={icon} className="setrow" style={{ minHeight: 58, marginTop: icon === 'cloud' ? 14 : 0 }}>
-            <span style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <Icon name={icon} size={22} />
-              <span className="stack">
-                <span>{name}</span>
-                <span className="note">{note}</span>
-              </span>
+        <CloudSync />
+        <div className="setrow" style={{ minHeight: 58, marginTop: 14 }}>
+          <span style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <Icon name="server" size={22} />
+            <span className="stack">
+              <span>Личный сервер</span>
+              <span className="note">VPS или NAS — вместе с совместным доступом</span>
             </span>
-            <span className="note faint">скоро</span>
-          </div>
-        ))}
+          </span>
+          <span className="note faint">скоро</span>
+        </div>
       </section>
 
       <ClaudeSection mobile={mobile} run={run} flash={flash} locked={refresh} />

@@ -361,3 +361,30 @@ export function tripControls(snap: Snapshot, tv: TripView, ops: Op[]): Control[]
 }
 
 export { fmt2, rub };
+
+/** Название для сравнения: без регистра, цифр и знаков — как в ядре (insights::norm_title). */
+export function normTitle(t: string): string {
+  return t
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^a-zа-я]+/g, ' ')
+    .trim();
+}
+
+/**
+ * Категория по истории, без ИИ: последняя операция с тем же названием и того же вида
+ * (рабочий расход поездки, личный расход, доход поездки, личный доход).
+ */
+export function catFromHistory(ops: Op[], title: string, dir: 'out' | 'in' | 'move', trip: boolean): string | null {
+  const key = normTitle(title);
+  if (dir === 'move' || key.length < 3) return null;
+  const kinds = dir === 'out' ? (trip ? ['work', 'food'] : ['personal']) : trip ? ['advance', 'reimbursement'] : ['income'];
+  let best: Op | null = null;
+  for (const o of ops) {
+    if (!kinds.includes(o.kind) || o.debt || normTitle(o.title) !== key) continue;
+    if (!best || o.date > best.date) best = o;
+  }
+  if (!best) return null;
+  return best.kind === 'advance' ? 'advance' : best.kind === 'reimbursement' ? 'reimb' : best.cat;
+}
+

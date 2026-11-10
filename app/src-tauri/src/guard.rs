@@ -429,6 +429,8 @@ pub fn on_focus(app: &AppHandle, focused: bool) {
         }
         return;
     }
+    // Вернулись в «Карман» — заодно обменяться с облаком, если давно не обменивались.
+    crate::cloud::resumed();
     if let Some(since) = g.hidden_since.take() {
         if g.pin && !g.locked && since.elapsed() >= lock_after() {
             g.locked = true;

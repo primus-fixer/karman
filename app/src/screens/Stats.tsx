@@ -3,6 +3,7 @@ import { api, LOCKED, message, type MonthStat, type Snapshot, type StatSpan, typ
 import { NB, addDays, dRange, fmt, plural, rub } from '../format';
 import { CATS } from '../logic';
 import { Icon, Seg } from '../ui';
+import { MonthCard } from './Review';
 import type { FinanceActions } from './Finance';
 
 const NOM = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
@@ -409,6 +410,7 @@ export default function StatsScreen({ snap, act, mobile, openTrip }: { snap: Sna
         </div>
       </div>
       {error && <p className="error">{error}</p>}
+      {stats && at === 'month' && stats.from <= snap.today && snap.today <= stats.to && <MonthCard snap={snap} locked={act.locked} />}
       {stats && (
         <div className="stack gap26" style={{ opacity: busy ? 0.6 : 1, transition: 'opacity .15s' }}>
           <section className="stack">

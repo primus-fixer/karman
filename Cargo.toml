@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["crates/karman-core", "crates/karman-secure", "app/src-tauri"]
+members = ["crates/karman-core", "crates/karman-secure", "crates/karman-cloud", "app/src-tauri"]
 
 [workspace.package]
-version = "0.12.0"
+version = "0.13.0"
 edition = "2021"
 publish = false
 

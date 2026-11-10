@@ -174,7 +174,27 @@ export type ClaudeStatus = { desktop: boolean; on: boolean; write: boolean; comm
 
 /** ИИ в «Кармане»: ключ API Claude на этом устройстве, распознавание нарядов и счётчик запросов (usd — оценка). */
 export type AiUsage = { n: number; usd: number };
-export type AiStatus = { key: boolean; tail: string; workspace: string; checked: number | null; orders: boolean; model: string; month: AiUsage; total: AiUsage };
+/** Функции ИИ, которые можно выключить: наряды, документы, фраза, вопросы, запись из чата, проверка и сводка. */
+export type AiFeature = 'orders' | 'docs' | 'phrase' | 'chat' | 'write' | 'review';
+export type AiStatus = { key: boolean; tail: string; workspace: string; checked: number | null; features: Record<AiFeature, boolean>; orders: boolean; model: string; chat_model: string; month: AiUsage; total: AiUsage };
+/** Фраза → черновик окна ввода: те же поля, что в нём (сумма — в валюте счёта, 0 — не названа). */
+export type PhraseDraft = { dir: 'out' | 'in' | 'move'; amount: number; scope: string; cat: string; acc: string; to: string; date: string; comment: string; document: boolean; unclear: string; usd: number };
+/** Билет, счёт гостиницы или чек → поля расхода. */
+export type ExpenseScan = { not_document: boolean; kind: string; cat: string; amount: number; currency: string; date: string | null; comment: string; problems: string; usd: number };
+/** Приказ или заявка → поля новой поездки; plan — суммы по статьям 01–05 в копейках. */
+export type TripScan = { not_document: boolean; id: string; city: string; region: string; req_no: string; req_date: string | null; start: string | null; end: string | null; goal: string; plan: number[]; employee: string; problems: string; usd: number };
+export type ChatItem = { role: 'user' | 'assistant'; text: string; actions: string[]; error: boolean };
+export type ChatView = { items: ChatItem[]; usd: number; write: boolean };
+/** Находки Claude: problem — исправить, check — проверить, fine — в порядке. */
+export type Finding = { level: 'problem' | 'check' | 'fine'; text: string };
+export type Review = { summary: string; items: Finding[]; checks: string[]; usd: number };
+export type MonthSummary = { summary: string; items: Finding[]; usd: number };
+/** Сводка месяца без ИИ (суммы в копейках). */
+export type CatTrend = { cat: string; name: string; spent: number; usual: number };
+export type Recurring = { title: string; cat: string; amount: number; months: number; last: string; next: string; in_plans: boolean };
+export type BigSpend = { id: string; date: string; title: string; cat: string; amount: number };
+export type Forecast = { now: number; income: number; planned: number; spending: number; per_day: number; days_left: number; end: number };
+export type Insights = { month: string; days: number; spent: number; income: number; usual_to_date: number; cats: CatTrend[]; unusual: CatTrend[]; big: BigSpend[]; recurring: Recurring[]; forecast: Forecast };
 /** Почему день взят так: будни, выходной, вечерний допуск — или не взят: до ввода в бригаду, после вывода, вне поездки, нет окончания. */
 export type AiRule = 'weekday' | 'off' | 'evening' | 'before' | 'after' | 'outside' | 'no_end';
 /** День из наряда: время по наряду и что пойдёт в таблицу. */
@@ -278,10 +298,41 @@ export type BackupStatus = {
   last: BackupLast | null;
   error: string | null;
   running: boolean;
+  /** Облако подключено: оно зашифровано тем же паролем. */
+  cloud: boolean;
 };
 /** Что в файле копии (пароль подошёл, файл прочитан целиком). */
 export type BackupInfo = { created: number; device: string; app: string; ops: number; trips: number; events: number; blobs: number; bytes: number };
 export type RestoreResult = { events: number; blobs: number; ops: number; trips: number; snapshot: Snapshot };
+
+/** yadisk — Яндекс Диск по паролю приложения, webdav — другой сервер WebDAV; yandex и google — вход по коду. */
+export type CloudProvider = 'yadisk' | 'webdav' | 'yandex' | 'google';
+/** Чем занят обмен с облаком. */
+export type CloudStep = { step: 'events' } | { step: 'upload'; done: number; total: number } | { step: 'download'; done: number; total: number };
+export type CloudLast = { at: number; received: number; sent: number; files_received: number; files_sent: number; files_waiting: number; problems: string[] };
+export type CloudProblem = { kind: 'auth' | 'space' | 'offline' | 'server' | 'gone' | 'replaced' | 'conflict' | 'newer' | 'format' | 'cancelled'; text: string; at: number };
+/** Облако на этом устройстве: off — не подключено, signin — ждём код, password — нужен пароль копий, relogin — вход устарел, ready — подключено. */
+export type CloudStatus = {
+  desktop: boolean;
+  /** Чем можно подключиться: password — логин и пароль, code — вход по коду в браузере. */
+  providers: { code: CloudProvider; title: string; kind: 'password' | 'code' }[];
+  state: 'off' | 'signin' | 'password' | 'relogin' | 'ready';
+  provider: CloudProvider | null;
+  title: string | null;
+  login: { provider: CloudProvider; title: string; user_code: string; url: string; seconds_left: number } | null;
+  /** Вход по паролю: сервер и логин. */
+  dav: { url: string; host: string; user: string } | null;
+  cloud_exists: boolean;
+  backup_password: boolean;
+  every: 'auto' | 'manual';
+  running: boolean;
+  progress: CloudStep | null;
+  last: CloudLast | null;
+  error: CloudProblem | null;
+  key_pending: boolean;
+  notice: string | null;
+};
+export type CloudEvent = { running: boolean; received: number; step: CloudStep | null };
 
 /** Файл копии уходит в ядро кусками по 4 МБ: так он читается и на телефоне, и без лишней памяти. */
 const UPLOAD_CHUNK = 4 << 20;
@@ -380,13 +431,39 @@ export const api = {
   aiKeySet: (key: string) => invoke<AiStatus>('ai_key_set', { today: today(), key }),
   aiKeyDelete: () => invoke<AiStatus>('ai_key_delete', { today: today() }),
   aiWorkspaceSet: (workspace: string) => invoke<AiStatus>('ai_workspace_set', { today: today(), workspace }),
-  aiSet: (orders: boolean) => invoke<AiStatus>('ai_set', { today: today(), orders }),
+  aiSet: (feature: AiFeature, on: boolean) => invoke<AiStatus>('ai_set', { today: today(), feature, on }),
   /** Проверка ключа — один короткий запрос к Claude. */
   aiCheck: () => invoke<AiStatus>('ai_check', { today: today() }),
   /** Листы наряда → Claude: поля наряда и дни для таблицы. Ничего не сохраняет. */
   aiOrderScan: (trip: string, att: string[]) => invoke<OrderScan>('ai_order_scan', { today: today(), trip, att }),
+  /** Фраза → черновик окна ввода (Claude Haiku 5.5). */
+  aiPhrase: (text: string) => invoke<PhraseDraft>('ai_phrase', { today: today(), text }),
+  /** Билет, счёт гостиницы или чек → поля расхода (Claude Opus 5.5). */
+  aiDocScan: (att: string[], trip: string | null) => invoke<ExpenseScan>('ai_doc_scan', { today: today(), att, trip }),
+  /** Приказ или заявка → поля новой поездки (Claude Opus 5.5). */
+  aiTripScan: (att: string[]) => invoke<TripScan>('ai_trip_scan', { today: today(), att }),
+  aiChatSend: (text: string) => invoke<ChatView>('ai_chat_send', { today: today(), text }),
+  aiChatView: () => invoke<ChatView>('ai_chat_view'),
+  aiChatReset: () => invoke<ChatView>('ai_chat_reset'),
+  aiTripCheck: (trip: string) => invoke<Review>('ai_trip_check', { today: today(), trip }),
+  /** Сводка месяца без ИИ. */
+  monthInsights: () => invoke<Insights>('month_insights', { today: today() }),
+  aiMonthSummary: () => invoke<MonthSummary>('ai_month_summary', { today: today() }),
   /** Наряды и дни одним действием; orders в ответе — номера сохранённых нарядов (для «Вернуть»). */
   otApply: (orders: WorkOrder[], del: string[], days: WorkDay[]) => invoke<{ snap: Snapshot; orders: string[] }>('ot_apply', { today: today(), orders, delete: del, days }),
+  cloudStatus: () => invoke<CloudStatus>('cloud_status'),
+  cloudLogin: (provider: CloudProvider) => invoke<CloudStatus>('cloud_login', { provider }),
+  cloudOpenPage: () => invoke<null>('cloud_open_page'),
+  /** Вход по логину и паролю: Яндекс Диск (пароль приложения) или другой сервер WebDAV. */
+  cloudDavLogin: (kind: 'yadisk' | 'webdav', url: string | null, user: string, password: string) => invoke<CloudStatus>('cloud_dav_login', { kind, url, user, password }),
+  /** Страница Яндекс ID, где создают пароль приложения. */
+  cloudAppPasswords: () => invoke<null>('cloud_app_passwords'),
+  cloudLoginCancel: () => invoke<CloudStatus>('cloud_login_cancel'),
+  cloudLoginCheck: () => invoke<CloudStatus>('cloud_login_check'),
+  cloudPassword: (password: string) => invoke<CloudStatus>('cloud_password', { password }),
+  cloudSyncNow: () => invoke<CloudStatus>('cloud_sync_now'),
+  cloudEvery: (every: CloudStatus['every']) => invoke<CloudStatus>('cloud_every', { every }),
+  cloudDisconnect: (wipe: boolean) => invoke<CloudStatus>('cloud_disconnect', { wipe }),
 };
 
 /** Ядро сообщает, что «Карман» заблокировался (5 минут в фоне). */
@@ -399,6 +476,12 @@ export async function onLocked(cb: () => void): Promise<() => void> {
 export async function onBackup(cb: () => void): Promise<() => void> {
   const { listen } = await import('@tauri-apps/api/event');
   return listen('backup', cb);
+}
+
+/** Обмен с облаком начался, идёт или закончился; `received` — сколько нового пришло. */
+export async function onCloud(cb: (e: CloudEvent) => void): Promise<() => void> {
+  const { listen } = await import('@tauri-apps/api/event');
+  return listen<CloudEvent>('cloud', (ev) => cb(ev.payload));
 }
 
 /** Загрузились свежие курсы ЦБ — остатки на счетах в валюте пересчитаны. */

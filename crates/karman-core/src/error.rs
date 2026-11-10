@@ -26,6 +26,37 @@ pub enum Error {
     Backup(String),
     #[error("Пароль не подходит к этой копии")]
     BackupPassword,
+    /// Облако: что случилось и что сказать.
+    #[error("{1}")]
+    Cloud(CloudFail, String),
+    #[error("Пароль не подходит: облако зашифровано другим паролем копий")]
+    CloudPassword,
+}
+
+/// Что случилось с облаком — от этого зависит подсказка на экране.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CloudFail {
+    /// Вход устарел или доступ отозван — войти заново.
+    Auth,
+    /// На диске нет места.
+    Space,
+    /// Нет связи с облаком.
+    Offline,
+    /// Облако ответило ошибкой — обычно временной.
+    Server,
+    /// Данные «Кармана» в облаке удалены.
+    Gone,
+    /// Облако подключили заново, с другим ключом.
+    Replaced,
+    /// Записи этого устройства в облаке расходятся с базой.
+    Conflict,
+    /// Файл записан более новой версией «Кармана».
+    Newer,
+    /// Файл или ответ облака не разобрать.
+    Format,
+    /// Обмен остановлен.
+    Cancelled,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, inApp, LOCKED, message, onBackup, onClaude, onFx, onLocked, type Attachment, type DeviceInfo, type LockStatus, type Op, type Snapshot, type TripStatus } from './api';
+import { api, inApp, LOCKED, message, onBackup, onClaude, onCloud, onFx, onLocked, type Attachment, type DeviceInfo, type LockStatus, type Op, type Snapshot, type TripStatus } from './api';
 import Entry, { defaultDraft, draftFromOp, tripDraft, type EntryDraft } from './Entry';
+import { aiOn, loadAi, useAi } from './aiState';
+import ChatSheet from './screens/Chat';
 import { rub } from './format';
 import { dueText } from './logic';
 import { bioLabel, LockScreen, PinFlow, type PinMode } from './Lock';
@@ -97,6 +99,10 @@ export default function App() {
   const [tripFrom, setTripFrom] = useState<Tab>('trips');
   const [formId, setFormId] = useState<string | null>(null);
   const [entry, setEntry] = useState<{ draft: EntryDraft; key: number; editing: Op | null } | null>(null);
+  /** «Спросить Claude» открыт (на компьютере — вместо панели ввода, на телефоне — поверх экрана). */
+  const [chat, setChat] = useState(false);
+  const ai = useAi();
+  const canChat = aiOn(ai, 'chat');
   const [toast, setToast] = useState<Toast | null>(null);
   const [theme, setTheme] = useState<ThemeState>(loadTheme);
   const [dark, setDark] = useState(false);
@@ -161,6 +167,8 @@ export default function App() {
       (s) => {
         setSnap(s);
         setFatal(null);
+        // Состояние ИИ — после входа (пока «Карман» заблокирован, его не прочитать).
+        loadAi();
         // На широком экране панель ввода открыта сразу — в том же обновлении, что и первые данные.
         // Отдельный эффект после отрисовки спорил с первым быстрым нажатием, и панель оставалась на экране.
         if (firstLoad.current) {
@@ -212,11 +220,16 @@ export default function App() {
     const unFx = onFx(() => api.snapshot().then(setSnap, () => undefined)).catch(() => () => undefined);
     // Автокопия записала, когда сделана, — обновить напоминание о копиях.
     const unBackup = onBackup(() => api.snapshot().then(setSnap, () => undefined)).catch(() => () => undefined);
+    // Через облако пришли записи или снимки чеков — обновить экраны.
+    const unCloud = onCloud((e) => {
+      if (e.received > 0) api.snapshot().then(setSnap, () => undefined);
+    }).catch(() => () => undefined);
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
       unlisten.then((f) => f());
       unFx.then((f) => f());
       unBackup.then((f) => f());
+      unCloud.then((f) => f());
     };
   }, [refresh, goLocked, showNotice, showLock]);
 
@@ -361,7 +374,8 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
   backRef.current = () => {
-    if (entry && isPhone) setEntry(null);
+    if (chat && isPhone) setChat(false);
+    else if (entry && isPhone) setEntry(null);
     else if (screen === 'trip-form') {
       if (formId) setScreen('trip');
       else setScreen(tripFrom);
@@ -375,7 +389,18 @@ export default function App() {
     if (!snap) return;
     if (isPhone && !entry) pushHistory();
     if (isPhone) setToast(null);
+    setChat(false);
     setEntry({ draft: draft ?? defaultDraft(snap), key: Date.now(), editing: editing ?? null });
+  };
+  /** «Спросить Claude»: на компьютере — вместо панели ввода. */
+  const openChat = () => {
+    if (isPhone && !chat) pushHistory();
+    if (!isPhone) setEntry(null);
+    setChat(true);
+  };
+  const closeChat = () => {
+    if (isPhone) back();
+    else setChat(false);
   };
   const closeEntry = () => {
     if (isPhone) back();
@@ -452,6 +477,7 @@ export default function App() {
   };
 
   const tripAct: TripActions = {
+    locked: goLocked,
     advance: async (id) => {
       const s = await run(api.tripAdvance(id));
       const tv = s?.trips.find((t) => t.trip.id === id);
@@ -544,6 +570,7 @@ export default function App() {
         act={opAct}
         fin={finAct}
         mobile={mobile}
+        ask={canChat ? openChat : undefined}
         openFinance={(v) => {
           setFinView(v);
           nav.go('finance');
@@ -578,6 +605,7 @@ export default function App() {
         key={formId ?? 'new'}
         snap={snap}
         tripId={formId}
+        mobile={mobile}
         onCancel={back}
         onSave={async (trip, isNew) => {
           const s = await run(api.tripSave(trip), isNew ? `Поездка ${trip.id} создана` : 'Поездка сохранена');
@@ -599,6 +627,7 @@ export default function App() {
   const entryEl = entry && (
     <Entry key={entry.key} snap={snap} initial={entry.draft} editing={entry.editing} isPhone={isPhone} mobile={mobile} onSave={(op) => run(api.opSave(op))} onClose={closeEntry} flash={flash} />
   );
+  const chatEl = chat && canChat && <ChatSheet snap={snap} isPhone={isPhone} onClose={closeChat} locked={goLocked} />;
 
   return (
     <>
@@ -610,6 +639,12 @@ export default function App() {
             <Icon name={entry ? 'x' : 'plus'} size={20} stroke={2} />
             Новая операция
           </button>
+          {canChat && (
+            <button type="button" className={'navitem' + (chat ? ' on' : '')} aria-expanded={chat} onClick={() => (chat ? setChat(false) : openChat())}>
+              <Icon name="spark" size={20} />
+              Спросить Claude
+            </button>
+          )}
           {TABS.map((t) => (
             <button key={t.id} type="button" className={'navitem' + (tab === t.id ? ' on' : '')} aria-current={tab === t.id ? 'page' : undefined} onClick={() => nav.go(t.id)}>
               <Icon name={t.icon} size={20} />
@@ -621,7 +656,7 @@ export default function App() {
       <main className="main" ref={mainRef}>
         <div className={'inner' + (screen === 'trip' ? '' : ' narrow')}>{body}</div>
       </main>
-      {!isPhone && entryEl}
+      {!isPhone && (chatEl || entryEl)}
       {isPhone && (
         <nav className="bottomnav" aria-label="Разделы">
           {TABS.map((t) => (
@@ -632,7 +667,13 @@ export default function App() {
           ))}
         </nav>
       )}
-      {isPhone && !entry && (screen === 'overview' || screen === 'feed' || screen === 'trips') && (
+      {isPhone && chatEl && (
+        <>
+          <button type="button" className="scrim" aria-label="Закрыть «Спросить Claude»" onClick={closeChat} />
+          {chatEl}
+        </>
+      )}
+      {isPhone && !entry && !chat && (screen === 'overview' || screen === 'feed' || screen === 'trips') && (
         <button type="button" className="fab" aria-label="Записать операцию" onClick={() => openEntry()}>
           <Icon name="plus" size={26} stroke={2} />
         </button>
