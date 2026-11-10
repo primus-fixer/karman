@@ -4,6 +4,7 @@ import type { PinMode } from '../Lock';
 import { SIGN, amountText, dMon, parseAmount, rateText as fxText, rub } from '../format';
 import { SCHEMES, type ThemeMode } from '../theme';
 import { Checks, ErrorText, Icon, Seg } from '../ui';
+import AiSection from './Ai';
 import BackupSection from './Backup';
 import ClaudeSection from './Claude';
 import { OvertimeSettings } from './Overtime';
@@ -730,6 +731,8 @@ export default function Settings({
       </section>
 
       <ClaudeSection mobile={mobile} run={run} flash={flash} locked={refresh} />
+
+      <AiSection snap={snap} flash={flash} locked={refresh} />
 
       <BackupSection snap={snap} mobile={mobile} run={run} flash={flash} />
 

@@ -64,6 +64,8 @@ pub fn day_id(trip: &str, date: Date) -> String {
 /// Правила подсчёта: все величины — в минутах.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct Rules {
+    /// Начало рабочего дня: с него в будни пишется время работы по наряду.
+    pub day_start: u32,
     /// Конец рабочего дня: с него в будни идут переработки.
     pub day_end: u32,
     /// Сколько первых часов переработки в будни — с коэффициентом 1,5.
@@ -81,11 +83,14 @@ impl Default for Rules {
 }
 
 impl Rules {
-    pub const DEFAULT: Rules = Rules { day_end: 17 * 60, first: 120, lunch: 60, step: 30 };
+    pub const DEFAULT: Rules = Rules { day_start: 8 * 60, day_end: 17 * 60, first: 120, lunch: 60, step: 30 };
 
-    /// Из настроек: «ot.day_end» (17:00), «ot.lunch» (минуты), «ot.round» (минуты).
+    /// Из настроек: «ot.day_start» (8:00), «ot.day_end» (17:00), «ot.lunch» (минуты), «ot.round» (минуты).
     pub fn from_settings(s: &BTreeMap<String, String>) -> Rules {
         let mut r = Rules::DEFAULT;
+        if let Some(t) = s.get("ot.day_start").and_then(|v| parse_time(v)).filter(|t| (5 * 60..=12 * 60).contains(t)) {
+            r.day_start = t;
+        }
         if let Some(t) = s.get("ot.day_end").and_then(|v| parse_time(v)).filter(|t| (12 * 60..=22 * 60).contains(t)) {
             r.day_end = t;
         }
@@ -703,7 +708,11 @@ mod tests {
         s.insert("ot.lunch".to_string(), "0".to_string());
         s.insert("ot.round".to_string(), "15".to_string());
         let own = Rules::from_settings(&s);
-        assert_eq!(own, Rules { day_end: 18 * 60, first: 120, lunch: 0, step: 15 });
+        assert_eq!(own, Rules { day_start: 8 * 60, day_end: 18 * 60, first: 120, lunch: 0, step: 15 });
+        s.insert("ot.day_start".to_string(), "9:00".to_string());
+        assert_eq!(Rules::from_settings(&s).day_start, 9 * 60);
+        s.insert("ot.day_start".to_string(), "14:00".to_string());
+        assert_eq!(Rules::from_settings(&s).day_start, 8 * 60, "начало дня после полудня не принимается");
         assert_eq!(day_hours(false, 8 * 60, 20 * 60 + 40, &own), Hours { x15: 120, x2: 45, off: 0 });
         assert_eq!(day_hours(true, 9 * 60, 18 * 60, &own).off, 9 * 60);
         s.insert("ot.round".to_string(), "7".to_string());

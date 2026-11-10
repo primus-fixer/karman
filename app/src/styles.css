@@ -1874,6 +1874,48 @@ button.otday.open {
   min-width: 0;
 }
 
+/* Наряд от Claude: дни с галочкой, правилом, временем по наряду и в таблицу. */
+.scanday {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  min-width: 0;
+}
+.scanpick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 220px;
+  cursor: pointer;
+}
+.scanpick input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--work);
+}
+.scanorder {
+  flex: none;
+  width: 11.5em;
+}
+.scantimes {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+.scantimes .field {
+  width: 70px;
+  height: 38px;
+  padding: 0 6px;
+  text-align: center;
+}
+
 /* ——— Claude ——— */
 .codebox {
   margin: 0;
