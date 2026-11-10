@@ -4,6 +4,7 @@
 //! Чтение — `read`, запись — `plan`: она только готовит события журнала и обратные к ним
 //! (для кнопки «Вернуть»), а записывает их приложение. Суммы — в рублях (числом), даты — ГГГГ-ММ-ДД.
 
+use crate::ai;
 use crate::book::{self, Snapshot};
 use crate::date::Date;
 use crate::db::Store;
@@ -45,6 +46,19 @@ pub const OWN_IN: [&str; 3] = ["salary", "interest", "otherIn"];
 
 fn obj(props: Value, required: &[&str]) -> Value {
     json!({ "type": "object", "properties": props, "required": required, "additionalProperties": false })
+}
+
+/// Что прочитано с наряда: та же схема, что для распознавания в «Кармане», и номер поездки.
+fn order_days_schema() -> Value {
+    let mut s = ai::order_schema();
+    if let Some(p) = s["properties"].as_object_mut() {
+        p.remove("is_order");
+        p.insert("trip".into(), json!({ "type": "string", "description": "Номер поездки; без него — поездка, в которой человек сейчас" }));
+    }
+    if let Some(r) = s["required"].as_array_mut() {
+        r.retain(|x| x != "is_order");
+    }
+    s
 }
 
 /// Все инструменты по порядку: сначала чтение, потом запись.
@@ -145,6 +159,13 @@ pub fn list() -> Vec<ToolInfo> {
             write: false,
         },
         ToolInfo {
+            name: "order_days",
+            title: "Дни по наряду",
+            description: "Наряд-допуск, который ты прочитал со снимка или PDF: «Карман» сам считает время дней по правилам таблицы переработок (будни — с начала рабочего дня и не раньше его конца, выходные и вечерний допуск — по наряду, дни до ввода работника в бригаду не берутся) и показывает, что в днях уже записано. Передай прочитанное как есть, время не пересчитывай. Ничего не записывает: покажи человеку дни и только после его согласия вызови save_order.",
+            input_schema: order_days_schema(),
+            write: false,
+        },
+        ToolInfo {
             name: "add_operation",
             title: "Записать операцию",
             description: "Записать расход или доход. В поездке: рабочий расход (с документом идёт в отчёт 1С, без документа — из суточных), питание (за счёт суточных), аванс или возмещение. Вне поездки: личный или семейный расход, доход. Если неясно, поездка это или личное и какая категория, — спросите человека.",
@@ -193,7 +214,7 @@ pub fn list() -> Vec<ToolInfo> {
         ToolInfo {
             name: "set_work_day",
             title: "Рабочий день",
-            description: "Время работы за день поездки — для отчёта по переработкам. Время ЧЧ:ММ; работали за полночь — окончание как есть, например 2:00. Без времени и комментария день очищается.",
+            description: "Время работы за день поездки — для отчёта по переработкам. Время ЧЧ:ММ; работали за полночь — окончание как есть, например 2:00. Без времени и комментария день очищается. Дни по наряду-допуску не вписывай по одному — для них order_days и save_order.",
             input_schema: obj(
                 json!({
                     "trip": { "type": "string", "description": "Номер поездки" },
@@ -209,7 +230,7 @@ pub fn list() -> Vec<ToolInfo> {
         ToolInfo {
             name: "add_work_order",
             title: "Записать наряд",
-            description: "Наряд-допуск поездки: номер, с какого и по какое число, объект и работы. Снимки наряда добавляются в «Кармане».",
+            description: "Наряд-допуск поездки без дней: номер, с какого и по какое число, объект и работы. Снимки наряда добавляются в «Кармане». Наряд со снимка или PDF вместе с днями — через order_days и save_order.",
             input_schema: obj(
                 json!({
                     "trip": { "type": "string", "description": "Номер поездки" },
@@ -219,6 +240,37 @@ pub fn list() -> Vec<ToolInfo> {
                     "object": { "type": "string", "description": "Объект и работы" }
                 }),
                 &["trip", "from", "to"],
+            ),
+            write: true,
+        },
+        ToolInfo {
+            name: "save_order",
+            title: "Записать наряд с днями",
+            description: "Записать наряд и его рабочие дни одним действием — в «Кармане» это одна запись с кнопкой «Вернуть». Вызывай после order_days и согласия человека: дни — те, что он подтвердил (time — как в order_days или как он поправил). Если наряд уже записан, передай его id из order_days. Дни, где уже записано другое время, заменяются только с replace: true. Снимки наряда добавляются в «Кармане».",
+            input_schema: obj(
+                json!({
+                    "trip": { "type": "string", "description": "Номер поездки" },
+                    "id": { "type": "string", "description": "Код наряда из order_days, если он уже записан" },
+                    "number": { "type": "string", "description": "Номер наряда, например 4/30" },
+                    "from": date,
+                    "to": date,
+                    "object": { "type": "string", "description": "Объект и работы — он же комментарий дня, если свой не вписан" },
+                    "days": {
+                        "type": "array",
+                        "description": "Дни, которые человек подтвердил",
+                        "items": obj(
+                            json!({
+                                "date": date,
+                                "start": { "type": "string", "description": "Начало, например 8:00" },
+                                "end": { "type": "string", "description": "Окончание, например 23:50" },
+                                "comment": { "type": "string", "description": "Комментарий дня, если не «Объект и работы»" },
+                                "replace": { "type": "boolean", "description": "Заменить уже записанное в этот день время — только с согласия человека" }
+                            }),
+                            &["date", "start", "end"],
+                        )
+                    }
+                }),
+                &["trip", "from", "to", "days"],
             ),
             write: true,
         },
@@ -350,6 +402,7 @@ pub fn read(store: &Store, today: Date, name: &str, args: &Value) -> ToolResult<
         "stats" => stats(store, today, args),
         "debts" => Ok(debts(&book::snapshot(store, today).map_err(e)?)),
         "categories" => Ok(categories(&book::snapshot(store, today).map_err(e)?)),
+        "order_days" => order_days(store, today, args),
         _ if is_write(name) => Err(format!("{name} меняет данные — это запись, а не чтение")),
         _ => Err(format!("нет инструмента «{name}»")),
     }
@@ -866,6 +919,7 @@ pub fn plan(store: &Store, today: Date, name: &str, args: &Value, rate: &dyn Fn(
         }
         "set_work_day" => set_work_day(store, args),
         "add_work_order" => add_work_order(store, args),
+        "save_order" => save_order(store, args),
         "create_trip" => create_trip(store, args),
         "overtime_report" => Err("отчёт по переработкам собирает приложение".into()),
         _ if find(name).is_some() => Err(format!("{name} только читает данные")),
@@ -1063,21 +1117,23 @@ fn trip_exists(store: &Store, id: &str) -> ToolResult<Trip> {
     store.trips().map_err(|x| x.to_string())?.into_iter().find(|t| t.id == id).ok_or_else(|| format!("поездки {id} нет"))
 }
 
+/// Время «8», «8.30», «8:30» → «8:30»; пусто — пусто.
+fn arg_time(args: &Value, key: &str) -> ToolResult<String> {
+    let s = arg_str(args, key).unwrap_or_default();
+    if s.is_empty() {
+        return Ok(s);
+    }
+    let s = s.replace(['.', '-'], ":");
+    let s = if s.contains(':') { s } else { format!("{s}:00") };
+    ot::parse_time(&s).map(ot::time_text).ok_or_else(|| format!("{key}: время в виде 8:00, а пришло «{s}»"))
+}
+
 fn set_work_day(store: &Store, args: &Value) -> ToolResult<Change> {
     let e = |x: crate::error::Error| x.to_string();
     let trip = arg_str(args, "trip").ok_or("нужен номер поездки")?;
     trip_exists(store, &trip)?;
     let date = arg_date(args, "date")?.ok_or("нужна дата")?;
-    let norm = |key: &str| -> ToolResult<String> {
-        let s = arg_str(args, key).unwrap_or_default();
-        if s.is_empty() {
-            return Ok(s);
-        }
-        let s = s.replace(['.', '-'], ":");
-        let s = if s.contains(':') { s } else { format!("{s}:00") };
-        ot::parse_time(&s).map(ot::time_text).ok_or_else(|| format!("{key}: время в виде 8:00, а пришло «{s}»"))
-    };
-    let day = WorkDay { id: ot::day_id(&trip, date), trip: trip.clone(), date, start: norm("start")?, end: norm("end")?, comment: arg_str(args, "comment").unwrap_or_default(), extra: Default::default() };
+    let day = WorkDay { id: ot::day_id(&trip, date), trip: trip.clone(), date, start: arg_time(args, "start")?, end: arg_time(args, "end")?, comment: arg_str(args, "comment").unwrap_or_default(), extra: Default::default() };
     ot::check_day(&day).map_err(e)?;
     let before = store.work_days().map_err(e)?.into_iter().find(|d| d.id == day.id);
     let undo = match &before {
@@ -1116,6 +1172,204 @@ fn add_work_order(store: &Store, args: &Value) -> ToolResult<Change> {
     let result = json!({ "id": order.id, "trip": trip, "number": order.number, "from": from, "to": to, "object": order.object, "file_name": name + ".pdf" });
     let id = order.id.clone();
     Ok(Change { bodies: vec![EventBody::OrderPut { order }], undo: vec![EventBody::OrderDelete { id }], text, result })
+}
+
+/// Один и тот же номер наряда: «4/30», «4-30», «№ 4/30».
+fn same_number(a: &str, b: &str) -> bool {
+    let n = |s: &str| s.to_lowercase().replace(['-', '\\'], "/").chars().filter(|c| !c.is_whitespace() && *c != '№').collect::<String>();
+    let (a, b) = (n(a), n(b));
+    !a.is_empty() && a == b
+}
+
+fn days_word(n: usize) -> &'static str {
+    match (n % 10, n % 100) {
+        (1, x) if x != 11 => "день",
+        (2..=4, x) if !(12..=14).contains(&x) => "дня",
+        _ => "дней",
+    }
+}
+
+fn rule_ru(r: ai::Rule) -> &'static str {
+    match r {
+        ai::Rule::Weekday => "будни: с начала рабочего дня, окончание по наряду, но не раньше конца дня",
+        ai::Rule::Off => "выходной или праздник: по наряду",
+        ai::Rule::Evening => "допуск в будни вечером: по наряду",
+        ai::Rule::Before => "до ввода работника в бригаду — не берётся",
+        ai::Rule::After => "после вывода из бригады — не берётся",
+        ai::Rule::Outside => "вне дат поездки — не берётся без согласия человека",
+        ai::Rule::NoEnd => "окончание в наряде не прочитано",
+    }
+}
+
+const WEEKDAYS: [&str; 7] = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"];
+
+/// Кто работник в наряде — одной фразой.
+fn worker_text(me: &ai::Me) -> String {
+    let at = |d: Option<Date>, t: &str| d.map(|d| if t.is_empty() { d.dotted() } else { format!("{} {t}", d.dotted()) }).unwrap_or_default();
+    if !me.known {
+        return "ФИО работника не указано в «Кармане» (Настройки → Переработки), поэтому дни не отсеяны по составу бригады — спроси человека, с какого дня он в бригаде".into();
+    }
+    if !me.found {
+        return "Работника из настроек «Кармана» в наряде не нашлось — спроси человека, его ли это дни".into();
+    }
+    let mut parts = Vec::new();
+    if me.from_start {
+        parts.push(format!("{}: в бригаде с выдачи наряда", me.name));
+    } else if me.added.is_some() {
+        parts.push(format!("{}: введён в бригаду {} — дни до этого не берутся", me.name, at(me.added, &me.added_time)));
+    }
+    if me.removed.is_some() {
+        parts.push(format!("выведен {} — дни после не берутся", at(me.removed, &me.removed_time)));
+    }
+    parts.join("; ")
+}
+
+/// Наряд, прочитанный Claude: дни по правилам таблицы и что в них уже записано. Ничего не пишет.
+fn order_days(store: &Store, today: Date, args: &Value) -> ToolResult<Value> {
+    let e = |x: crate::error::Error| x.to_string();
+    let trips = store.trips().map_err(e)?;
+    let trip = match arg_str(args, "trip") {
+        Some(id) => trips.iter().find(|t| t.id == id).ok_or_else(|| format!("поездки {id} нет"))?,
+        None => active_trip(&trips, today).ok_or("укажи номер поездки (trip): сейчас нет поездки в пути")?,
+    };
+    let mut raw: ai::RawOrder = serde_json::from_value(args.clone()).map_err(|x| format!("наряд не разобрался: {x}"))?;
+    raw.is_order = true;
+    if raw.admissions.is_empty() {
+        return Err("нет строк допуска: перепиши таблицу «Ежедневный допуск к работе и время её окончания» в admissions".into());
+    }
+    let settings = store.settings().map_err(e)?;
+    let rules = Rules::from_settings(&settings);
+    let who = settings.get("ot.name").cloned().unwrap_or_default();
+    let scan = ai::plan(&raw, &who, trip.start, trip.end, &rules);
+    let written = store.work_days().map_err(e)?;
+    let existing = if scan.number.is_empty() { None } else { store.orders().map_err(e)?.into_iter().find(|o| o.trip == trip.id && same_number(&o.number, &scan.number)) };
+    let days: Vec<Value> = scan
+        .days
+        .iter()
+        .map(|d| {
+            let was = written.iter().find(|w| w.trip == trip.id && w.date == d.date);
+            let same = was.is_some_and(|w| w.start == d.start && w.end == d.end);
+            let own = was.is_some_and(|w| !w.start.is_empty() && !same);
+            let note = if same {
+                "уже так записано — передавать не нужно".to_string()
+            } else if own {
+                let w = was.expect("день есть");
+                format!("уже записано {}–{} — заменить только если человек согласен (replace: true)", w.start, w.end)
+            } else {
+                String::new()
+            };
+            json!({
+                "date": d.date,
+                "weekday": WEEKDAYS[(d.date.weekday() - 1) as usize],
+                "by_order": if d.order_end.is_empty() { d.order_start.clone() } else { format!("{}–{}", d.order_start, d.order_end) },
+                "start": d.start,
+                "end": d.end,
+                "rule": rule_ru(d.rule),
+                "take": d.take && !same && !own,
+                "written_now": was.map(|w| json!({ "start": w.start, "end": w.end, "comment": w.comment })),
+                "note": note,
+            })
+        })
+        .collect();
+    let t = ot::time_text;
+    Ok(json!({
+        "trip": trip.id,
+        "trip_dates": format!("{} – {}", trip.start.dotted(), trip.end.dotted()),
+        "order": {
+            "id": existing.as_ref().map(|o| o.id.clone()),
+            "number": scan.number,
+            "object": scan.object,
+            "from": scan.from,
+            "to": scan.to,
+            "photos_in_karman": existing.as_ref().map_or(0, |o| o.att.len()),
+        },
+        "worker": worker_text(&scan.me),
+        "brigade": scan.brigade,
+        "days": days,
+        "rules": format!(
+            "Будни — с {}, окончание по наряду, но не раньше {}. Выходные, праздники и допуск после {} — по наряду. Работа после полуночи — днём начала. Дни до ввода в бригаду не берутся.",
+            t(rules.day_start),
+            t(rules.day_end),
+            t(rules.day_end)
+        ),
+        "unclear": scan.problems,
+        "next": "Покажи человеку дни таблицей: дата, по наряду, в таблицу, правило; что не берётся — и почему. Спроси, записать ли. После согласия — save_order: trip, order.id (если есть), number, from, to, object и дни с take = true или как поправит человек. Снимки наряда «Карман» из разговора не получит — напомни добавить их в «Кармане»: «Наряды» → «Снимок».",
+    }))
+}
+
+/// Наряд и подтверждённые дни — одной записью с одной кнопкой «Вернуть».
+fn save_order(store: &Store, args: &Value) -> ToolResult<Change> {
+    let e = |x: crate::error::Error| x.to_string();
+    let trip = arg_str(args, "trip").ok_or("нужен номер поездки")?;
+    trip_exists(store, &trip)?;
+    let from = arg_date(args, "from")?.ok_or("from: с какого числа")?;
+    let to = arg_date(args, "to")?.ok_or("to: по какое число")?;
+    if to < from {
+        return Err("дата «по» раньше даты «с»".into());
+    }
+    let number = arg_str(args, "number").unwrap_or_default();
+    let object = arg_str(args, "object").unwrap_or_default();
+    let orders = store.orders().map_err(e)?;
+    let prev = match arg_str(args, "id") {
+        Some(id) => Some(orders.iter().find(|o| o.id == id && o.trip == trip).cloned().ok_or_else(|| format!("наряда {id} в поездке {trip} нет"))?),
+        // Тот же номер в этой поездке — тот же наряд: обновляем, а не заводим второй.
+        None => orders.iter().find(|o| o.trip == trip && same_number(&o.number, &number)).cloned(),
+    };
+    let order = match &prev {
+        Some(p) => WorkOrder { number: if number.is_empty() || same_number(&p.number, &number) { p.number.clone() } else { number }, object: if object.is_empty() { p.object.clone() } else { object }, from, to, ..p.clone() },
+        None => WorkOrder { id: book::new_id().map_err(e)?, trip: trip.clone(), number, object, from, to, att: Vec::new(), note: String::new(), extra: Default::default() },
+    };
+    ot::check_order(&order).map_err(e)?;
+    let list = args.get("days").and_then(Value::as_array).ok_or("days: список дней")?;
+    if list.len() > 62 {
+        return Err("слишком много дней за раз".into());
+    }
+    let existing = store.work_days().map_err(e)?;
+    let mut bodies = vec![EventBody::OrderPut { order: order.clone() }];
+    let mut undo = vec![match &prev {
+        Some(p) => EventBody::OrderPut { order: p.clone() },
+        None => EventBody::OrderDelete { id: order.id.clone() },
+    }];
+    let (mut days, mut skipped) = (Vec::new(), Vec::new());
+    let mut seen = std::collections::BTreeSet::new();
+    for d in list {
+        let date = arg_date(d, "date")?.ok_or("days: у каждого дня нужна дата")?;
+        if !seen.insert(date) {
+            return Err(format!("день {} передан дважды", date.dotted()));
+        }
+        let (start, end) = (arg_time(d, "start")?, arg_time(d, "end")?);
+        if start.is_empty() || end.is_empty() {
+            return Err(format!("день {}: нужны начало и окончание", date.dotted()));
+        }
+        let id = ot::day_id(&trip, date);
+        let before = existing.iter().find(|w| w.id == id);
+        if let Some(b) = before {
+            if b.start == start && b.end == end {
+                skipped.push(json!({ "date": date, "why": "уже так записано" }));
+                continue;
+            }
+            if !b.start.is_empty() && arg_bool(d, "replace") != Some(true) {
+                skipped.push(json!({ "date": date, "why": format!("уже записано {}–{}; заменить — с replace: true, если человек согласен", b.start, b.end) }));
+                continue;
+            }
+        }
+        let comment = arg_str(d, "comment").or_else(|| before.map(|b| b.comment.clone()).filter(|c| !c.is_empty())).unwrap_or_else(|| order.object.clone());
+        let day = WorkDay { id: id.clone(), trip: trip.clone(), date, start, end, comment, extra: Default::default() };
+        ot::check_day(&day).map_err(|x| format!("день {}: {x}", date.dotted()))?;
+        undo.push(match before {
+            Some(b) => EventBody::DayPut { day: b.clone() },
+            None => EventBody::DayDelete { id },
+        });
+        days.push(json!({ "date": date, "start": day.start, "end": day.end, "comment": day.comment }));
+        bodies.push(EventBody::DayPut { day });
+    }
+    let what = if order.number.is_empty() { "наряд".to_string() } else { format!("наряд {}", order.number) };
+    let text = if days.is_empty() { format!("Записан {what}, поездка {trip}") } else { format!("Записано: {what} и {} {}, поездка {trip}", days.len(), days_word(days.len())) };
+    let mut result = json!({ "done": text, "order_id": order.id, "trip": trip, "number": order.number, "from": from, "to": to, "object": order.object, "days": days, "skipped": skipped });
+    if order.att.is_empty() {
+        result["photos"] = json!("Снимков наряда в «Кармане» нет — добавьте их там: «Наряды» → «Снимок», иначе наряд не попадёт в папку отчёта");
+    }
+    Ok(Change { bodies, undo, text, result })
 }
 
 fn create_trip(store: &Store, args: &Value) -> ToolResult<Change> {
@@ -1310,5 +1564,95 @@ mod tests {
         assert!(s.trips().unwrap().iter().any(|t| t.id == "590"));
         s.append_all(c.undo).unwrap();
         assert!(!s.trips().unwrap().iter().any(|t| t.id == "590"), "«Вернуть» убирает поездку");
+    }
+
+    /// Наряд № 4/30, как его прочитал Claude в приложении: «Карман» сам считает дни по правилам таблицы.
+    fn read_order() -> Value {
+        let m = |d: &str, t: &str| json!({ "date": d, "time": t });
+        let adm = |d: &str, s: &str, e: &str| json!({ "place": "ЗРУ-6кВ", "start": m(d, s), "end": m(d, e) });
+        json!({
+            "trip": "573",
+            "number": "4/30",
+            "place": "НПС «Андреевка-ПП»",
+            "work": "Замена устройств РЗА",
+            "object": "Андреевка. Замена устройств РЗА 1СШ 6 кВ",
+            "start": m("2026-10-23", "09:30"),
+            "end": m("2026-10-27", "18:00"),
+            "extended": m("", ""),
+            "members": ["Митрофанов П.А.", "Фирсов К.С."],
+            "admissions": [adm("2026-10-22", "10:34", "23:50"), adm("2026-10-23", "08:55", "23:50"), adm("2026-10-24", "08:45", "23:50"), adm("2026-10-26", "09:40", "16:00"), adm("2026-10-27", "08:10", "20:30")],
+            "changes": [{ "added": ["Образцов С.В."], "removed": [], "at": m("2026-10-23", "16:20") }],
+            "problems": ""
+        })
+    }
+
+    #[test]
+    fn order_read_by_claude_is_planned_and_saved_in_one_action() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = store(dir.path());
+        let today = demo::today();
+        s.append(EventBody::SettingPut { key: "ot.name".into(), value: "Образцов С. В.".into() }).unwrap();
+        // В демо-поездке 573 дни уже вписаны: 23.10 — 8:00–2:00, 24.10 — 15:00–1:00, 26.10 — 8:00–23:00.
+        let p = read(&s, today, "order_days", &read_order()).unwrap();
+        assert_eq!(p["worker"], "Образцов С.В.: введён в бригаду 23.10.2026 16:20 — дни до этого не берутся");
+        let days = p["days"].as_array().unwrap();
+        let row = |date: &str| days.iter().find(|d| d["date"] == date).unwrap().clone();
+        assert_eq!((row("2026-10-22")["take"].clone(), row("2026-10-22")["rule"].as_str().unwrap().contains("до ввода")), (json!(false), true));
+        assert_eq!((row("2026-10-24")["start"].clone(), row("2026-10-24")["end"].clone(), row("2026-10-24")["weekday"].clone()), (json!("8:45"), json!("23:50"), json!("сб")));
+        assert!(row("2026-10-24")["note"].as_str().unwrap().contains("уже записано 15:00–1:00") && row("2026-10-24")["take"] == false, "своё время без согласия не заменяется");
+        assert_eq!((row("2026-10-26")["start"].clone(), row("2026-10-26")["end"].clone()), (json!("8:00"), json!("17:00")), "будни: окончание не раньше 17:00");
+        assert_eq!((row("2026-10-27")["take"].clone(), row("2026-10-27")["by_order"].clone(), row("2026-10-27")["written_now"].clone()), (json!(false), json!("8:10–20:30"), json!({ "start": "8:00", "end": "23:00", "comment": "2СШ яч. №9,10,11,12,13,14,15" })));
+        assert!(row("2026-10-27")["note"].as_str().unwrap().contains("replace: true"));
+        assert_eq!(row("2026-10-23")["take"], json!(false), "23.10: уже записано своё 8:00–2:00");
+        assert!(p["order"]["id"].is_null() && p["rules"].as_str().unwrap().starts_with("Будни — с 8:00"));
+        assert!(read(&s, today, "order_days", &json!({ "trip": "573", "admissions": [] })).unwrap_err().contains("допуск"));
+        assert!(read(&s, today, "order_days", &json!({ "trip": "999", "admissions": [] })).unwrap_err().contains("999"));
+        // Запись подтверждённых дней: 22.10 был только с комментарием, 24.10 без согласия не заменяется,
+        // 27.10 — с согласием, 28.10 уже так записан, 30.10 пустой.
+        let args = json!({
+            "trip": "573", "number": "4/30", "from": "2026-10-23", "to": "2026-10-30", "object": "Андреевка. Замена устройств РЗА 1СШ 6 кВ",
+            "days": [
+                { "date": "2026-10-22", "start": "9:00", "end": "18:00" },
+                { "date": "2026-10-24", "start": "8:45", "end": "23:50" },
+                { "date": "2026-10-27", "start": "8:00", "end": "20:30", "replace": true },
+                { "date": "2026-10-28", "start": "8:00", "end": "20:00" },
+                { "date": "2026-10-30", "start": "8", "end": "19.00" }
+            ]
+        });
+        let c = plan(&s, today, "save_order", &args, &no_rate).unwrap();
+        assert_eq!(c.text, "Записано: наряд 4/30 и 3 дня, поездка 573");
+        let skipped = c.result["skipped"].to_string();
+        assert_eq!(c.result["skipped"].as_array().unwrap().len(), 2, "{skipped}");
+        assert!(skipped.contains("уже так записано") && skipped.contains("15:00–1:00"), "{skipped}");
+        assert!(c.result["photos"].as_str().unwrap().contains("Снимок"));
+        assert_eq!((c.bodies.len(), c.undo.len()), (4, 4), "наряд и три дня — одной записью");
+        s.append_all(c.bodies.clone()).unwrap();
+        let ov = read(&s, today, "overtime", &json!({ "trip": "573" })).unwrap();
+        let day = |date: &str| ov["table"]["days"].as_array().unwrap().iter().find(|d| d["date"] == date).unwrap().clone();
+        assert_eq!((day("2026-10-22")["end"].clone(), day("2026-10-22")["comment"].clone()), (json!("18:00"), json!("Чекмагуш. организационные и подготовительные работы")), "свой комментарий дня сохраняется");
+        assert_eq!((day("2026-10-30")["start"].clone(), day("2026-10-30")["end"].clone(), day("2026-10-30")["comment"].clone()), (json!("8:00"), json!("19:00"), json!("Андреевка. Замена устройств РЗА 1СШ 6 кВ")));
+        assert_eq!((day("2026-10-24")["start"].clone(), day("2026-10-27")["end"].clone()), (json!("15:00"), json!("20:30")));
+        assert!(ov["work_orders"].to_string().contains("4/30"));
+        // Тот же номер ещё раз — обновляется тот же наряд, второй не заводится.
+        let again = plan(&s, today, "save_order", &json!({ "trip": "573", "number": "4-30", "from": "2026-10-23", "to": "2026-10-28", "days": [] }), &no_rate).unwrap();
+        let EventBody::OrderPut { order } = &again.bodies[0] else { panic!() };
+        assert_eq!((order.number.as_str(), order.to, order.object.as_str()), ("4/30", Date::parse("2026-10-28").unwrap(), "Андреевка. Замена устройств РЗА 1СШ 6 кВ"));
+        assert!(matches!(&again.undo[0], EventBody::OrderPut { .. }), "«Вернуть» вернёт прежний наряд, а не удалит его");
+        assert_eq!(read(&s, today, "order_days", &read_order()).unwrap()["order"]["number"], "4/30");
+        assert!(read(&s, today, "order_days", &read_order()).unwrap()["order"]["id"].is_string(), "уже записанный наряд — с кодом для save_order");
+        // «Вернуть» — как было до записи.
+        s.append_all(c.undo).unwrap();
+        let ov = read(&s, today, "overtime", &json!({ "trip": "573" })).unwrap();
+        let day = |date: &str| ov["table"]["days"].as_array().unwrap().iter().find(|d| d["date"] == date).unwrap().clone();
+        assert_eq!((day("2026-10-22")["end"].clone(), day("2026-10-27")["end"].clone(), day("2026-10-30")["end"].clone()), (Value::Null, json!("23:00"), Value::Null));
+        assert_eq!(day("2026-10-22")["comment"], json!("Чекмагуш. организационные и подготовительные работы"));
+        assert!(!ov["work_orders"].to_string().contains("4/30"));
+        // Ошибки — понятные.
+        let bad = |a: Value| plan(&s, today, "save_order", &a, &no_rate).unwrap_err();
+        assert!(bad(json!({ "trip": "573", "from": "2026-10-23", "to": "2026-10-27", "days": [{ "date": "2026-10-23", "start": "8:00" }] })).contains("окончание"));
+        assert!(bad(json!({ "trip": "573", "from": "2026-10-23", "to": "2026-10-27", "days": [{ "date": "2026-10-23", "start": "8:00", "end": "9:00" }, { "date": "2026-10-23", "start": "8:00", "end": "9:00" }] })).contains("дважды"));
+        assert!(bad(json!({ "trip": "573", "id": "нет-такого", "from": "2026-10-23", "to": "2026-10-27", "days": [] })).contains("нет-такого"));
+        assert!(same_number("№ 4/30", "4-30") && !same_number("", "") && !same_number("4/30", "4/31"));
+        assert!(!is_write("order_days") && is_write("save_order"));
     }
 }

@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { api, LOCKED, message, type Attachment, type OtExported, type OtHours, type OtMonth, type OtPay, type OtRow, type OtRules, type OtSheet, type Snapshot, type Trip, type TripView, type WorkDay, type WorkOrder } from '../api';
+import { api, LOCKED, message, type AiDay, type AiRule, type Attachment, type OrderScan, type OtExported, type OtHours, type OtMonth, type OtPay, type OtRow, type OtRules, type OtSheet, type Snapshot, type Trip, type TripView, type WorkDay, type WorkOrder } from '../api';
+import { costText } from './Ai';
 import { NB, addDays, amountText, dMon, dNum, dRange, monthName, parseAmount, plural, rub, toDate, todayIso } from '../format';
 import { ORDER_PHOTO, attachFile, pickFiles } from '../media';
 import { ErrorText, Icon, Seg, Thumbs } from '../ui';
@@ -126,7 +127,12 @@ export function rulesText(r: OtRules): string {
 
 /** Правила из настроек — как в ядре (overtime::Rules::from_settings). */
 function rulesFrom(s: Record<string, string>): OtRules {
-  const r: OtRules = { day_end: 17 * 60, first: 120, lunch: 60, step: 30 };
+  const r: OtRules = { day_start: 8 * 60, day_end: 17 * 60, first: 120, lunch: 60, step: 30 };
+  const start = timeInput(s['ot.day_start'] || '');
+  if (start) {
+    const [h, m] = start.split(':').map(Number);
+    if (h * 60 + m >= 5 * 60 && h * 60 + m <= 12 * 60) r.day_start = h * 60 + m;
+  }
   const end = timeInput(s['ot.day_end'] || '');
   if (end) {
     const [h, m] = end.split(':').map(Number);
@@ -405,9 +411,24 @@ function Report({ snap, act, what, folder, orders, names }: { snap: Snapshot; ac
 
 // ——— Наряды ———
 
-function OrderForm({ initial, trip, act, onDone }: { initial: WorkOrder; trip: Trip; act: OtActions; onDone: () => void }) {
+/** Распознавание нарядов на этом устройстве: ready — ключ есть и функция включена. */
+type AiState = { ready: boolean; key: boolean };
+
+function ScanButton({ busy, small, onClick }: { busy: boolean; small?: boolean; onClick: () => void }) {
+  return (
+    <button type="button" className={'btn ghost' + (small ? ' small' : '')} style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={busy} onClick={onClick}>
+      <Icon name="spark" size={small ? 16 : 18} />
+      {busy ? 'Claude читает наряд…' : 'Распознать'}
+    </button>
+  );
+}
+
+const SCAN_NOTE = 'Обычно до минуты. Листы наряда уходят в Claude; в «Карман» попадёт только то, что вы проверите и сохраните.';
+
+function OrderForm({ initial, trip, act, ai, onScanned, onDone }: { initial: WorkOrder; trip: Trip; act: OtActions; ai: boolean; onScanned: (base: WorkOrder, scan: OrderScan) => void; onDone: () => void }) {
   const [o, setO] = useState(initial);
   const [busy, setBusy] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const set = (p: Partial<WorkOrder>) => setO((x) => ({ ...x, ...p }));
   const add = async (camera: boolean) => {
@@ -424,6 +445,18 @@ function OrderForm({ initial, trip, act, onDone }: { initial: WorkOrder; trip: T
       else setError(message(e));
     } finally {
       setBusy(false);
+    }
+  };
+  const scan = async () => {
+    setScanning(true);
+    setError(null);
+    try {
+      onScanned(o, await api.aiOrderScan(trip.id, o.att.map((a) => a.id)));
+    } catch (e) {
+      if (message(e) === LOCKED) act.locked();
+      else setError(message(e));
+    } finally {
+      setScanning(false);
     }
   };
   const save = async () => {
@@ -457,26 +490,28 @@ function OrderForm({ initial, trip, act, onDone }: { initial: WorkOrder; trip: T
         <input className="field" value={o.object} maxLength={300} placeholder="например, Чекмагуш. 2СШ яч. №12–15" onChange={(e) => set({ object: e.target.value })} />
       </label>
       <div className="stack gap6">
-        <span className="note">Снимки или PDF наряда — все листы</span>
+        <span className="note">Снимки или PDF наряда — все листы{ai ? '. Claude может прочитать их и заполнить наряд и дни' : ''}</span>
         {o.att.length > 0 && <Thumbs items={o.att} onOpen={act.view} onRemove={(id) => set({ att: o.att.filter((a) => a.id !== id) })} />}
         <div className="wrap">
           {act.mobile && (
-            <button type="button" className="btn ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={busy} onClick={() => add(true)}>
+            <button type="button" className="btn ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={busy || scanning} onClick={() => add(true)}>
               <Icon name="camera" size={18} />
               Снять
             </button>
           )}
-          <button type="button" className="btn ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={busy} onClick={() => add(false)}>
+          <button type="button" className="btn ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={busy || scanning} onClick={() => add(false)}>
             <Icon name="file" size={18} />
             {act.mobile ? 'Из файлов' : 'Снимок или PDF'}
           </button>
+          {ai && o.att.length > 0 && <ScanButton busy={scanning} onClick={scan} />}
         </div>
+        {scanning && <p className="note">{SCAN_NOTE}</p>}
       </div>
       <p className="note">В отчёте: «{orderFileName(o)}.pdf»</p>
       {outside && <p className="note warn">Даты наряда — вне поездки ({dRange(trip.start, trip.end)}).</p>}
       <ErrorText text={error} />
       <div className="wrap">
-        <button type="button" className="btn work" disabled={busy} onClick={save}>
+        <button type="button" className="btn work" disabled={busy || scanning} onClick={save}>
           {initial.id ? 'Сохранить' : 'Добавить наряд'}
         </button>
         <button type="button" className="btn ghost" onClick={onDone}>
@@ -487,8 +522,10 @@ function OrderForm({ initial, trip, act, onDone }: { initial: WorkOrder; trip: T
   );
 }
 
-function OrderItem({ o, name, act, onEdit }: { o: WorkOrder; name: string; act: OtActions; onEdit: () => void }) {
+function OrderItem({ o, name, act, ai, onEdit, onScanned }: { o: WorkOrder; name: string; act: OtActions; ai: boolean; onEdit: () => void; onScanned: (base: WorkOrder, scan: OrderScan) => void }) {
   const [busy, setBusy] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const remove = async () => {
     const s = await act.run(api.orderDelete(o.id));
     if (s) act.flash(o.number ? `Наряд ${o.number} удалён` : 'Наряд удалён', () => act.run(api.orderSave(o), 'Наряд возвращён'));
@@ -509,6 +546,18 @@ function OrderItem({ o, name, act, onEdit }: { o: WorkOrder; name: string; act: 
       setBusy(false);
     }
   };
+  const scan = async () => {
+    setScanning(true);
+    setError(null);
+    try {
+      onScanned(o, await api.aiOrderScan(o.trip, o.att.map((a) => a.id)));
+    } catch (e) {
+      if (message(e) === LOCKED) act.locked();
+      else setError(message(e));
+    } finally {
+      setScanning(false);
+    }
+  };
   return (
     <div className="otorder">
       <div className="between">
@@ -521,15 +570,165 @@ function OrderItem({ o, name, act, onEdit }: { o: WorkOrder; name: string; act: 
       {o.att.length ? <Thumbs items={o.att} onOpen={act.view} /> : <span className="note warn">Нет снимка — в папку отчёта не попадёт</span>}
       <span className="note faint">В отчёте: «{name}.pdf»</span>
       <div className="wrap">
-        <button type="button" className="btn ghost small" style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={busy} onClick={attach}>
+        <button type="button" className="btn ghost small" style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={busy || scanning} onClick={attach}>
           <Icon name="camera" size={16} />
           {o.att.length ? 'Ещё снимок' : 'Снимок'}
         </button>
-        <button type="button" className="btn ghost small" onClick={onEdit}>
+        {ai && o.att.length > 0 && <ScanButton small busy={scanning} onClick={scan} />}
+        <button type="button" className="btn ghost small" disabled={scanning} onClick={onEdit}>
           Изменить
         </button>
-        <button type="button" className="btn link" onClick={remove}>
+        <button type="button" className="btn link" disabled={scanning} onClick={remove}>
           Удалить
+        </button>
+      </div>
+      {scanning && <p className="note">{SCAN_NOTE}</p>}
+      <ErrorText text={error} />
+    </div>
+  );
+}
+
+const RULE_TAG: Record<AiRule, string> = {
+  weekday: 'будни',
+  off: 'выходной',
+  evening: 'допуск вечером',
+  before: 'до ввода в бригаду',
+  after: 'после вывода',
+  outside: 'вне поездки',
+  no_end: 'нет окончания',
+};
+
+const shortDate = (iso: string) => dNum(iso).slice(0, 5);
+
+/** Кто вы в наряде — одной строкой. */
+function meText(scan: OrderScan): { text: string; warn: boolean } {
+  const me = scan.me;
+  if (!me.known) return { text: 'ФИО не указано в настройках переработок, поэтому дни не отсеяны по составу бригады. Проверьте, с какого дня вы в бригаде.', warn: true };
+  if (!me.found) return { text: 'Вашей фамилии в наряде не нашлось — проверьте, ваши ли это дни.', warn: true };
+  const parts: string[] = [];
+  if (me.from_start) parts.push(`${me.name}: в бригаде с выдачи наряда`);
+  else if (me.added) parts.push(`${me.name}: в бригаде с ${shortDate(me.added)}${me.added_time ? ', ' + me.added_time : ''} — дни до этого не берём`);
+  if (me.removed) parts.push(`выведены из бригады ${shortDate(me.removed)}${me.removed_time ? ', ' + me.removed_time : ''} — дни после не берём`);
+  return { text: parts.join('; '), warn: false };
+}
+
+type ReviewDay = AiDay & { on: boolean; s: string; e: string; was: OtRow | null; same: boolean };
+
+/** Наряд, прочитанный Claude: поля, состав бригады и дни — всё правится до сохранения. */
+function ScanReview({ base, scan, tv, act, onDone }: { base: WorkOrder; scan: OrderScan; tv: TripView; act: OtActions; onDone: () => void }) {
+  const t = tv.trip;
+  const rules = tv.ot.rules;
+  const [number, setNumber] = useState(scan.number || base.number);
+  const [object, setObject] = useState(scan.object || base.object);
+  const [from, setFrom] = useState(scan.from || base.from);
+  const [to, setTo] = useState(scan.to || base.to);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [days, setDays] = useState<ReviewDay[]>(() =>
+    scan.days.map((d) => {
+      const was = tv.ot.sheet.rows.find((r) => r.date === d.date && (r.start || r.comment)) ?? null;
+      const same = !!was && was.start === d.start && was.end === d.end;
+      // Своё время, уже вписанное в день, без спроса не заменяется: такие дни — без галочки.
+      return { ...d, on: d.take && !same && !was?.start, s: d.start, e: d.end, was, same };
+    }),
+  );
+  const upd = (i: number, p: Partial<ReviewDay>) => setDays((list) => list.map((d, j) => (j === i ? { ...d, ...p } : d)));
+  const me = meText(scan);
+  const n = days.filter((d) => d.on).length;
+  const save = async () => {
+    if (!from || !to) return setError('Укажите, с какого и по какое число выдан наряд');
+    if (to < from) return setError('Дата «по» раньше даты «с»');
+    const chosen = days.filter((d) => d.on);
+    const out: WorkDay[] = [];
+    for (const d of chosen) {
+      const s = timeInput(d.s);
+      const e = timeInput(d.e);
+      if (!s || !e) return setError(`${dayLabel(d.date)}: время работы — например 8:00 и 23:50`);
+      if (s === e) return setError(`${dayLabel(d.date)}: начало и окончание совпадают`);
+      out.push({ id: '', trip: t.id, date: d.date, start: s, end: e, comment: d.was?.comment || object.trim() });
+    }
+    const before: WorkDay[] = chosen.map((d) => ({ id: '', trip: t.id, date: d.date, start: d.was?.start || '', end: d.was?.end || '', comment: d.was?.comment || '' }));
+    const prev = base.id ? (tv.ot.orders.find((o) => o.id === base.id) ?? null) : null;
+    const order: WorkOrder = { ...base, number: number.trim(), object: object.trim(), from, to };
+    setError(null);
+    setBusy(true);
+    let id = '';
+    const s = await act.run(
+      api.otApply([order], [], out).then((a) => {
+        id = a.orders[0] ?? '';
+        return a.snap;
+      }),
+    );
+    setBusy(false);
+    if (!s) return;
+    onDone();
+    const what = (order.number ? `наряд ${order.number}` : 'наряд') + (out.length ? ` и ${out.length}${NB}${plural(out.length, 'день', 'дня', 'дней')}` : '');
+    act.flash(`Записано: ${what}`, () => act.run(api.otApply(prev ? [prev] : [], prev ? [] : [id], before).then((a) => a.snap), 'Возвращено'));
+  };
+  return (
+    <div className="card stack gap12" role="group" aria-label="Наряд от Claude">
+      <div className="between" style={{ alignItems: 'center' }}>
+        <span style={{ fontWeight: 500, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Icon name="spark" size={18} />
+          Claude прочитал наряд — проверьте
+        </span>
+        {scan.usd > 0 && <span className="note faint">{costText(scan.usd)}</span>}
+      </div>
+      <div className="form-grid">
+        <label className="label">
+          <span>Номер наряда</span>
+          <input className="field" value={number} maxLength={40} onChange={(e) => setNumber(e.target.value)} />
+        </label>
+        <label className="label">
+          <span>С</span>
+          <input className="field" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        </label>
+        <label className="label">
+          <span>По</span>
+          <input className="field" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+        </label>
+      </div>
+      <label className="label">
+        <span>Объект и работы</span>
+        <input className="field" value={object} maxLength={300} onChange={(e) => setObject(e.target.value)} />
+      </label>
+      <div className="stack gap6">
+        <p className={'note' + (me.warn ? ' warn' : '')}>{me.text}</p>
+        {scan.brigade && <p className="note faint">Бригада: {scan.brigade}</p>}
+        {scan.problems && <p className="note warn">Claude не уверен: {scan.problems}</p>}
+      </div>
+      <div className="stack">
+        <span style={{ marginBottom: 4 }}>Дни по наряду</span>
+        {days.length === 0 && <p className="note warn">Строк ежедневного допуска Claude не нашёл — дни впишите сами в таблице «По дням».</p>}
+        {days.map((d, i) => (
+          <div key={d.date} className={'scanday' + (d.on ? '' : ' faint')}>
+            <label className="scanpick">
+              <input type="checkbox" checked={d.on} aria-label={`Взять ${dayLabel(d.date)}`} onChange={(e) => upd(i, { on: e.target.checked })} />
+              <span>{dayLabel(d.date)}</span>
+              <span className={'tag ' + (d.take ? 'grey' : 'warn')}>{RULE_TAG[d.rule]}</span>
+            </label>
+            <span className="note num scanorder">
+              по наряду {d.order_start}–{d.order_end || '?'}
+            </span>
+            <span className="scantimes">
+              <input className="field num" inputMode="decimal" aria-label={`${dayLabel(d.date)}: начало`} placeholder="8:00" value={d.s} disabled={!d.on} onChange={(e) => upd(i, { s: e.target.value })} onBlur={() => upd(i, { s: timeInput(d.s) ?? d.s })} />
+              <span>–</span>
+              <input className="field num" inputMode="decimal" aria-label={`${dayLabel(d.date)}: окончание`} placeholder="17:00" value={d.e} disabled={!d.on} onChange={(e) => upd(i, { e: e.target.value })} onBlur={() => upd(i, { e: timeInput(d.e) ?? d.e })} />
+            </span>
+            {d.was && <span className="note">{d.same ? 'уже так записано' : d.was.start ? `сейчас ${d.was.start}–${d.was.end}` : 'сейчас без времени'}</span>}
+          </div>
+        ))}
+      </div>
+      <p className="note">
+        Будни — с {clock(rules.day_start)}, окончание по наряду, но не раньше {clock(rules.day_end)}. Выходные, праздники и допуск после {clock(rules.day_end)} — по наряду. Дни до ввода в бригаду не берутся. Комментарий дня — «Объект и работы», если свой не вписан.
+      </p>
+      <ErrorText text={error} />
+      <div className="wrap">
+        <button type="button" className="btn work" disabled={busy} onClick={save}>
+          {n ? `Сохранить наряд и ${n}${NB}${plural(n, 'день', 'дня', 'дней')}` : 'Сохранить наряд'}
+        </button>
+        <button type="button" className="btn ghost" disabled={busy} onClick={onDone}>
+          Отмена
         </button>
       </div>
     </div>
@@ -540,31 +739,52 @@ function Orders({ tv, act }: { tv: TripView; act: OtActions }) {
   const t = tv.trip;
   const orders = tv.ot.orders;
   const [form, setForm] = useState<WorkOrder | null>(null);
+  const [review, setReview] = useState<{ base: WorkOrder; scan: OrderScan } | null>(null);
+  const [ai, setAi] = useState<AiState>({ ready: false, key: true });
+  useEffect(() => {
+    let alive = true;
+    api.aiStatus().then(
+      (s) => alive && setAi({ ready: s.key && s.orders, key: s.key }),
+      () => undefined,
+    );
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const scanned = (base: WorkOrder, scan: OrderScan) => {
+    setForm(null);
+    setReview({ base, scan });
+  };
   const blank = (): WorkOrder => {
     const last = orders[orders.length - 1];
     const from = last && last.to >= t.start && last.to <= t.end ? last.to : t.start;
     return { id: '', trip: t.id, number: '', object: '', from, to: t.end >= from ? t.end : from, att: [], note: '' };
   };
+  const reviewOf = (base: WorkOrder, scan: OrderScan) => <ScanReview key={'scan' + base.id} base={base} scan={scan} tv={tv} act={act} onDone={() => setReview(null)} />;
   return (
     <section className="stack">
       <div className="between" style={{ alignItems: 'center', marginBottom: 6 }}>
         <h2 className="h2">Наряды</h2>
-        {!form && (
+        {!form && !review && (
           <button type="button" className="btn ghost small" style={{ display: 'flex', alignItems: 'center', gap: 6 }} onClick={() => setForm(blank())}>
             <Icon name="plus" size={16} stroke={2} />
             Добавить наряд
           </button>
         )}
       </div>
-      {form && !form.id && <OrderForm initial={form} trip={t} act={act} onDone={() => setForm(null)} />}
-      {orders.length === 0 && !form && <p className="empty">Нарядов пока нет. Снимок или PDF наряда ляжет в отчёт отдельным файлом — с номером и датами в имени.</p>}
+      {review && !review.base.id && reviewOf(review.base, review.scan)}
+      {form && !form.id && <OrderForm initial={form} trip={t} act={act} ai={ai.ready} onScanned={scanned} onDone={() => setForm(null)} />}
+      {orders.length === 0 && !form && !review && <p className="empty">Нарядов пока нет. Снимок или PDF наряда ляжет в отчёт отдельным файлом — с номером и датами в имени.</p>}
       {orders.map((o, i) =>
-        form && form.id === o.id ? (
-          <OrderForm key={o.id} initial={form} trip={t} act={act} onDone={() => setForm(null)} />
+        review && review.base.id === o.id ? (
+          reviewOf(review.base, review.scan)
+        ) : form && form.id === o.id ? (
+          <OrderForm key={o.id} initial={form} trip={t} act={act} ai={ai.ready} onScanned={scanned} onDone={() => setForm(null)} />
         ) : (
-          <OrderItem key={o.id} o={o} name={tv.ot.names[i] || orderFileName(o)} act={act} onEdit={() => setForm(o)} />
+          <OrderItem key={o.id} o={o} name={tv.ot.names[i] || orderFileName(o)} act={act} ai={ai.ready && !review} onEdit={() => setForm(o)} onScanned={scanned} />
         ),
       )}
+      {!ai.key && <p className="note faint">Наряд по снимкам может заполнить Claude — ключ API вводится в настройках, раздел «ИИ».</p>}
     </section>
   );
 }
@@ -943,8 +1163,12 @@ export function OvertimeSettings({ snap, run }: { snap: Snapshot; run: Run }) {
   const endSaved = clock(rules.day_end).padStart(5, '0');
   const [end, setEnd] = useState(endSaved);
   useEffect(() => setEnd(endSaved), [endSaved]);
+  const startSaved = clock(rules.day_start).padStart(5, '0');
+  const [start, setStart] = useState(startSaved);
+  useEffect(() => setStart(startSaved), [startSaved]);
   // Поле времени присылает значение, только когда время введено целиком.
   const endBad = /^\d\d:\d\d$/.test(end) && (end < '12:00' || end > '22:00');
+  const startBad = /^\d\d:\d\d$/.test(start) && (start < '05:00' || start > '12:00');
   return (
     <section className="stack">
       <h2 className="h2" style={{ marginBottom: 6 }}>
@@ -954,6 +1178,27 @@ export function OvertimeSettings({ snap, run }: { snap: Snapshot; run: Run }) {
         Наряды и часы — в карточке поездки, раздел «Наряды». Здесь — как считать часы и оклад для суммы к оплате.
       </p>
       <NameField snap={snap} run={run} />
+      <label className="setrow">
+        <span>
+          <span>Начало рабочего дня</span>
+          <span className={'note' + (startBad ? ' warn' : '')}>{startBad ? 'Время — от 5:00 до 12:00' : 'С него в будни пишется работа, когда наряд распознаёт Claude'}</span>
+        </span>
+        <input
+          className="field num"
+          type="time"
+          aria-label="Начало рабочего дня"
+          value={start}
+          min="05:00"
+          max="12:00"
+          onChange={(e) => {
+            const v = e.target.value;
+            setStart(v);
+            const t = timeInput(v);
+            if (t && /^\d\d:\d\d$/.test(v) && v >= '05:00' && v <= '12:00' && v !== startSaved) run(api.settingSet('ot.day_start', t), 'Начало рабочего дня — ' + t);
+          }}
+          style={{ flex: 'none', width: 112, height: 40, fontSize: 16 }}
+        />
+      </label>
       <label className="setrow">
         <span>
           <span>Конец рабочего дня</span>

@@ -45,6 +45,51 @@ pub fn day_save(state: State<AppState>, today: String, mut day: WorkDay) -> Res<
     snap(&st, &today)
 }
 
+/// Итог `ot_apply`: сводка и номера нарядов — для «Вернуть».
+#[derive(Serialize)]
+pub struct Applied {
+    snap: Snapshot,
+    orders: Vec<String>,
+}
+
+/// Наряды и рабочие дни одним действием: распознанный наряд после проверки и «Вернуть».
+/// Сначала проверяется всё, потом пишется; день без времени и комментария очищается.
+#[tauri::command]
+pub fn ot_apply(state: State<AppState>, today: String, orders: Vec<WorkOrder>, delete: Vec<String>, days: Vec<WorkDay>) -> Res<Applied> {
+    if orders.len() + delete.len() > 20 || days.len() > 400 {
+        return Err("Слишком много записей за раз".into());
+    }
+    let mut bodies = Vec::new();
+    let mut ids = Vec::new();
+    for mut order in orders {
+        if order.to < order.from {
+            return Err("Дата окончания наряда раньше начала".into());
+        }
+        order.number = order.number.trim().to_string();
+        order.object = order.object.trim().to_string();
+        ot::check_order(&order).map_err(err)?;
+        if order.id.is_empty() {
+            order.id = book::new_id().map_err(err)?;
+        }
+        ids.push(order.id.clone());
+        bodies.push(EventBody::OrderPut { order });
+    }
+    bodies.extend(delete.into_iter().map(|id| EventBody::OrderDelete { id }));
+    for mut d in days {
+        d.start = d.start.trim().to_string();
+        d.end = d.end.trim().to_string();
+        d.comment = d.comment.trim().to_string();
+        ot::check_day(&d).map_err(|e| format!("{}: {e}", d.date.dotted()))?;
+        d.id = ot::day_id(&d.trip, d.date);
+        bodies.push(if d.start.is_empty() && d.comment.is_empty() { EventBody::DayDelete { id: d.id } } else { EventBody::DayPut { day: d } });
+    }
+    let mut st = state.store()?;
+    for b in bodies {
+        st.append(b).map_err(err)?;
+    }
+    Ok(Applied { snap: snap(&st, &today)?, orders: ids })
+}
+
 /// Общая таблица переработок за месяц — из всех поездок месяца.
 #[derive(Serialize)]
 pub struct MonthView {

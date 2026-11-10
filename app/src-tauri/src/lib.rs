@@ -3,6 +3,7 @@
 //! Экраны получают одну сводку (`snapshot`) и после каждого изменения — новую.
 //! Вся логика расчётов — в ядре `karman-core`. Вход по PIN-коду и отпечатку — в `guard`.
 
+mod ai;
 mod backup;
 mod claude;
 mod fx;
@@ -1049,12 +1050,20 @@ pub fn run() {
             overtime::order_save,
             overtime::order_delete,
             overtime::day_save,
+            overtime::ot_apply,
             overtime::overtime_month,
             overtime::overtime_export,
             claude::claude_status,
             claude::claude_set,
             claude::claude_undo,
             claude::claude_bundle,
+            ai::ai_status,
+            ai::ai_key_set,
+            ai::ai_key_delete,
+            ai::ai_workspace_set,
+            ai::ai_set,
+            ai::ai_check,
+            ai::ai_order_scan,
             backup::backup_status,
             backup::backup_password,
             backup::backup_every,

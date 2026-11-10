@@ -158,8 +158,8 @@ export type OtRow = { date: string; off: boolean; start: string; end: string; co
 export type OtSheet = { rows: OtRow[]; x15: number; x2: number; off: number };
 /** Сумма за переработки месяца — только для экрана. Норма и часы — в минутах. */
 export type OtPay = { month: string; norm: number; exact: boolean; custom: boolean; rate: number; x15: number; x2: number; sum: number };
-/** Правила подсчёта, в минутах: конец рабочего дня, сколько идёт ×1,5, обед в выходной, шаг округления. */
-export type OtRules = { day_end: number; first: number; lunch: number; step: number };
+/** Правила подсчёта, в минутах: начало и конец рабочего дня, сколько идёт ×1,5, обед в выходной, шаг округления. */
+export type OtRules = { day_start: number; day_end: number; first: number; lunch: number; step: number };
 /** names — имена файлов нарядов в отчёте, в том же порядке, что и наряды. */
 export type TripOt = { orders: WorkOrder[]; names: string[]; sheet: OtSheet; summary: string; pay: OtPay[]; rules: OtRules };
 /** Общая таблица переработок за месяц — из всех поездок месяца. */
@@ -171,6 +171,18 @@ export type OtExported = { path: string; files: number; notes: string[] };
 export type ClaudeAction = { id: number; at: number; tool: string; text: string; undone: boolean };
 /** Коннектор для приложения Claude: включён ли, разрешена ли запись, чем Claude запускает «Карман». */
 export type ClaudeStatus = { desktop: boolean; on: boolean; write: boolean; command: string; args: string[]; dir: string; actions: ClaudeAction[] };
+
+/** ИИ в «Кармане»: ключ API Claude на этом устройстве, распознавание нарядов и счётчик запросов (usd — оценка). */
+export type AiUsage = { n: number; usd: number };
+export type AiStatus = { key: boolean; tail: string; workspace: string; checked: number | null; orders: boolean; model: string; month: AiUsage; total: AiUsage };
+/** Почему день взят так: будни, выходной, вечерний допуск — или не взят: до ввода в бригаду, после вывода, вне поездки, нет окончания. */
+export type AiRule = 'weekday' | 'off' | 'evening' | 'before' | 'after' | 'outside' | 'no_end';
+/** День из наряда: время по наряду и что пойдёт в таблицу. */
+export type AiDay = { date: string; order_start: string; order_end: string; start: string; end: string; rule: AiRule; take: boolean };
+/** Работник (ФИО из настроек переработок) в наряде. */
+export type AiMe = { known: boolean; found: boolean; name: string; from_start: boolean; added: string | null; added_time: string; removed: string | null; removed_time: string };
+/** Распознанный наряд — для экрана проверки. Ничего не сохранено. */
+export type OrderScan = { not_order: boolean; number: string; object: string; from: string | null; to: string | null; me: AiMe; brigade: string; days: AiDay[]; problems: string; usd: number };
 
 export type TripView = {
   trip: Trip;
@@ -364,6 +376,17 @@ export const api = {
   claudeUndo: (id: number) => invoke<Snapshot>('claude_undo', { today: today(), id }),
   /** Файл расширения для приложения Claude — в «Загрузки». */
   claudeBundle: () => invoke<string>('claude_bundle'),
+  aiStatus: () => invoke<AiStatus>('ai_status', { today: today() }),
+  aiKeySet: (key: string) => invoke<AiStatus>('ai_key_set', { today: today(), key }),
+  aiKeyDelete: () => invoke<AiStatus>('ai_key_delete', { today: today() }),
+  aiWorkspaceSet: (workspace: string) => invoke<AiStatus>('ai_workspace_set', { today: today(), workspace }),
+  aiSet: (orders: boolean) => invoke<AiStatus>('ai_set', { today: today(), orders }),
+  /** Проверка ключа — один короткий запрос к Claude. */
+  aiCheck: () => invoke<AiStatus>('ai_check', { today: today() }),
+  /** Листы наряда → Claude: поля наряда и дни для таблицы. Ничего не сохраняет. */
+  aiOrderScan: (trip: string, att: string[]) => invoke<OrderScan>('ai_order_scan', { today: today(), trip, att }),
+  /** Наряды и дни одним действием; orders в ответе — номера сохранённых нарядов (для «Вернуть»). */
+  otApply: (orders: WorkOrder[], del: string[], days: WorkDay[]) => invoke<{ snap: Snapshot; orders: string[] }>('ot_apply', { today: today(), orders, delete: del, days }),
 };
 
 /** Ядро сообщает, что «Карман» заблокировался (5 минут в фоне). */
