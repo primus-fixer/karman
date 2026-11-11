@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, LOCKED, message, onClaude, type ClaudeStatus, type Snapshot } from '../api';
-import { ErrorText, Icon } from '../ui';
+import { Cut, ErrorText, Icon } from '../ui';
 
 type Run = (p: Promise<Snapshot>, ok?: string) => Promise<Snapshot | null>;
 
@@ -41,22 +41,16 @@ export default function ClaudeSection({ mobile, run, flash, locked }: { mobile: 
 
   if (mobile) {
     return (
-      <section className="stack">
-        <h2 className="h2" style={{ marginBottom: 6 }}>
-          Claude
-        </h2>
+      <Cut id="claude" title="Claude">
         <p className="note">Подключение к приложению Claude — в «Кармане» на компьютере: Claude сможет отвечать о деньгах и поездках и записывать операции. Записи придут сюда при обмене по Wi-Fi.</p>
-      </section>
+      </Cut>
     );
   }
   if (!st) {
     return (
-      <section className="stack">
-        <h2 className="h2" style={{ marginBottom: 6 }}>
-          Claude
-        </h2>
+      <Cut id="claude" title="Claude">
         {error ? <ErrorText text={error} /> : <p className="note">Загружаю…</p>}
-      </section>
+      </Cut>
     );
   }
   const set = async (on: boolean, write: boolean) => {
@@ -94,10 +88,7 @@ export default function ClaudeSection({ mobile, run, flash, locked }: { mobile: 
     if (s) load();
   };
   return (
-    <section className="stack" id="claude">
-      <h2 className="h2" style={{ marginBottom: 6 }}>
-        Claude
-      </h2>
+    <Cut id="claude" title="Claude">
       <p className="note" style={{ marginBottom: 8 }}>
         «Карман» подключается к приложению Claude на этом компьютере. Claude отвечает на вопросы о деньгах и поездках, а если разрешить — записывает операции, рабочие дни и наряды. В интернет «Карман» ничего не открывает; Claude видит только то, что запросит в разговоре.
       </p>
@@ -166,6 +157,6 @@ export default function ClaudeSection({ mobile, run, flash, locked }: { mobile: 
         </div>
       )}
       <ErrorText text={error} />
-    </section>
+    </Cut>
   );
 }

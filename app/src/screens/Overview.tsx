@@ -7,6 +7,7 @@ import type { Nav } from '../App';
 import { DueRow, type FinanceActions, type FinView } from './Finance';
 import { Bar, leftText } from './Budget';
 import { daysSince, lastBackup } from './Backup';
+import { showSection } from '../cuts';
 
 export function Figures({ snap, nav, big = true }: { snap: Snapshot; nav: Nav; big?: boolean }) {
   const items: { label: string; value: string; note?: string; mark: string; go: () => void }[] = [];
@@ -76,31 +77,10 @@ export function TripList({ snap, nav, closed = false }: { snap: Snapshot; nav: N
   );
 }
 
-/**
- * В настройки, к разделу «Резервная копия». Разделы выше (облако, Claude, ИИ) догружаются и становятся
- * выше — полторы секунды держим раздел на месте, пока человек сам не прокрутит.
- */
+/** В настройки, к разделу «Резервная копия» — он раскрывается. */
 function goBackup(nav: Nav) {
   nav.go('settings');
-  let stop = false;
-  let want: number | null = null;
-  const cancel = () => (stop = true);
-  const events = ['wheel', 'touchstart', 'keydown', 'mousedown'] as const;
-  events.forEach((e) => window.addEventListener(e, cancel, { passive: true }));
-  const t0 = Date.now();
-  const tick = () => {
-    const el = document.getElementById('backup');
-    if (el && !stop) {
-      const top = el.getBoundingClientRect().top;
-      if (want === null || Math.abs(top - want) > 2) {
-        el.scrollIntoView({ block: 'start' });
-        want = el.getBoundingClientRect().top;
-      }
-    }
-    if (!stop && Date.now() - t0 < 1500) window.requestAnimationFrame(tick);
-    else events.forEach((e) => window.removeEventListener(e, cancel));
-  };
-  window.setTimeout(tick, 80);
+  showSection('backup');
 }
 
 export default function Overview({ snap, nav, act, fin, openFinance, mobile, ask }: { snap: Snapshot; nav: Nav; act: OpActions; fin: FinanceActions; openFinance: (v: FinView) => void; mobile: boolean; ask?: () => void }) {
@@ -117,7 +97,8 @@ export default function Overview({ snap, nav, act, fin, openFinance, mobile, ask
   // Копий не было или они давно не делались — напомнить (когда записей уже набралось).
   const last = lastBackup(snap);
   const backupDays = last ? daysSince(last.at) : null;
-  const remindBackup = !empty && snap.ops.length >= 10 && (backupDays == null || backupDays > 14);
+  // Автокопии выключены на компьютере — копии делаются по кнопке, когда нужно: не напоминаем.
+  const remindBackup = !empty && snap.ops.length >= 10 && snap.settings['backup.auto'] !== 'off' && (backupDays == null || backupDays > 14);
   const debts: string[] = [];
   if (snap.i_owe > 0) debts.push('я должен ' + rub(snap.i_owe));
   if (snap.owed_to_me > 0) debts.push('мне должны ' + rub(snap.owed_to_me));
@@ -171,7 +152,15 @@ export default function Overview({ snap, nav, act, fin, openFinance, mobile, ask
                     </span>
                   </div>
                 ))}
-              <button type="button" className="btn link" style={{ alignSelf: 'flex-start', color: 'var(--own)', fontWeight: 500, padding: 0 }} onClick={() => nav.go('settings')}>
+              <button
+                type="button"
+                className="btn link"
+                style={{ alignSelf: 'flex-start', color: 'var(--own)', fontWeight: 500, padding: 0 }}
+                onClick={() => {
+                  nav.go('settings');
+                  showSection('accounts');
+                }}
+              >
                 Остатки и счета — в настройках
               </button>
             </div>

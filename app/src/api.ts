@@ -262,7 +262,12 @@ export type Snapshot = {
   budgets: BudgetView[];
   /** С какого числа начинается месяц бюджета. */
   budget_day: number;
+  /** Свои категории личных трат; скрытые — в настройках «cat.hidden.<код>». Нет у старых версий ядра. */
+  categories?: Category[];
 };
+
+/** Своя категория личных трат: название и иконка из набора. */
+export type Category = { id: string; name: string; icon: string };
 
 export type Check = { ok: boolean; text: string };
 export type DeviceInfo = { id: string; name: string; os: string; arch: string; version: string; data_dir: string; encrypted: boolean; cipher: string; events: number; unknown: number };
@@ -358,6 +363,8 @@ export const api = {
   tripSettle: (id: string) => invoke<Snapshot>('trip_settle', { today: today(), id }),
   accountSave: (account: Account) => invoke<Snapshot>('account_save', { today: today(), account }),
   settingSet: (key: string, value: string) => invoke<Snapshot>('setting_set', { today: today(), key, value }),
+  /** Своя категория: новая (id пустой) или правка названия и иконки. */
+  categorySave: (category: Category) => invoke<Snapshot>('category_save', { today: today(), category }),
   deviceInfo: () => invoke<DeviceInfo>('device_info'),
   dbCheck: () => invoke<Check[]>('db_check'),
   calcCheck: () => invoke<Check[]>('calc_check'),
@@ -370,6 +377,8 @@ export const api = {
   blobUrl: (id: string) => invoke<string | null>('blob_url', { id }),
   receiptsZip: (trip: string) => invoke<string>('receipts_zip', { trip }),
   fxRate: (cur: string, date: string) => invoke<FxQuote>('fx_rate', { today: today(), cur, date }),
+  /** «Обновить курс ЦБ»: курсы на сегодня заново; date — дата курсов (в выходные — последнего рабочего дня). */
+  fxRefresh: () => invoke<{ snap: Snapshot; date: string }>('fx_refresh', { today: today() }),
   debtSave: (debt: Debt, account: string | null) => invoke<Snapshot>('debt_save', { today: today(), debt, money: account ? { account } : null }),
   debtDelete: (id: string) => invoke<Snapshot>('debt_delete', { today: today(), id }),
   debtPay: (id: string, amount: number, account: string, date: string) => invoke<Snapshot>('debt_pay', { today: today(), id, amount, account, date }),

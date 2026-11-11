@@ -29,6 +29,11 @@ fn get(agent: &ureq::Agent, url: &str) -> Result<(u16, Vec<u8>), String> {
 
 /// Курсы на дату (ГГГГ-ММ-ДД). Если на эту дату курсов нет (выходной), ЦБ отдаёт последние.
 pub fn fetch(date: &str) -> Result<CbrRates, String> {
+    // В отладочной сборке сайт ЦБ и зеркало подменяет KARMAN_CBR_MOCK — для проверок без сети.
+    #[cfg(debug_assertions)]
+    if let Some(base) = std::env::var("KARMAN_CBR_MOCK").ok().filter(|b| !b.is_empty()) {
+        return fetch_from(&agent(), &format!("{base}/cbr/?date_req="), &format!("{base}/m/"), date);
+    }
     fetch_from(&agent(), URL, MIRROR, date)
 }
 
@@ -151,6 +156,36 @@ fn remember(app: &AppHandle, state: &AppState, today: &str, date: &str, c: &CbrR
     }
 }
 
+/// Курсы ЦБ, загруженные по кнопке, и сводка с ними.
+#[derive(Serialize)]
+pub struct FxRefreshed {
+    snap: karman_core::book::Snapshot,
+    /// Дата курсов: в выходные и праздники ЦБ отдаёт курсы последнего рабочего дня.
+    date: String,
+}
+
+/// «Обновить курс ЦБ»: курсы на сегодня заново с сайта ЦБ (или с зеркала), даже если уже загружены.
+#[tauri::command]
+pub async fn fx_refresh(app: AppHandle, today: String) -> Res<FxRefreshed> {
+    let state = app.state::<AppState>();
+    // Без входа — ничего: ни запроса, ни сводки.
+    drop(state.store()?);
+    let d = today.clone();
+    let c = tauri::async_runtime::spawn_blocking(move || fetch(&d)).await.map_err(err)?.map_err(capital)?;
+    remember(&app, &state, &today, &today, &c);
+    let st = state.store()?;
+    Ok(FxRefreshed { snap: crate::snap(&st, &today)?, date: c.date })
+}
+
+/// Ошибка — с большой буквы: она уходит на экран как есть.
+fn capital(e: String) -> String {
+    let mut c = e.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        None => e,
+    }
+}
+
 /// При запуске: свежие курсы ЦБ для пересчёта остатков на счетах в валюте.
 pub fn refresh_on_start(app: AppHandle, today: String) {
     tauri::async_runtime::spawn(async move {
@@ -174,6 +209,12 @@ pub fn refresh_on_start(app: AppHandle, today: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn errors_start_with_capital_letter() {
+        assert_eq!(capital("курсы ЦБ не загрузились: cbr.ru — ответ 500".into()), "Курсы ЦБ не загрузились: cbr.ru — ответ 500");
+        assert_eq!(capital(String::new()), "");
+    }
 
     /// Сайт ЦБ не открылся — курсы с зеркала, на выходные — за последний день, когда ЦБ их устанавливал.
     #[test]

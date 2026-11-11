@@ -16,7 +16,7 @@ fn main() {
     let ops = s.ops().unwrap();
     let accounts = s.accounts().unwrap();
     let st = stats(&ops, &accounts, &s.trips().unwrap(), book::settings_rate(&s.settings().unwrap()), Span::Month, demo::today(), demo::today());
-    std::fs::write(&out, karman_core::export::workbook(&ops, &accounts, &st).unwrap()).unwrap();
+    std::fs::write(&out, karman_core::export::workbook(&ops, &accounts, &[], &st).unwrap()).unwrap();
     println!("{out}");
     drop(s);
     let _ = std::fs::remove_dir_all(&dir);

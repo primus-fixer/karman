@@ -8,6 +8,7 @@ use crate::error::{Error, Result};
 use crate::pairing::Pairing;
 use crate::book::Account;
 use crate::budget::Budget;
+use crate::category::Category;
 use crate::finance::{Debt, Plan};
 use crate::overtime::{WorkDay, WorkOrder};
 use crate::savings::Goal;
@@ -72,6 +73,8 @@ pub enum EventBody {
     /// Рабочий день поездки: время работ и комментарий.
     DayPut { day: WorkDay },
     DayDelete { id: String },
+    /// Своя категория личных трат (с 0.14.0). Удаления нет: категорию скрывают.
+    CategoryPut { category: Category },
 }
 
 impl EventBody {
@@ -96,6 +99,7 @@ impl EventBody {
             EventBody::OrderDelete { id } => ("order", id.clone(), None),
             EventBody::DayPut { day } => ("workday", day.id.clone(), Some(serde_json::to_string(day)?)),
             EventBody::DayDelete { id } => ("workday", id.clone(), None),
+            EventBody::CategoryPut { category } => ("category", category.id.clone(), Some(serde_json::to_string(category)?)),
         })
     }
 }
@@ -617,6 +621,17 @@ mod tests {
         st.put_op(o).unwrap();
         let again = st.ops().unwrap().remove(0);
         assert_eq!((again.title.as_str(), &again.extra["future_field"]), ("Правка", &serde_json::json!({"x": 1})));
+    }
+
+    /// Свои категории приходят с другого устройства, как остальные записи: последняя правка — главная.
+    #[test]
+    fn categories_sync_like_other_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut st = Store::open(&dir.path().join("c.db"), &[4u8; 32], "a").unwrap();
+        let put = |seq: u64, name: &str| Event { device: "b".into(), seq, lamport: seq, body: serde_json::json!({"type": "category_put", "category": {"id": "c-1", "name": name, "icon": "sprout", "color": "teal"}}) };
+        assert_eq!(st.apply(&[put(1, "Дача"), put(2, "Дача и сад")]).unwrap(), 2);
+        let cats = st.categories().unwrap();
+        assert_eq!((cats.len(), cats[0].name.as_str(), &cats[0].extra["color"]), (1, "Дача и сад", &serde_json::json!("teal")), "поле новой версии не теряется");
     }
 
     /// Старая версия (до 0.4) не разбирает записи новых видов и рвёт связь — говорим об этом понятно.

@@ -25,6 +25,8 @@ const META_LOCAL: &str = "backup.local";
 const META_ERROR: &str = "backup.error";
 /// Общая настройка: когда и где сделана последняя копия — видна и на телефоне.
 pub const SETTING_LAST: &str = "backup.last";
+/// Общая настройка: автокопии на компьютере (day, week, off). Выключены — «Обзор» не напоминает о копиях.
+pub const SETTING_AUTO: &str = "backup.auto";
 
 /// Файл копии при загрузке для восстановления — не больше 8 ГБ.
 const MAX_UPLOAD: u64 = 8 << 30;
@@ -168,8 +170,10 @@ pub fn backup_every(app: AppHandle, state: State<AppState>, every: String) -> Re
     if !["day", "week", "off"].contains(&every.as_str()) {
         return Err("Как часто: каждый день, раз в неделю или выключено".into());
     }
-    let st = state.store()?;
+    let mut st = state.store()?;
     st.set_meta(META_EVERY, &every).map_err(err)?;
+    // Видно и на телефоне: автокопии выключены — напоминать о копиях не нужно.
+    st.append(EventBody::SettingPut { key: SETTING_AUTO.into(), value: every }).map_err(err)?;
     Ok(status_of(&app, &st))
 }
 

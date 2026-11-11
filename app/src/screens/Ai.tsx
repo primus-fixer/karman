@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, LOCKED, message, type AiFeature, type AiStatus, type AiUsage, type Snapshot } from '../api';
 import { setAi } from '../aiState';
 import { NB } from '../format';
-import { ErrorText, Icon } from '../ui';
+import { Cut, ErrorText, Icon } from '../ui';
 
 /** «≈ $0,12 (≈ 10 ₽)» или «меньше цента» — оценка по ценам Anthropic; рубли — если есть курс доллара. */
 export function costText(v: number, fx?: Record<string, number>): string {
@@ -60,12 +60,9 @@ export default function AiSection({ snap, flash, locked }: { snap: Snapshot; fla
 
   if (!st) {
     return (
-      <section className="stack">
-        <h2 className="h2" style={{ marginBottom: 6 }}>
-          ИИ
-        </h2>
+      <Cut id="ai" title="ИИ">
         {error ? <ErrorText text={error} /> : <p className="note">Загружаю…</p>}
-      </section>
+      </Cut>
     );
   }
   /** Проверка ключа: один короткий запрос к Claude. */
@@ -162,10 +159,7 @@ export default function AiSection({ snap, flash, locked }: { snap: Snapshot; fla
     </div>
   );
   return (
-    <section className="stack" id="ai">
-      <h2 className="h2" style={{ marginBottom: 6 }}>
-        ИИ
-      </h2>
+    <Cut id="ai" title="ИИ">
       <p className="note" style={{ marginBottom: 8 }}>
         Claude читает наряды, билеты, счета гостиниц и приказы, заполняет операцию по фразе, отвечает на вопросы о деньгах и проверяет отчёт — вы проверяете и сохраняете. Нужен ваш ключ API Claude: запросы оплачиваются с вашего счёта в Claude Console, отдельно от подписки.
       </p>
@@ -233,6 +227,6 @@ export default function AiSection({ snap, flash, locked }: { snap: Snapshot; fla
         Ключ хранится только на этом устройстве, зашифрованным, — в обмен по Wi-Fi и резервные копии не попадает. В Anthropic уходит только то, что вы отправили сами: листы документа по кнопке «Распознать», фраза, вопрос и данные, которые Claude запросит для ответа, данные поездки или месяца для проверки и сводки.
       </p>
       <ErrorText text={error} />
-    </section>
+    </Cut>
   );
 }

@@ -796,7 +796,7 @@ pub fn parse_phrase(text: &str) -> Result<RawPhrase, String> {
 
 /// Разобранная фраза → черновик по правилам окна ввода: только существующие счета, поездки и категории.
 pub fn phrase_draft(raw: &RawPhrase, s: &crate::book::Snapshot) -> PhraseDraft {
-    use crate::tools::{OWN_IN, OWN_OUT, TRIP_IN, TRIP_OUT};
+    use crate::tools::{OWN_IN, TRIP_IN, TRIP_OUT};
     use crate::trip::TripStatus;
     let dir = match raw.kind.as_str() {
         "income" => "in",
@@ -814,12 +814,14 @@ pub fn phrase_draft(raw: &RawPhrase, s: &crate::book::Snapshot) -> PhraseDraft {
         ("out", "family", _) => "family".to_string(),
         _ => "own".to_string(),
     };
-    let list: &[&str] = match (dir, scope.starts_with("trip:")) {
-        ("move", _) => &["transfer"],
-        ("out", true) => &TRIP_OUT,
-        ("in", true) => &TRIP_IN,
-        ("in", false) => &OWN_IN,
-        _ => &OWN_OUT,
+    // Личные траты — встроенные и свои категории, кроме скрытых из выбора.
+    let personal: Vec<String> = crate::category::visible(&s.categories, &s.settings).into_iter().map(|(id, _)| id).collect();
+    let list: Vec<&str> = match (dir, scope.starts_with("trip:")) {
+        ("move", _) => vec!["transfer"],
+        ("out", true) => TRIP_OUT.to_vec(),
+        ("in", true) => TRIP_IN.to_vec(),
+        ("in", false) => OWN_IN.to_vec(),
+        _ => personal.iter().map(String::as_str).collect(),
     };
     let cat = if list.contains(&raw.category.as_str()) {
         raw.category.clone()
@@ -1545,6 +1547,21 @@ mod tests {
         crate::book::ensure_defaults(&mut st).unwrap();
         st.append_all(crate::demo::book_events()).unwrap();
         crate::book::snapshot(&st, crate::demo::today()).unwrap()
+    }
+
+    /// Своя категория — в разборе фразы, скрытая из выбора — нет.
+    #[test]
+    fn phrase_knows_custom_categories() {
+        let mut s = demo_snapshot();
+        s.categories.push(crate::category::Category { id: "c-dacha".into(), name: "Дача".into(), icon: "sprout".into(), extra: Default::default() });
+        s.settings.insert(crate::category::hidden_key("cafe"), "1".into());
+        let raw = |v: Value| -> RawPhrase { serde_json::from_value(v).unwrap() };
+        let d = phrase_draft(&raw(json!({"kind": "expense", "amount": 1500, "scope": "personal", "category": "c-dacha", "title": "Рассада"})), &s);
+        assert_eq!((d.scope.as_str(), d.cat.as_str()), ("own", "c-dacha"));
+        let d = phrase_draft(&raw(json!({"kind": "expense", "amount": 450, "scope": "personal", "category": "cafe"})), &s);
+        assert_eq!(d.cat, "groceries", "скрытая категория — как неизвестная");
+        let d = phrase_draft(&raw(json!({"kind": "expense", "amount": 299, "scope": "personal", "category": "subscriptions"})), &s);
+        assert_eq!(d.cat, "subscriptions");
     }
 
     #[test]

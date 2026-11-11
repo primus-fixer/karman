@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties, type FormEvent } from 'react';
 import { api, inApp, message, scanQr, type Account, type Attachment, type DocKind, type FxQuote, type Op, type Snapshot, type TripView } from './api';
 import { NB, SIGN, amountText, dMon, fmt, parseAmount, plural, rub } from './format';
 import { attachFile, pickFiles } from './media';
-import { CATS, OWN_IN, OWN_OUT, TRIP_IN, TRIP_OUT, catFromHistory, isFamily, isIn, kindFor, statusIndex } from './logic';
+import { CATS, OWN_IN, OWN_OUT, OWN_OUT_ALL, TRIP_IN, TRIP_OUT, catFromHistory, isFamily, isIn, kindFor, statusIndex, topCats } from './logic';
 import { aiOn, useAi } from './aiState';
 import { Icon, Seg, Thumbs } from './ui';
 
@@ -62,7 +62,7 @@ export function defaultDraft(snap: Snapshot): EntryDraft {
     dir: 'out',
     amount: '',
     scope: t ? 'trip:' + t.trip.id : 'own',
-    cat: t ? 'taxi' : 'groceries',
+    cat: t ? 'taxi' : OWN_OUT[0],
     acc: accountByKind(snap, t ? 'work' : 'personal'),
     to: '',
     toAmount: '',
@@ -210,6 +210,8 @@ export default function Entry({
   const [busy, setBusy] = useState(false);
   const [qrText, setQrText] = useState('');
   const [moreTrips, setMoreTrips] = useState(false);
+  // Все категории, а не только частые.
+  const [allCats, setAllCats] = useState(false);
   const [filesBusy, setFilesBusy] = useState(false);
   const ai = useAi();
   const [phrase, setPhrase] = useState('');
@@ -428,6 +430,13 @@ export default function Entry({
     }
   }
 
+  // Кнопки категорий: личных трат много — сначала частые, остальные под «Ещё».
+  // Операция со скрытой категорией: её кнопка видна, пока категория выбрана.
+  const ownOut = !move && e.dir === 'out' && !isTrip;
+  const catsAll = ownOut && !OWN_OUT.includes(e.cat) && OWN_OUT_ALL.includes(e.cat) ? [...OWN_OUT, e.cat] : catList(e.dir, e.scope);
+  const catsShown = allCats || !ownOut ? catsAll : topCats(catsAll, snap.ops, e.cat);
+  const catsMore = catsAll.length - catsShown.length;
+
   // Подсказка категории по прошлым операциям с тем же названием — без ИИ.
   const histCat = move || e.dir === 'move' ? null : catFromHistory(snap.ops, e.comment, e.dir, isTrip);
   const showHist = !!histCat && histCat !== e.cat && catList(e.dir, e.scope).includes(histCat);
@@ -588,6 +597,7 @@ export default function Entry({
       setE(defaultDraft(next));
       setQrText('');
       setError(null);
+      setAllCats(false);
     }
   };
 
@@ -730,12 +740,17 @@ export default function Entry({
               </button>
             )}
           </div>
-          <div className="chips scroll" role="group" aria-label="Категория">
-            {catList(e.dir, e.scope).map((c) => (
+          <div className={'chips' + (allCats ? '' : ' scroll')} role="group" aria-label="Категория">
+            {catsShown.map((c) => (
               <button key={c} type="button" aria-pressed={c === e.cat} className={'chip' + (c === e.cat ? ' sel' : '')} onClick={() => set({ cat: c })}>
-                {CATS[c].s}
+                {(CATS[c] || CATS.other).s}
               </button>
             ))}
+            {catsMore > 0 && (
+              <button type="button" className="chip more" aria-label={`Ещё категории: ${catsMore}`} onClick={() => setAllCats(true)}>
+                Ещё {catsMore}
+              </button>
+            )}
           </div>
           <div className="chips scroll" role="group" aria-label="Счёт">
             {accounts.map((a) => (
@@ -760,7 +775,7 @@ export default function Entry({
       {showHist && histCat && (
         <div className="chips">
           <button type="button" className="chip" onClick={() => set({ cat: histCat })}>
-            Как раньше: {CATS[histCat].n}
+            Как раньше: {(CATS[histCat] || CATS.other).n}
           </button>
         </div>
       )}

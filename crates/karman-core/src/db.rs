@@ -322,6 +322,13 @@ impl Store {
         self.items("budget")
     }
 
+    /// Свои категории личных трат, по названию.
+    pub fn categories(&self) -> Result<Vec<crate::category::Category>> {
+        let mut out: Vec<crate::category::Category> = self.items("category")?;
+        out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.id.cmp(&b.id)));
+        Ok(out)
+    }
+
     /// Наряды всех поездок.
     pub fn orders(&self) -> Result<Vec<crate::overtime::WorkOrder>> {
         let mut out: Vec<crate::overtime::WorkOrder> = self.items("order")?;

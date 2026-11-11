@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, inApp, LOCKED, message, onBackup, onClaude, onCloud, onFx, onLocked, type Attachment, type DeviceInfo, type LockStatus, type Op, type Snapshot, type TripStatus } from './api';
 import Entry, { defaultDraft, draftFromOp, tripDraft, type EntryDraft } from './Entry';
 import { aiOn, loadAi, useAi } from './aiState';
 import ChatSheet from './screens/Chat';
 import { rub } from './format';
-import { dueText } from './logic';
+import { applyCats, dueText } from './logic';
 import { bioLabel, LockScreen, PinFlow, type PinMode } from './Lock';
 import { attachFile, pickFiles } from './media';
 import Feed from './screens/Feed';
@@ -17,6 +17,7 @@ import TripForm from './screens/TripForm';
 import Trips from './screens/Trips';
 import { applyTheme, type ThemeMode } from './theme';
 import { Icon, Viewer, type OpActions } from './ui';
+import { showSection } from './cuts';
 
 export type Tab = 'overview' | 'feed' | 'trips' | 'finance' | 'settings';
 type Screen = Tab | 'trip' | 'trip-form';
@@ -90,6 +91,8 @@ type Toast = { text: string; undo?: () => void; long?: boolean; label?: string; 
 export default function App() {
   const isPhone = usePhone();
   const [snap, setSnap] = useState<Snapshot | null>(null);
+  // Свои категории и скрытые — в справочник категорий до отрисовки экранов.
+  useMemo(() => snap && applyCats(snap), [snap]);
   const [fatal, setFatal] = useState<string | null>(null);
   const [info, setInfo] = useState<DeviceInfo | null>(null);
   const [screen, setScreen] = useState<Screen>('overview');
@@ -579,7 +582,21 @@ export default function App() {
     );
   else if (screen === 'feed') body = <Feed snap={snap} act={opAct} />;
   else if (screen === 'trips') body = <Trips snap={snap} nav={nav} />;
-  else if (screen === 'finance') body = <Finance snap={snap} act={finAct} view={finView} setView={setFinView} goSettings={() => nav.go('settings')} openTrip={nav.openTrip} mobile={mobile} />;
+  else if (screen === 'finance')
+    body = (
+      <Finance
+        snap={snap}
+        act={finAct}
+        view={finView}
+        setView={setFinView}
+        goSettings={() => {
+          nav.go('settings');
+          showSection('accounts');
+        }}
+        openTrip={nav.openTrip}
+        mobile={mobile}
+      />
+    );
   else if (screen === 'settings')
     body = <Settings snap={snap} info={info} mobile={mobile} run={run} refresh={refresh} theme={theme} setTheme={setTheme} dark={dark} security={security} flash={(text, long) => flash(text, undefined, long)} />;
   else if (screen === 'trip' && tripId)

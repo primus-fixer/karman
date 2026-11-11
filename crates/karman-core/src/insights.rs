@@ -5,7 +5,7 @@
 
 use crate::book::Snapshot;
 use crate::date::Date;
-use crate::export::cat_name;
+use crate::category;
 use crate::money::Kop;
 use crate::trip::{Op, OpKind};
 use serde::Serialize;
@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct CatTrend {
     pub cat: String,
-    pub name: &'static str,
+    pub name: String,
     pub spent: Kop,
     pub usual: Kop,
 }
@@ -143,7 +143,7 @@ pub fn insights(s: &Snapshot) -> Insights {
     let cats_all: BTreeSet<String> = by_cat.keys().chain(by_cat_prev.keys()).cloned().collect();
     let mut cats: Vec<CatTrend> = cats_all
         .into_iter()
-        .map(|c| CatTrend { name: cat_name(&c), spent: by_cat.get(&c).copied().unwrap_or(0), usual: by_cat_prev.get(&c).copied().unwrap_or(0) / 3, cat: c })
+        .map(|c| CatTrend { name: category::name(&c, &s.categories), spent: by_cat.get(&c).copied().unwrap_or(0), usual: by_cat_prev.get(&c).copied().unwrap_or(0) / 3, cat: c })
         .filter(|c| c.spent > 0 || c.usual > 0)
         .collect();
     cats.sort_by(|a, b| b.spent.cmp(&a.spent).then_with(|| b.usual.cmp(&a.usual)));
@@ -230,8 +230,8 @@ pub fn facts(i: &Insights, s: &Snapshot) -> serde_json::Value {
         "income_rub": rub(i.income),
         "by_category": i.cats.iter().take(12).map(|c| json!({ "category": c.name, "spent": rub(c.spent), "usual_per_month": rub(c.usual) })).collect::<Vec<_>>(),
         "more_than_usual": i.unusual.iter().map(|c| json!({ "category": c.name, "spent": rub(c.spent), "usual_per_month": rub(c.usual) })).collect::<Vec<_>>(),
-        "big_purchases": i.big.iter().map(|b| json!({ "date": b.date, "title": b.title, "category": cat_name(&b.cat), "amount": rub(b.amount) })).collect::<Vec<_>>(),
-        "recurring": i.recurring.iter().map(|r| json!({ "title": r.title, "category": cat_name(&r.cat), "amount": rub(r.amount), "months_of_last_6": r.months, "next_expected": r.next, "is_regular_payment_in_karman": r.in_plans })).collect::<Vec<_>>(),
+        "big_purchases": i.big.iter().map(|b| json!({ "date": b.date, "title": b.title, "category": category::name(&b.cat, &s.categories), "amount": rub(b.amount) })).collect::<Vec<_>>(),
+        "recurring": i.recurring.iter().map(|r| json!({ "title": r.title, "category": category::name(&r.cat, &s.categories), "amount": rub(r.amount), "months_of_last_6": r.months, "next_expected": r.next, "is_regular_payment_in_karman": r.in_plans })).collect::<Vec<_>>(),
         "forecast_end_of_month": {
             "my_money_now": rub(i.forecast.now),
             "expected_income": rub(i.forecast.income),

@@ -3,9 +3,10 @@ import { api, message, scanQr, type Account, type AccountView, type Check, type 
 import type { PinMode } from '../Lock';
 import { SIGN, amountText, dMon, parseAmount, rateText as fxText, rub } from '../format';
 import { SCHEMES, type ThemeMode } from '../theme';
-import { Checks, ErrorText, Icon, Seg } from '../ui';
+import { Checks, Cut, ErrorText, Icon, Seg } from '../ui';
 import AiSection from './Ai';
 import BackupSection from './Backup';
+import CategoriesSection from './Categories';
 import ClaudeSection from './Claude';
 import CloudSync from './Cloud';
 import { OvertimeSettings } from './Overtime';
@@ -33,10 +34,7 @@ function SecuritySection({ sec, os }: { sec: Security; os: string }) {
   const keyText = lock.key === 'dpapi' ? 'зашифрован учётной записью Windows' : lock.key === 'android-keystore' ? 'в защищённом хранилище телефона' : 'в файле рядом с базой';
   const recover = win ? 'через Windows Hello' : droid ? 'блокировкой экрана телефона' : 'средствами системы';
   return (
-    <section className="stack">
-      <h2 className="h2" style={{ marginBottom: 6 }}>
-        Защита
-      </h2>
+    <Cut id="security" title="Защита">
       <div className="setrow">
         <span>
           <span>Вход по PIN-коду</span>
@@ -86,7 +84,7 @@ function SecuritySection({ sec, os }: { sec: Security; os: string }) {
           Забыли PIN-код — на экране входа нажмите «Забыли PIN?» и подтвердите себя {recover}. Данные останутся.
         </p>
       )}
-    </section>
+    </Cut>
   );
 }
 
@@ -138,10 +136,7 @@ function Reminders({ snap, run }: { snap: Snapshot; run: (p: Promise<Snapshot>, 
     }
   };
   return (
-    <section className="stack">
-      <h2 className="h2" style={{ marginBottom: 6 }}>
-        Напоминания
-      </h2>
+    <Cut id="remind" title="Напоминания">
       <p className="note" style={{ marginBottom: 8 }}>
         О регулярных платежах и сроках долгов: заранее и ещё раз в сам день. В уведомлении только название, без суммы.
       </p>
@@ -204,7 +199,7 @@ function Reminders({ snap, run }: { snap: Snapshot; run: (p: Promise<Snapshot>, 
         </div>
       )}
       <ErrorText text={error} />
-    </section>
+    </Cut>
   );
 }
 
@@ -514,6 +509,28 @@ function CheckButton({ label, run }: { label: string; run: () => Promise<Check[]
   );
 }
 
+/** «Обновить курс ЦБ»: курсы на сегодня заново, не дожидаясь следующего запуска. */
+function FxRefresh({ run, flash }: { run: (p: Promise<Snapshot>, ok?: string) => Promise<Snapshot | null>; flash: (text: string, long?: boolean) => void }) {
+  const [busy, setBusy] = useState(false);
+  const refresh = async () => {
+    setBusy(true);
+    let date = '';
+    const s = await run(
+      api.fxRefresh().then((r) => {
+        date = r.date;
+        return r.snap;
+      }),
+    );
+    setBusy(false);
+    if (s && date) flash(`Курсы ЦБ на ${dMon(date)} загружены`);
+  };
+  return (
+    <button type="button" className="btn ghost" style={{ alignSelf: 'flex-start', margin: '8px 0 2px' }} disabled={busy} onClick={refresh}>
+      {busy ? 'Загружаю курсы ЦБ…' : 'Обновить курс ЦБ'}
+    </button>
+  );
+}
+
 export default function Settings({
   snap,
   info,
@@ -540,7 +557,6 @@ export default function Settings({
   const [rateText, setRateText] = useState(amountText(snap.rate));
   useEffect(() => setRateText(amountText(snap.rate)), [snap.rate]);
   const [editAcc, setEditAcc] = useState<string | null>(null);
-  const [showChecks, setShowChecks] = useState(false);
   const [rateError, setRateError] = useState<string | null>(null);
 
   const commitRate = async () => {
@@ -553,13 +569,10 @@ export default function Settings({
   const fxCurrencies = Array.from(new Set(['KZT', 'USD', 'EUR', ...snap.accounts.map((a) => a.account.currency)])).filter((c) => c !== 'RUB');
 
   return (
-    <div className="stack gap26">
+    <div className="stack settings">
       <h1 className="h1">Настройки</h1>
 
-      <section className="stack">
-        <h2 className="h2" style={{ marginBottom: 6 }}>
-          Командировки
-        </h2>
+      <Cut id="trips" title="Командировки">
         <label className="setrow">
           <span>
             <span>Суточные в день, ₽</span>
@@ -583,14 +596,11 @@ export default function Settings({
             <span>{v}</span>
           </div>
         ))}
-      </section>
+      </Cut>
 
       <OvertimeSettings snap={snap} run={run} />
 
-      <section className="stack">
-        <h2 className="h2" style={{ marginBottom: 6 }}>
-          Счета
-        </h2>
+      <Cut id="accounts" title="Счета">
         <p className="note" style={{ marginBottom: 8 }}>
           Укажите, сколько сейчас на каждом счёте, — дальше остатки считаются по записанным операциям.
         </p>
@@ -654,12 +664,11 @@ export default function Settings({
             />
           </label>
         )}
-      </section>
+      </Cut>
 
-      <section className="stack">
-        <h2 className="h2" style={{ marginBottom: 6 }}>
-          Курсы валют
-        </h2>
+      <CategoriesSection snap={snap} run={run} />
+
+      <Cut id="fx" title="Курсы валют">
         <label className="setrow" style={{ cursor: 'pointer' }}>
           <span>
             <span>Курс ЦБ на дату операции</span>
@@ -690,20 +699,18 @@ export default function Settings({
                 <span className="num">{fxText(snap.fx[c])} ₽</span>
               </div>
             ))}
+        {snap.fx_auto && <FxRefresh run={run} flash={flash} />}
         <p className="note" style={{ margin: '10px 0 4px' }}>
           {snap.fx_auto ? 'Запасные курсы — если курс ЦБ не загрузился. Сколько рублей за единицу валюты:' : 'Сколько рублей за единицу валюты:'}
         </p>
         {fxCurrencies.map((c) => (
           <FxRow key={c} cur={c} value={snap.fx_manual[c]} save={(v) => run(api.settingSet('fx.' + c, v), `Курс ${c} сохранён`)} />
         ))}
-      </section>
+      </Cut>
 
       <Reminders snap={snap} run={run} />
 
-      <section className="stack">
-        <h2 className="h2" style={{ marginBottom: 6 }}>
-          Синхронизация
-        </h2>
+      <Cut id="sync" title="Синхронизация">
         <div className="setrow" style={{ minHeight: 58 }}>
           <span style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
             <Icon name="wifi" size={22} />
@@ -725,7 +732,7 @@ export default function Settings({
           </span>
           <span className="note faint">скоро</span>
         </div>
-      </section>
+      </Cut>
 
       <ClaudeSection mobile={mobile} run={run} flash={flash} locked={refresh} />
 
@@ -733,8 +740,7 @@ export default function Settings({
 
       <BackupSection snap={snap} mobile={mobile} run={run} flash={flash} />
 
-      <section className="stack gap10">
-        <h2 className="h2">Оформление</h2>
+      <Cut id="look" title="Оформление" gap="gap10">
         <Seg
           label="Тема"
           value={theme.mode}
@@ -760,14 +766,11 @@ export default function Settings({
             );
           })}
         </div>
-      </section>
+      </Cut>
 
       <SecuritySection sec={security} os={info?.os ?? ''} />
 
-      <section className="stack">
-        <h2 className="h2" style={{ marginBottom: 6 }}>
-          Это устройство
-        </h2>
+      <Cut id="device" title="Это устройство">
         {info ? (
           <>
             <div className="row">
@@ -805,21 +808,15 @@ export default function Settings({
         ) : (
           <p className="note">Загружаю…</p>
         )}
-      </section>
+      </Cut>
 
-      <section className="stack gap10">
-        <button type="button" className="collapse" aria-expanded={showChecks} onClick={() => setShowChecks(!showChecks)}>
-          <span>Проверки</span>
-          <Icon name={showChecks ? 'up' : 'down'} size={18} stroke={2} />
-        </button>
-        {showChecks && (
-          <div className="stack gap16">
-            <p className="note">Проверочная база: запись, чтение, шифрование файла. Расчёт: суммы из заявки 573 должны совпасть с 1С до копейки.</p>
-            <CheckButton label="Проверить базу" run={api.dbCheck} />
-            <CheckButton label="Проверить расчёт" run={api.calcCheck} />
-          </div>
-        )}
-      </section>
+      <Cut id="checks" title="Проверки">
+        <div className="stack gap16">
+          <p className="note">Проверочная база: запись, чтение, шифрование файла. Расчёт: суммы из заявки 573 должны совпасть с 1С до копейки.</p>
+          <CheckButton label="Проверить базу" run={api.dbCheck} />
+          <CheckButton label="Проверить расчёт" run={api.calcCheck} />
+        </div>
+      </Cut>
     </div>
   );
 }

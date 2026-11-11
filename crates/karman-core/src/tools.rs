@@ -8,6 +8,7 @@ use crate::ai;
 use crate::book::{self, Snapshot};
 use crate::date::Date;
 use crate::db::Store;
+use crate::category;
 use crate::export::cat_name;
 use crate::money::Kop;
 use crate::overtime::{self as ot, Rules, Sheet, WorkDay, WorkOrder};
@@ -41,7 +42,6 @@ pub type ToolResult<T> = std::result::Result<T, String>;
 /// Категории расходов и доходов — как в окне ввода.
 pub const TRIP_OUT: [&str; 6] = ["tickets", "lodging", "taxi", "car", "food", "tools"];
 pub const TRIP_IN: [&str; 2] = ["advance", "reimb"];
-pub const OWN_OUT: [&str; 7] = ["groceries", "cafe", "transport", "home", "telecom", "gifts", "other"];
 pub const OWN_IN: [&str; 3] = ["salary", "interest", "otherIn"];
 
 fn obj(props: Value, required: &[&str]) -> Value {
@@ -173,7 +173,7 @@ pub fn list() -> Vec<ToolInfo> {
                 json!({
                     "type": { "type": "string", "enum": ["expense", "income"], "description": "expense — расход, income — доход или деньги от компании" },
                     "amount": { "type": "number", "exclusiveMinimum": 0, "description": "Сумма в валюте счёта, например 640 или 1250.50" },
-                    "category": { "type": "string", "description": "Код категории. Поездка, расход: tickets, lodging, taxi, car, food, tools. Поездка, доход: advance, reimb. Личное, расход: groceries, cafe, transport, home, telecom, gifts, other. Личное, доход: salary, interest, otherIn" },
+                    "category": { "type": "string", "description": "Код категории. Поездка, расход: tickets, lodging, taxi, car, food, tools. Поездка, доход: advance, reimb. Личное, расход: groceries, cafe, transport, auto, home, telecom, subscriptions, health, clothes, beauty, kids, pets, sport, fun, education, travel, gifts, taxes, other или код своей категории человека (c-…, см. categories). Личное, доход: salary, interest, otherIn" },
                     "scope": { "type": "string", "enum": ["trip", "personal", "family", "personal_tagged"], "description": "trip — деньги поездки; personal — личное; family — семейный расход; personal_tagged — личный расход с меткой поездки (в расчёт с компанией не входит)" },
                     "trip": { "type": "string", "description": "Номер поездки — для trip и personal_tagged; если не указан, берётся идущая поездка" },
                     "date": date,
@@ -459,7 +459,7 @@ fn op_view(s: &Snapshot, o: &Op) -> Value {
         "type": kind_title(o),
         "kind": kind_code(o.kind),
         "category": o.cat,
-        "category_name": cat_name(&o.cat),
+        "category_name": category::name(&o.cat, &s.categories),
         "title": o.title,
         "amount": rub(o.amount),
         "account": account_name(s, &o.account),
@@ -811,7 +811,7 @@ fn budget(s: &Snapshot) -> Value {
             "spent": rub(b.spent),
             "left": b.total.map(|t| ((t - b.spent) as f64) / 100.0),
             "days_left": b.days_left,
-            "categories": b.cats.iter().map(|c| json!({ "category": c.cat, "name": cat_name(&c.cat), "limit": c.limit.map(|l| (l as f64) / 100.0), "spent": rub(c.spent) })).collect::<Vec<_>>(),
+            "categories": b.cats.iter().map(|c| json!({ "category": c.cat, "name": category::name(&c.cat, &s.categories), "limit": c.limit.map(|l| (l as f64) / 100.0), "spent": rub(c.spent) })).collect::<Vec<_>>(),
         }))
         .collect::<Vec<_>>())
 }
@@ -822,6 +822,7 @@ fn stats(store: &Store, today: Date, args: &Value) -> ToolResult<Value> {
     let any = arg_date(args, "date")?.unwrap_or(today);
     let settings = store.settings().map_err(e)?;
     let st = crate::stats::stats(&store.ops().map_err(e)?, &store.accounts().map_err(e)?, &store.trips().map_err(e)?, book::settings_rate(&settings), span, any, today);
+    let custom = store.categories().map_err(e)?;
     Ok(json!({
         "from": st.from,
         "to_exclusive": st.to,
@@ -830,7 +831,7 @@ fn stats(store: &Store, today: Date, args: &Value) -> ToolResult<Value> {
         "spent": rub(st.spent),
         "spent_before": rub(st.prev_spent),
         "income": rub(st.income),
-        "categories": st.cats.iter().map(|c| json!({ "category": c.cat, "name": cat_name(&c.cat), "amount": rub(c.amount), "before": rub(c.prev) })).collect::<Vec<_>>(),
+        "categories": st.cats.iter().map(|c| json!({ "category": c.cat, "name": category::name(&c.cat, &custom), "amount": rub(c.amount), "before": rub(c.prev) })).collect::<Vec<_>>(),
         "months": st.months.iter().map(|m| json!({ "month": m.month, "income": rub(m.income), "spent": rub(m.spent), "saved": rub(m.saved) })).collect::<Vec<_>>(),
         "trips_year": {
             "year": st.trips.year,
@@ -883,7 +884,8 @@ fn categories(s: &Snapshot) -> Value {
     json!({
         "trip_expense": cats_view(&TRIP_OUT),
         "trip_income": cats_view(&TRIP_IN),
-        "personal_expense": cats_view(&OWN_OUT),
+        // Свои категории человека — вместе со встроенными; скрытые из выбора — не предлагаем.
+        "personal_expense": category::visible(&s.categories, &s.settings).into_iter().map(|(id, name)| json!({ "id": id, "name": name })).collect::<Vec<_>>(),
         "personal_income": cats_view(&OWN_IN),
         "accounts": s.accounts.iter().filter(|a| !a.account.archived).map(|a| json!({ "id": a.account.id, "name": a.account.name, "kind": a.account.kind, "currency": a.account.currency })).collect::<Vec<_>>(),
         "open_trips": s.trips.iter().filter(|t| t.trip.status != TripStatus::Closed).map(|t| json!({ "id": t.trip.id, "city": t.trip.city, "start": t.trip.start, "end": t.trip.end, "status": t.trip.status.title() })).collect::<Vec<_>>(),
@@ -957,11 +959,13 @@ fn add_operation(store: &Store, today: Date, args: &Value, rate: &dyn Fn(&str, D
     if income && (family || tagged) {
         return Err("доход записывается как personal (личный) или trip (деньги от компании по поездке)".into());
     }
-    let allowed: &[&str] = match (in_trip, income) {
-        (true, false) => &TRIP_OUT,
-        (true, true) => &TRIP_IN,
-        (false, false) => &OWN_OUT,
-        (false, true) => &OWN_IN,
+    let custom = store.categories().map_err(e)?;
+    let personal: Vec<String> = category::all(&custom).into_iter().map(|(id, _)| id).collect();
+    let allowed: Vec<&str> = match (in_trip, income) {
+        (true, false) => TRIP_OUT.to_vec(),
+        (true, true) => TRIP_IN.to_vec(),
+        (false, false) => personal.iter().map(String::as_str).collect(),
+        (false, true) => OWN_IN.to_vec(),
     };
     if !allowed.contains(&cat.as_str()) {
         return Err(format!("категория «{cat}» не подходит; можно: {}", allowed.join(", ")));
@@ -993,7 +997,7 @@ fn add_operation(store: &Store, today: Date, args: &Value, rate: &dyn Fn(&str, D
     };
     let doc = (kind == OpKind::Work && arg_bool(args, "has_document") == Some(true)).then_some(DocKind::Photo);
     let (rub_amount, orig, cur) = to_rub(amount, &acc.currency, date, rate)?;
-    let title = arg_str(args, "title").unwrap_or_else(|| cat_name(&cat).to_string());
+    let title = arg_str(args, "title").unwrap_or_else(|| category::name(&cat, &custom));
     if title.chars().count() > 200 {
         return Err("слишком длинное название".into());
     }
@@ -1053,11 +1057,12 @@ fn update_operation(store: &Store, args: &Value, rate: &dyn Fn(&str, Date) -> Op
         op.date = d;
     }
     if let Some(c) = arg_str(args, "category") {
-        let allowed: &[&str] = match op.kind {
-            OpKind::Work | OpKind::Food => &TRIP_OUT,
-            OpKind::Advance | OpKind::Reimbursement => &TRIP_IN,
-            OpKind::Personal => &OWN_OUT,
-            _ => &OWN_IN,
+        let personal: Vec<String> = category::all(&store.categories().map_err(e)?).into_iter().map(|(id, _)| id).collect();
+        let allowed: Vec<&str> = match op.kind {
+            OpKind::Work | OpKind::Food => TRIP_OUT.to_vec(),
+            OpKind::Advance | OpKind::Reimbursement => TRIP_IN.to_vec(),
+            OpKind::Personal => personal.iter().map(String::as_str).collect(),
+            _ => OWN_IN.to_vec(),
         };
         if !allowed.contains(&c.as_str()) {
             return Err(format!("категория «{c}» не подходит; можно: {}", allowed.join(", ")));
@@ -1512,6 +1517,35 @@ mod tests {
         assert!(bad(json!({ "type": "income", "amount": 100, "category": "salary", "scope": "family" })).contains("доход"));
         assert!(bad(json!({ "type": "expense", "amount": 100, "category": "taxi", "scope": "trip", "trip": "777" })).contains("777"));
         assert!(bad(json!({ "type": "expense", "amount": 100, "category": "cafe", "scope": "personal", "account": "acc-nope" })).contains("acc-nope"));
+    }
+
+    /// Свои категории: в списке для Claude (без скрытых), в записи и в названиях; скрытой можно пометить.
+    #[test]
+    fn custom_categories_work_like_builtins() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = store(dir.path());
+        let today = demo::today();
+        let dacha = crate::category::Category { id: "c-dacha".into(), name: "Дача".into(), icon: "sprout".into(), extra: Default::default() };
+        s.append_all(vec![
+            EventBody::CategoryPut { category: dacha },
+            EventBody::SettingPut { key: crate::category::hidden_key("cafe"), value: "1".into() },
+        ])
+        .unwrap();
+        let cats = read(&s, today, "categories", &json!({})).unwrap();
+        let ids: Vec<&str> = cats["personal_expense"].as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap()).collect();
+        assert!(ids.contains(&"c-dacha") && ids.contains(&"subscriptions") && !ids.contains(&"cafe"), "{ids:?}");
+        assert_eq!(ids.last(), Some(&"other"));
+        let c = plan(&s, today, "add_operation", &json!({ "type": "expense", "amount": 1500, "category": "c-dacha", "scope": "personal" }), &no_rate).unwrap();
+        let EventBody::OpPut { op } = &c.bodies[0] else { panic!() };
+        assert_eq!((op.cat.as_str(), op.title.as_str(), op.kind), ("c-dacha", "Дача", OpKind::Personal), "название по умолчанию — своей категории");
+        s.append_all(c.bodies.clone()).unwrap();
+        let found = read(&s, today, "operations", &json!({ "from": "2026-11-01", "to": "2026-11-30", "text": "Дача" })).unwrap();
+        assert!(found["operations"].as_array().unwrap().iter().any(|o| o["category_name"] == "Дача"), "{found}");
+        // Скрытая категория — из выбора, но операцию ею пометить можно (как уже записанные).
+        let c = plan(&s, today, "update_operation", &json!({ "id": op.id, "category": "cafe" }), &no_rate).unwrap();
+        assert!(matches!(&c.bodies[0], EventBody::OpPut { op } if op.cat == "cafe"));
+        let bad = plan(&s, today, "add_operation", &json!({ "type": "expense", "amount": 10, "category": "c-nope", "scope": "personal" }), &no_rate).unwrap_err();
+        assert!(bad.contains("c-nope") && bad.contains("c-dacha"), "{bad}");
     }
 
     #[test]

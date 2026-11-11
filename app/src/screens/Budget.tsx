@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { api, type Budget, type BudgetView, type Snapshot } from '../api';
 import { NB, amountText, dRange, parseAmount, plural, rub } from '../format';
-import { CATS, OWN_OUT } from '../logic';
+import { CATS, OWN_OUT, OWN_OUT_ALL } from '../logic';
 import { ErrorText, Icon, Seg } from '../ui';
 import type { FinanceActions } from './Finance';
 
@@ -29,7 +29,9 @@ function BudgetCard({ snap, view, act }: { snap: Snapshot; view: BudgetView; act
   const [edit, setEdit] = useState(false);
   const limited = view.cats.filter((c) => c.limit != null);
   const free = view.cats.filter((c) => c.limit == null);
-  const order = (a: string, b: string) => OWN_OUT.indexOf(a) - OWN_OUT.indexOf(b);
+  // Как в списке категорий; неизвестные (из более новой версии) — в конце.
+  const pos = (c: string) => (OWN_OUT_ALL.includes(c) ? OWN_OUT_ALL.indexOf(c) : OWN_OUT_ALL.length);
+  const order = (a: string, b: string) => pos(a) - pos(b);
   const perDay = view.total && view.total > view.spent && view.days_left > 0 ? Math.floor((view.total - view.spent) / view.days_left / 100) * 100 : 0;
   if (edit) return <BudgetEditor snap={snap} view={view} act={act} onClose={() => setEdit(false)} />;
   const empty = !view.total && limited.length === 0;
@@ -104,6 +106,8 @@ function BudgetEditor({ snap, view, act, onClose }: { snap: Snapshot; view: Budg
   const [cats, setCats] = useState<Record<string, string>>(() => Object.fromEntries(view.cats.filter((c) => c.limit != null).map((c) => [c.cat, amountText(c.limit as number)])));
   const [day, setDay] = useState(String(snap.budget_day));
   const [error, setError] = useState<string | null>(null);
+  // Категории для выбора и те скрытые, у которых уже есть лимит, — его можно убрать.
+  const limitCats = [...OWN_OUT, ...view.cats.filter((c) => c.limit != null && !OWN_OUT.includes(c.cat)).map((c) => c.cat)];
   const save = async () => {
     const t = total.trim() ? parseAmount(total) : null;
     if (total.trim() && (t == null || t <= 0)) return setError('Общий лимит — сумма в рублях');
@@ -128,10 +132,10 @@ function BudgetEditor({ snap, view, act, onClose }: { snap: Snapshot; view: Budg
       </label>
       <span className="note">По категориям — пустое поле значит «без лимита»</span>
       <div className="form-grid">
-        {OWN_OUT.map((c) => (
+        {limitCats.map((c) => (
           <label key={c} className="label">
-            <span>{CATS[c].n}</span>
-            <input className="field num" inputMode="decimal" value={cats[c] ?? ''} onChange={(e) => setCats({ ...cats, [c]: e.target.value })} placeholder="—" aria-label={`Лимит: ${CATS[c].n}`} />
+            <span>{(CATS[c] || CATS.other).n}</span>
+            <input className="field num" inputMode="decimal" value={cats[c] ?? ''} onChange={(e) => setCats({ ...cats, [c]: e.target.value })} placeholder="—" aria-label={`Лимит: ${(CATS[c] || CATS.other).n}`} />
           </label>
         ))}
       </div>
