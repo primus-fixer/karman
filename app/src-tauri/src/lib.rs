@@ -9,6 +9,7 @@ mod claude;
 mod cloud;
 mod fx;
 mod guard;
+mod lan;
 mod notify;
 mod overtime;
 
@@ -18,9 +19,9 @@ use karman_core::finance::{self, Debt, DebtDir, Plan};
 use karman_core::savings::Goal;
 use karman_core::db::{is_plaintext_sqlite, Store};
 use karman_core::money::{fmt2, rub_text};
-use karman_core::pairing::{random_key, Pairing};
 use karman_core::receipt::parse_fiscal_qr;
-use karman_core::sync::{self, EventBody, Server};
+use karman_core::pairing::random_key;
+use karman_core::sync::EventBody;
 use karman_core::trip::{self, Op, Trip, DEFAULT_RATE};
 use karman_core::{demo, Date};
 use serde::{Deserialize, Serialize};
@@ -33,15 +34,13 @@ use tauri::{AppHandle, Manager, State};
 
 use guard::{Guard, LOCKED};
 
-/// Порт для обмена по Wi-Fi. Если занят, берётся любой свободный.
-const SYNC_PORT: u16 = 47_500;
-
 struct AppState {
     store: Arc<Mutex<Store>>,
     me: Identity,
     data_dir: PathBuf,
     db_path: PathBuf,
-    server: Mutex<Option<(Server, Pairing)>>,
+    /// Связь по Wi-Fi: код, связанные устройства, сервер обмена.
+    lan: lan::Lan,
     guard: Mutex<Guard>,
     notice: Mutex<Option<String>>,
     /// Вход в облако по коду, который ждёт ввода.
@@ -651,15 +650,7 @@ fn calc_check() -> Vec<Check> {
 
 // ——— Связь устройств ———
 
-#[derive(Serialize)]
-struct PairingView {
-    uri: String,
-    qr_svg: String,
-    hosts: Vec<String>,
-    port: u16,
-}
-
-fn local_ipv4() -> Vec<String> {
+pub(crate) fn local_ipv4() -> Vec<String> {
     let mut out: Vec<String> = if_addrs::get_if_addrs()
         .unwrap_or_default()
         .into_iter()
@@ -675,7 +666,7 @@ fn local_ipv4() -> Vec<String> {
     out
 }
 
-fn qr_svg(text: &str) -> Res<String> {
+pub(crate) fn qr_svg(text: &str) -> Res<String> {
     use qrcode::render::svg;
     let code = qrcode::QrCode::new(text.as_bytes()).map_err(err)?;
     Ok(code
@@ -686,94 +677,9 @@ fn qr_svg(text: &str) -> Res<String> {
         .build())
 }
 
-fn pairing_view(p: &Pairing) -> Res<PairingView> {
-    let uri = p.to_uri();
-    Ok(PairingView { qr_svg: qr_svg(&uri)?, uri, hosts: p.hosts.clone(), port: p.port })
-}
-
-/// Начинает ждать подключения и отдаёт QR-код для другого устройства.
-#[tauri::command]
-fn sync_start(state: State<AppState>) -> Res<PairingView> {
-    drop(state.store()?);
-    let mut slot = state.server.lock().map_err(err)?;
-    if let Some((server, p)) = slot.as_ref() {
-        if server.running() {
-            return pairing_view(p);
-        }
-    }
-    // Прежний QR-код истёк — новый ключ и новый QR-код.
-    *slot = None;
-    let hosts = local_ipv4();
-    if hosts.is_empty() {
-        return Err("Нет подключения к сети: включите Wi-Fi или точку доступа".into());
-    }
-    let key = random_key().map_err(err)?;
-    let server = Server::start(state.store.clone(), key, state.me.name.clone(), SYNC_PORT)
-        .or_else(|_| Server::start(state.store.clone(), key, state.me.name.clone(), 0))
-        .map_err(err)?;
-    let p = Pairing { device: state.me.id.clone(), name: state.me.name.clone(), hosts, port: server.port, key };
-    let view = pairing_view(&p)?;
-    *slot = Some((server, p));
-    Ok(view)
-}
-
-#[derive(Serialize)]
-struct SyncStatus {
-    running: bool,
-    log: Vec<Check>,
-}
-
-#[tauri::command]
-fn sync_status(state: State<AppState>) -> Res<SyncStatus> {
-    state.unlocked()?;
-    let mut slot = state.server.lock().map_err(err)?;
-    let Some((server, _)) = slot.as_ref() else {
-        return Ok(SyncStatus { running: false, log: vec![] });
-    };
-    let running = server.running();
-    let log = server.log.lock().map_err(err)?.clone();
-    if !running {
-        // QR-код истёк: приём остановлен.
-        *slot = None;
-    }
-    Ok(SyncStatus {
-        running,
-        log: log
-            .iter()
-            .map(|r| match r {
-                Ok(s) => check(true, format!("«{}»: отправлено {}, получено {}{}{}", s.peer_name, s.sent, s.received, files_text(s.files_sent, s.files_received), prefixed(&version_hint(&s.peer_app)))),
-                Err(e) => check(false, format!("Не удалось: {e}")),
-            })
-            .collect(),
-    })
-}
-
-#[tauri::command]
-fn sync_stop(state: State<AppState>) -> Res<()> {
-    state.unlocked()?;
-    if let Some((server, _)) = state.server.lock().map_err(err)?.take() {
-        server.stop();
-    }
-    Ok(())
-}
-
-/// «Карман» заблокировался — QR-код больше не действует. Не ждём, пока закончится уже идущий обмен.
+/// «Карман» заблокировался — код связи больше не действует. Обмен со связанными устройствами идёт дальше.
 fn stop_sync(state: &AppState) {
-    if let Ok(mut slot) = state.server.lock() {
-        // Server при удалении сам просит поток остановиться.
-        drop(slot.take());
-    }
-}
-
-#[derive(Serialize)]
-struct SyncResult {
-    peer_name: String,
-    sent: usize,
-    received: usize,
-    files_sent: usize,
-    files_received: usize,
-    /// Подсказка, если на другом устройстве другая версия «Кармана».
-    hint: String,
+    lan::on_lock(state);
 }
 
 fn version_num(v: &str) -> (u32, u32, u32) {
@@ -782,7 +688,7 @@ fn version_num(v: &str) -> (u32, u32, u32) {
 }
 
 /// Что сказать, если версии на устройствах разные: записи новых видов старая версия не показывает.
-fn version_hint(peer_app: &str) -> String {
+pub(crate) fn version_hint(peer_app: &str) -> String {
     let mine = env!("CARGO_PKG_VERSION");
     if peer_app.is_empty() {
         return format!("На другом устройстве «Карман» старше 0.5: переводы и новые записи там не видны, пока его не обновите до {mine}.");
@@ -792,40 +698,6 @@ fn version_hint(peer_app: &str) -> String {
         std::cmp::Ordering::Greater => format!("На другом устройстве версия {peer_app}, новее этой ({mine}) — обновите это устройство, чтобы видеть все записи."),
         std::cmp::Ordering::Equal => String::new(),
     }
-}
-
-fn prefixed(hint: &str) -> String {
-    if hint.is_empty() {
-        String::new()
-    } else {
-        format!(". {hint}")
-    }
-}
-
-fn files_text(sent: usize, received: usize) -> String {
-    if sent + received == 0 {
-        String::new()
-    } else {
-        format!("; снимков чеков: отправлено {sent}, получено {received}")
-    }
-}
-
-/// Подключается к устройству по QR-коду (или вставленной ссылке) и обменивается данными.
-#[tauri::command]
-async fn sync_connect(state: State<'_, AppState>, uri: String) -> Res<SyncResult> {
-    drop(state.store()?);
-    let p = Pairing::from_uri(&uri).map_err(err)?;
-    if p.device == state.me.id {
-        return Err("Это QR-код этого же устройства. Отсканируйте его другим устройством".into());
-    }
-    let store = state.store.clone();
-    let name = state.me.name.clone();
-    let report = tauri::async_runtime::spawn_blocking(move || sync::sync_with(&p, &store, &name)).await.map_err(err)?.map_err(|e| match e {
-        karman_core::Error::Peer(m) => m,
-        e => format!("Не удалось связаться: {e}. Устройства должны быть в одной сети Wi-Fi"),
-    })?;
-    let hint = version_hint(&report.peer_app);
-    Ok(SyncResult { peer_name: report.peer_name, sent: report.sent, received: report.received, files_sent: report.files_sent, files_received: report.files_received, hint })
 }
 
 // ——— Снимки и файлы чеков ———
@@ -998,7 +870,7 @@ pub fn run() {
                 me,
                 data_dir: dir,
                 db_path,
-                server: Mutex::new(None),
+                lan: lan::Lan::default(),
                 guard: Mutex::new(guard),
                 notice: Mutex::new(notice),
                 cloud_login: Mutex::new(None),
@@ -1008,6 +880,7 @@ pub fn run() {
             notify::start_desktop_loop(app.handle().clone());
             backup::start_auto(app.handle().clone());
             cloud::start(app.handle().clone());
+            lan::start(app.handle().clone());
             if notify::TRAY.load(std::sync::atomic::Ordering::Relaxed) {
                 #[cfg(windows)]
                 notify::tray(app.handle())?;
@@ -1043,10 +916,14 @@ pub fn run() {
             device_info,
             db_check,
             calc_check,
-            sync_start,
-            sync_status,
-            sync_stop,
-            sync_connect,
+            lan::lan_status,
+            lan::lan_scan,
+            lan::lan_code_start,
+            lan::lan_code_stop,
+            lan::lan_pair,
+            lan::lan_pair_qr,
+            lan::lan_sync_now,
+            lan::lan_unpair,
             receipt_parse,
             blob_put,
             blob_url,

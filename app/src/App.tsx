@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, inApp, LOCKED, message, onBackup, onClaude, onCloud, onFx, onLocked, type Attachment, type DeviceInfo, type LockStatus, type Op, type Snapshot, type TripStatus } from './api';
+import { api, inApp, LOCKED, message, onBackup, onClaude, onCloud, onFx, onLan, onLocked, type Attachment, type DeviceInfo, type LockStatus, type Op, type Snapshot, type TripStatus } from './api';
 import Entry, { defaultDraft, draftFromOp, tripDraft, type EntryDraft } from './Entry';
 import { aiOn, loadAi, useAi } from './aiState';
 import ChatSheet from './screens/Chat';
@@ -227,12 +227,17 @@ export default function App() {
     const unCloud = onCloud((e) => {
       if (e.received > 0) api.snapshot().then(setSnap, () => undefined);
     }).catch(() => () => undefined);
+    // Обмен по Wi-Fi со связанным устройством принёс записи — свежая сводка.
+    const unLan = onLan((e) => {
+      if (e.received > 0) api.snapshot().then(setSnap, () => undefined);
+    }).catch(() => () => undefined);
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
       unlisten.then((f) => f());
       unFx.then((f) => f());
       unBackup.then((f) => f());
       unCloud.then((f) => f());
+      unLan.then((f) => f());
     };
   }, [refresh, goLocked, showNotice, showLock]);
 

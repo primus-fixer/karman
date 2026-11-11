@@ -2210,3 +2210,54 @@ button.otday.open {
   background: var(--tint);
   color: var(--accent);
 }
+
+/* ——— Wi-Fi: связанные устройства и код связи ——— */
+.wifi .h3 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.peerrow {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+}
+
+.dot.on {
+  border-color: var(--pos);
+  background: var(--pos);
+}
+
+.paircard {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surf);
+}
+
+.paircode {
+  margin: 0;
+  font-family: var(--num);
+  font-size: 34px;
+  line-height: 40px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.codefield {
+  font-family: var(--num);
+  font-size: 20px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}

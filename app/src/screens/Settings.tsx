@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { api, message, scanQr, type Account, type AccountView, type Check, type DeviceInfo, type LockStatus, type PairingView, type RemindStatus, type Snapshot, type SyncResult } from '../api';
+import { useEffect, useState } from 'react';
+import { api, message, type Account, type AccountView, type Check, type DeviceInfo, type LockStatus, type RemindStatus, type Snapshot } from '../api';
 import type { PinMode } from '../Lock';
 import { SIGN, amountText, dMon, parseAmount, rateText as fxText, rub } from '../format';
 import { SCHEMES, type ThemeMode } from '../theme';
@@ -9,6 +9,7 @@ import BackupSection from './Backup';
 import CategoriesSection from './Categories';
 import ClaudeSection from './Claude';
 import CloudSync from './Cloud';
+import Wifi from './Wifi';
 import { OvertimeSettings } from './Overtime';
 
 export type ThemeState = { scheme: string; mode: ThemeMode };
@@ -332,151 +333,6 @@ function AccountEditor({
   );
 }
 
-function SyncWifi({ mobile, onSynced }: { mobile: boolean; onSynced: () => void }) {
-  const [pairing, setPairing] = useState<PairingView | null>(null);
-  const [log, setLog] = useState<Check[]>([]);
-  const [uri, setUri] = useState('');
-  const [result, setResult] = useState<SyncResult | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [expired, setExpired] = useState(false);
-  const seen = useRef(0);
-
-  // Пока показан QR-код, раз в 2 секунды спрашиваем, кто подключался.
-  useEffect(() => {
-    if (!pairing) return;
-    let alive = true;
-    const tick = async () => {
-      try {
-        const s = await api.syncStatus();
-        if (!alive) return;
-        setLog(s.log);
-        if (s.log.length > seen.current) {
-          seen.current = s.log.length;
-          onSynced();
-        }
-        // QR-код действует 15 минут — потом приём подключений останавливается.
-        if (!s.running) {
-          setPairing(null);
-          setExpired(true);
-        }
-      } catch {
-        /* окно закрывается */
-      }
-    };
-    tick();
-    const id = window.setInterval(tick, 2000);
-    return () => {
-      alive = false;
-      window.clearInterval(id);
-    };
-  }, [pairing, onSynced]);
-
-  const act = async <T,>(fn: () => Promise<T>): Promise<T | undefined> => {
-    setBusy(true);
-    setError(null);
-    try {
-      return await fn();
-    } catch (e) {
-      setError(message(e));
-      return undefined;
-    } finally {
-      setBusy(false);
-    }
-  };
-  const connect = async (text: string) => {
-    const r = await act(() => api.syncConnect(text));
-    if (r) {
-      setResult(r);
-      setUri('');
-      onSynced();
-    }
-  };
-
-  return (
-    <div className="stack gap10" style={{ paddingTop: 8 }}>
-      <p className="note">
-        На компьютере нажмите «Показать QR-код», на телефоне — «Сканировать QR-код». Устройства должны быть в одной сети Wi-Fi, или телефон раздаёт точку доступа. Данные идут зашифрованными.
-      </p>
-      <div className="wrap">
-        {!pairing ? (
-          <button
-            type="button"
-            className="btn own"
-            disabled={busy}
-            onClick={async () => {
-              const p = await act(api.syncStart);
-              if (p) {
-                seen.current = 0;
-                setLog([]);
-                setExpired(false);
-                setPairing(p);
-              }
-            }}
-          >
-            Показать QR-код
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="btn ghost"
-            onClick={async () => {
-              await act(api.syncStop);
-              setPairing(null);
-            }}
-          >
-            Перестать ждать
-          </button>
-        )}
-        {mobile && (
-          <button
-            type="button"
-            className="btn"
-            disabled={busy}
-            onClick={async () => {
-              const text = await act(scanQr);
-              if (text) await connect(text);
-            }}
-          >
-            Сканировать QR-код
-          </button>
-        )}
-      </div>
-      {pairing && (
-        <>
-          <div className="qr" dangerouslySetInnerHTML={{ __html: pairing.qr_svg }} aria-label="QR-код для связи" role="img" />
-          <p className="note">
-            Жду подключения: {pairing.hosts.map((h) => `${h}:${pairing.port}`).join(', ')}. Если камеры нет, передайте другому устройству ссылку:{' '}
-            <span style={{ overflowWrap: 'anywhere' }}>{pairing.uri}</span>
-          </p>
-          {log.length > 0 && <Checks items={log} />}
-          <p className="note faint">QR-код действует 15 минут и пока «Карман» не заблокирован. Не показывайте его посторонним: по нему можно получить все записи.</p>
-        </>
-      )}
-      {!pairing && expired && <p className="note">QR-код больше не действует. Чтобы связать устройства, покажите новый.</p>}
-      <textarea className="field" rows={2} style={{ padding: '10px 12px' }} placeholder="Или вставьте ссылку karman://pair… с другого устройства" value={uri} onChange={(e) => setUri(e.target.value)} />
-      <div className="wrap">
-        <button type="button" className="btn ghost" disabled={busy || !uri.trim()} onClick={() => connect(uri.trim())}>
-          {busy ? 'Связываюсь…' : 'Подключиться по ссылке'}
-        </button>
-      </div>
-      <ErrorText text={error} />
-      {result && (
-        <Checks
-          items={[
-            {
-              ok: true,
-              text:
-                `Обмен с «${result.peer_name}»: отправлено ${result.sent}, получено ${result.received}` +
-                (result.files_sent + result.files_received ? `; снимков чеков: отправлено ${result.files_sent}, получено ${result.files_received}` : ''),
-            },
-          ]}
-        />
-      )}
-      {result?.hint && <p className="note warn">{result.hint}</p>}
-    </div>
-  );
-}
 
 function CheckButton({ label, run }: { label: string; run: () => Promise<Check[]> }) {
   const [res, setRes] = useState<Check[] | null>(null);
@@ -720,7 +576,7 @@ export default function Settings({
             </span>
           </span>
         </div>
-        <SyncWifi mobile={mobile} onSynced={refresh} />
+        <Wifi mobile={mobile} onSynced={refresh} />
         <CloudSync />
         <div className="setrow" style={{ minHeight: 58, marginTop: 14 }}>
           <span style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>

@@ -19,6 +19,7 @@ pub mod error;
 pub mod export;
 pub mod finance;
 pub mod insights;
+pub mod lan;
 pub mod mcp;
 pub mod money;
 pub mod overtime;

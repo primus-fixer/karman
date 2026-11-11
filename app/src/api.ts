@@ -271,9 +271,16 @@ export type Category = { id: string; name: string; icon: string };
 
 export type Check = { ok: boolean; text: string };
 export type DeviceInfo = { id: string; name: string; os: string; arch: string; version: string; data_dir: string; encrypted: boolean; cipher: string; events: number; unknown: number };
-export type PairingView = { uri: string; qr_svg: string; hosts: string[]; port: number };
-export type SyncStatus = { running: boolean; log: Check[] };
-export type SyncResult = { peer_name: string; sent: number; received: number; files_sent: number; files_received: number; hint: string };
+/** Показанный код связи: «6WVG-HEWK», сколько секунд ещё действует, сколько попыток осталось; QR — код и адрес для телефона. */
+export type LanCode = { code: string; secs: number; left: number; wrong: number; qr_svg: string; hosts: string[]; port: number };
+/** Связанное устройство: в сети ли, идёт ли обмен, последний обмен (unix), версия, почему не получился обмен. */
+export type LanPeer = { id: string; name: string; online: boolean; syncing: boolean; last: number | null; app: string; error: string | null };
+/** Устройство рядом в сети с показанным кодом. */
+export type LanNearby = { device: string; name: string; addr: string };
+export type LanView = { name: string; hosts: string[]; code: LanCode | null; note: string | null; peers: LanPeer[]; nearby: LanNearby[] };
+/** Связь по коду или обмен: с кем, сколько ушло и пришло; `remembered` — устройство запомнено (а не разовый обмен по QR прежней версии). */
+export type PairResult = { peer_name: string; sent: number; received: number; files_sent: number; files_received: number; hint: string; remembered: boolean };
+export type LanEvent = { received: number; paired: string | null };
 /** Курс валюты на дату: cbr — ЦБ, manual — из настроек, none — курса нет; fallback — сайт ЦБ не ответил, это последние сохранённые курсы. */
 export type FxQuote = { rate: number; source: 'cbr' | 'manual' | 'none'; date: string | null; fallback?: boolean };
 export type ReceiptView = { date: string; time: string; sum: number; fn_number: string; fd: string; fp: string; kind: string };
@@ -368,10 +375,16 @@ export const api = {
   deviceInfo: () => invoke<DeviceInfo>('device_info'),
   dbCheck: () => invoke<Check[]>('db_check'),
   calcCheck: () => invoke<Check[]>('calc_check'),
-  syncStart: () => invoke<PairingView>('sync_start'),
-  syncStatus: () => invoke<SyncStatus>('sync_status'),
-  syncStop: () => invoke<void>('sync_stop'),
-  syncConnect: (uri: string) => invoke<SyncResult>('sync_connect', { uri }),
+  lanStatus: () => invoke<LanView>('lan_status'),
+  /** Поискать в сети сейчас — около секунды. */
+  lanScan: () => invoke<LanView>('lan_scan'),
+  lanCodeStart: () => invoke<LanView>('lan_code_start'),
+  lanCodeStop: () => invoke<LanView>('lan_code_stop'),
+  /** Связь по коду: с найденным устройством (device) или по адресу (addr). */
+  lanPair: (device: string | null, addr: string | null, code: string) => invoke<PairResult>('lan_pair', { device, addr, code }),
+  lanPairQr: (uri: string) => invoke<PairResult>('lan_pair_qr', { uri }),
+  lanSyncNow: (id: string) => invoke<PairResult>('lan_sync_now', { id }),
+  lanUnpair: (id: string) => invoke<LanView>('lan_unpair', { id }),
   receiptParse: (text: string) => invoke<ReceiptView>('receipt_parse', { text }),
   blobPut: (mime: string, data: string) => invoke<{ id: string; size: number }>('blob_put', { mime, data }),
   blobUrl: (id: string) => invoke<string | null>('blob_url', { id }),
@@ -495,6 +508,12 @@ export async function onBackup(cb: () => void): Promise<() => void> {
 export async function onCloud(cb: (e: CloudEvent) => void): Promise<() => void> {
   const { listen } = await import('@tauri-apps/api/event');
   return listen<CloudEvent>('cloud', (ev) => cb(ev.payload));
+}
+
+/** Обмен по Wi-Fi со связанным устройством или связь по коду: `received` — сколько нового пришло. */
+export async function onLan(cb: (e: LanEvent) => void): Promise<() => void> {
+  const { listen } = await import('@tauri-apps/api/event');
+  return listen<LanEvent>('lan', (ev) => cb(ev.payload));
 }
 
 /** Загрузились свежие курсы ЦБ — остатки на счетах в валюте пересчитаны. */

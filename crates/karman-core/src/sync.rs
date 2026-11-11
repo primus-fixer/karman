@@ -105,7 +105,7 @@ impl EventBody {
 }
 
 const MAGIC: &[u8; 4] = b"KRM1";
-const MAX_FRAME: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_FRAME: usize = 64 * 1024 * 1024;
 /// Первое сообщение (приветствие) маленькое: до проверки ключа не принимаем больше мегабайта
 /// и ждём его недолго — чужой в сети не займёт приём подключений.
 const HELLO_MAX: usize = 1024 * 1024;
@@ -145,7 +145,9 @@ const OLD_PEER: &str = "На другом устройстве старая ве
 /// Поле `app` — версия «Кармана» (присылают версии с 0.5).
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
-enum Msg {
+pub(crate) enum Msg {
+    /// Кто я — сразу после связи по коду (с 0.15).
+    Ident { device: String, name: String, app: String },
     Hello {
         device: String,
         name: String,
@@ -175,7 +177,7 @@ enum Msg {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Blob {
+pub(crate) struct Blob {
     id: String,
     mime: String,
     /// Содержимое в base64.
@@ -229,10 +231,6 @@ fn write_msg(s: &mut TcpStream, key: &[u8; 32], msg: &Msg) -> Result<()> {
     Ok(())
 }
 
-fn read_msg(s: &mut TcpStream, key: &[u8; 32]) -> Result<Msg> {
-    read_msg_max(s, key, MAX_FRAME)
-}
-
 fn read_msg_max(s: &mut TcpStream, key: &[u8; 32], max: usize) -> Result<Msg> {
     let mut len = [0u8; 4];
     s.read_exact(&mut len)?;
@@ -243,6 +241,35 @@ fn read_msg_max(s: &mut TcpStream, key: &[u8; 32], max: usize) -> Result<Msg> {
     let mut buf = vec![0u8; len];
     s.read_exact(&mut buf)?;
     Ok(serde_json::from_slice(&open(key, &buf)?)?)
+}
+
+/// Канал обмена: зашифрованные сообщения поверх TCP.
+pub(crate) trait Wire {
+    fn send(&mut self, msg: &Msg) -> Result<()>;
+    /// Следующее сообщение, не больше `max` байт.
+    fn recv_max(&mut self, max: usize) -> Result<Msg>;
+    fn stream(&self) -> &TcpStream;
+    fn recv(&mut self) -> Result<Msg> {
+        self.recv_max(MAX_FRAME)
+    }
+}
+
+/// Канал с одним ключом на обе стороны и случайным nonce в каждом пакете — связь по QR-коду до 0.15.
+struct KeyWire<'a> {
+    s: TcpStream,
+    key: &'a [u8; 32],
+}
+
+impl Wire for KeyWire<'_> {
+    fn send(&mut self, msg: &Msg) -> Result<()> {
+        write_msg(&mut self.s, self.key, msg)
+    }
+    fn recv_max(&mut self, max: usize) -> Result<Msg> {
+        read_msg_max(&mut self.s, self.key, max)
+    }
+    fn stream(&self) -> &TcpStream {
+        &self.s
+    }
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -267,7 +294,7 @@ fn lock(store: &Mutex<Store>) -> std::sync::MutexGuard<'_, Store> {
     store.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn prepare(s: &TcpStream) -> Result<()> {
+pub(crate) fn prepare(s: &TcpStream) -> Result<()> {
     // Пакет со снимками по медленному Wi-Fi идёт долго.
     s.set_read_timeout(Some(Duration::from_secs(60)))?;
     s.set_write_timeout(Some(Duration::from_secs(60)))?;
@@ -276,25 +303,34 @@ fn prepare(s: &TcpStream) -> Result<()> {
 }
 
 /// Сторона, которая подключается (обычно телефон, отсканировавший QR).
-pub fn sync_over(mut s: TcpStream, key: &[u8; 32], store: &Mutex<Store>, name: &str) -> Result<SyncReport> {
-    prepare(&s)?;
+pub fn sync_over(s: TcpStream, key: &[u8; 32], store: &Mutex<Store>, name: &str) -> Result<SyncReport> {
+    run_client(&mut KeyWire { s, key }, store, name, None)
+}
+
+/// Обмен со стороны подключившегося — по любому каналу. `expect` — какое устройство должно ответить
+/// (по ключу пары): ответ другого — обрыв до того, как его записи приняты.
+pub(crate) fn run_client(w: &mut impl Wire, store: &Mutex<Store>, name: &str, expect: Option<&str>) -> Result<SyncReport> {
+    prepare(w.stream())?;
     let (device, vv) = {
         let st = lock(store);
         (st.device().to_string(), st.version_vector()?)
     };
-    write_msg(&mut s, key, &Msg::Hello { device: device.clone(), name: name.into(), vv, files: true, app: APP_VERSION.into() })?;
-    let (peer, peer_name, their_vv, events, peer_files, peer_app) = match read_msg(&mut s, key)? {
+    w.send(&Msg::Hello { device: device.clone(), name: name.into(), vv, files: true, app: APP_VERSION.into() })?;
+    let (peer, peer_name, their_vv, events, peer_files, peer_app) = match w.recv()? {
         Msg::Batch { device, name, vv, events, files, app } => (device, name, vv, events, files, app),
         _ => return Err(Error::Format("неожиданный ответ".into())),
     };
+    if expect.is_some_and(|e| e != peer) {
+        return Err(Error::Format("ответило не то устройство".into()));
+    }
     let (received, ours) = {
         let mut st = lock(store);
         let n = st.apply(&events)?;
         (n, st.events_after(&their_vv)?)
     };
     let vv = lock(store).version_vector()?;
-    write_msg(&mut s, key, &Msg::Batch { device, name: name.into(), vv, events: ours, files: true, app: APP_VERSION.into() })?;
-    let sent = match read_msg(&mut s, key) {
+    w.send(&Msg::Batch { device, name: name.into(), vv, events: ours, files: true, app: APP_VERSION.into() })?;
+    let sent = match w.recv() {
         Ok(Msg::Done { applied }) => applied,
         // Старая версия не разобрала пакет с записями новых видов и оборвала связь.
         Err(_) if !peer_files => return Err(Error::Peer(OLD_PEER.into())),
@@ -305,16 +341,16 @@ pub fn sync_over(mut s: TcpStream, key: &[u8; 32], store: &Mutex<Store>, name: &
     if peer_files {
         for _ in 0..MAX_ROUNDS {
             let want = lock(store).missing_blobs()?;
-            write_msg(&mut s, key, &Msg::Want { ids: want.clone() })?;
-            let (blobs, their_want) = match read_msg(&mut s, key)? {
+            w.send(&Msg::Want { ids: want.clone() })?;
+            let (blobs, their_want) = match w.recv()? {
                 Msg::Give { blobs, want } => (blobs, want),
                 _ => return Err(Error::Format("неожиданный ответ".into())),
             };
             let got = store_blobs(store, &want, blobs);
             files_received += got;
             let (mine, left) = collect_blobs(store, &their_want)?;
-            write_msg(&mut s, key, &Msg::Give { blobs: mine, want: Vec::new() })?;
-            match read_msg(&mut s, key)? {
+            w.send(&Msg::Give { blobs: mine, want: Vec::new() })?;
+            match w.recv()? {
                 Msg::Done { applied } => files_sent += applied,
                 _ => return Err(Error::Format("неожиданный ответ".into())),
             }
@@ -323,7 +359,7 @@ pub fn sync_over(mut s: TcpStream, key: &[u8; 32], store: &Mutex<Store>, name: &
                 break;
             }
         }
-        write_msg(&mut s, key, &Msg::Done { applied: 0 })?;
+        w.send(&Msg::Done { applied: 0 })?;
     }
     Ok(SyncReport { peer, peer_name, sent, received, files_sent, files_received, peer_app })
 }
@@ -350,45 +386,54 @@ pub fn sync_with(p: &Pairing, store: &Mutex<Store>, name: &str) -> Result<SyncRe
 }
 
 /// Сторона, которая ждёт подключения (обычно компьютер, показавший QR).
-pub fn serve_one(mut s: TcpStream, key: &[u8; 32], store: &Mutex<Store>, name: &str) -> Result<SyncReport> {
-    prepare(&s)?;
-    s.set_read_timeout(Some(HELLO_WAIT))?;
-    let (peer, peer_name, their_vv, peer_files, peer_app) = match read_msg_max(&mut s, key, HELLO_MAX)? {
+pub fn serve_one(s: TcpStream, key: &[u8; 32], store: &Mutex<Store>, name: &str) -> Result<SyncReport> {
+    run_server(&mut KeyWire { s, key }, store, name, None)
+}
+
+/// Обмен со стороны ждущего — по любому каналу. `expect` — какое устройство должно прийти
+/// (по ключу пары): другое имя в приветствии — обрыв.
+pub(crate) fn run_server(w: &mut impl Wire, store: &Mutex<Store>, name: &str, expect: Option<&str>) -> Result<SyncReport> {
+    prepare(w.stream())?;
+    w.stream().set_read_timeout(Some(HELLO_WAIT))?;
+    let (peer, peer_name, their_vv, peer_files, peer_app) = match w.recv_max(HELLO_MAX)? {
         Msg::Hello { device, name, vv, files, app } => (device, name, vv, files, app),
         _ => return Err(Error::Format("ожидалось приветствие".into())),
     };
+    if expect.is_some_and(|e| e != peer) {
+        return Err(Error::Format("приветствие не от того устройства".into()));
+    }
     // Ключ подошёл — дальше пакеты со снимками, их можно ждать дольше.
-    prepare(&s)?;
+    prepare(w.stream())?;
     let (device, vv, events) = {
         let st = lock(store);
         (st.device().to_string(), st.version_vector()?, st.events_after(&their_vv)?)
     };
     let sent = events.len();
-    write_msg(&mut s, key, &Msg::Batch { device, name: name.into(), vv, events, files: true, app: APP_VERSION.into() })?;
-    let incoming = match read_msg(&mut s, key) {
+    w.send(&Msg::Batch { device, name: name.into(), vv, events, files: true, app: APP_VERSION.into() })?;
+    let incoming = match w.recv() {
         Ok(Msg::Batch { events, .. }) => events,
         Err(_) if !peer_files => return Err(Error::Peer(OLD_PEER.into())),
         Err(e) => return Err(e),
         _ => return Err(Error::Format("ожидались события".into())),
     };
     let received = lock(store).apply(&incoming)?;
-    write_msg(&mut s, key, &Msg::Done { applied: received })?;
+    w.send(&Msg::Done { applied: received })?;
     let (mut files_sent, mut files_received) = (0, 0);
     if peer_files {
         for _ in 0..MAX_ROUNDS {
-            match read_msg(&mut s, key)? {
+            match w.recv()? {
                 Msg::Want { ids } => {
                     let (blobs, _) = collect_blobs(store, &ids)?;
                     files_sent += blobs.len();
                     let want = lock(store).missing_blobs()?;
-                    write_msg(&mut s, key, &Msg::Give { blobs, want: want.clone() })?;
-                    let incoming = match read_msg(&mut s, key)? {
+                    w.send(&Msg::Give { blobs, want: want.clone() })?;
+                    let incoming = match w.recv()? {
                         Msg::Give { blobs, .. } => blobs,
                         _ => return Err(Error::Format("ожидались вложения".into())),
                     };
                     let n = store_blobs(store, &want, incoming);
                     files_received += n;
-                    write_msg(&mut s, key, &Msg::Done { applied: n })?;
+                    w.send(&Msg::Done { applied: n })?;
                 }
                 Msg::Done { .. } => break,
                 _ => return Err(Error::Format("неожиданное сообщение".into())),

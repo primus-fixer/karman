@@ -1,7 +1,10 @@
-//! Связь двух устройств по QR-коду.
+//! Связь двух устройств: код связи и QR-код.
 //!
-//! Одно устройство показывает QR со своим адресом в сети и одноразовым ключом,
-//! другое сканирует его и подключается. Все пакеты шифруются этим ключом.
+//! С 0.15 одно устройство показывает код из восьми знаков (и QR-код с тем же кодом и своим адресом),
+//! другое вводит код или сканирует QR. Из кода оба получают общий ключ по SPAKE2 ([`crate::lan`]):
+//! сам код по сети не передаётся, а подобрать его можно только попытками на самом устройстве — их пять.
+//!
+//! До 0.15 QR-код нёс сам ключ (`v=1`, [`Pairing`]) — такой QR от прежней версии ещё читается.
 //! Адреса в QR — только адреса домашней сети: QR-код чужого с адресом в интернете
 //! не уведёт записи на чужой сервер.
 
@@ -35,6 +38,124 @@ pub fn is_local_address(host: &str) -> bool {
             v6.is_loopback() || (first & 0xffc0) == 0xfe80 || (first & 0xfe00) == 0xfc00
         }
         Err(_) => false,
+    }
+}
+
+/// Знаки кода: латиница и цифры без похожих друг на друга 0 и O, 1 и I — 32 знака, 5 бит на знак.
+pub const CODE_ALPHABET: &[u8; 32] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+/// Знаков в коде: 40 бит — с пятью попытками подобрать нельзя.
+pub const CODE_LEN: usize = 8;
+
+/// Новый код связи: восемь случайных знаков.
+pub fn new_code() -> Result<String> {
+    let mut b = [0u8; CODE_LEN];
+    getrandom::fill(&mut b).map_err(|e| Error::Random(e.to_string()))?;
+    Ok(b.iter().map(|x| CODE_ALPHABET[(x & 31) as usize] as char).collect())
+}
+
+/// Код для экрана: «6WVG-HEWK».
+pub fn show_code(code: &str) -> String {
+    if code.len() == CODE_LEN {
+        format!("{}-{}", &code[..4], &code[4..])
+    } else {
+        code.to_string()
+    }
+}
+
+/// Код, как его ввёл человек, — к виду «6WVGHEWK»: без пробелов и дефисов, заглавными, русские буквы,
+/// похожие на латинские (с телефонной клавиатуры), — латинскими.
+pub fn normalize_code(input: &str) -> Result<String> {
+    let mut out = String::new();
+    for c in input.chars() {
+        if c.is_whitespace() || c == '-' || c == '–' || c == '—' {
+            continue;
+        }
+        let up = c.to_uppercase().next().unwrap_or(c);
+        let latin = match up {
+            'А' => 'A',
+            'В' => 'B',
+            'Е' | 'Ё' => 'E',
+            'К' => 'K',
+            'М' => 'M',
+            'Н' => 'H',
+            'Р' => 'P',
+            'С' => 'C',
+            'Т' => 'T',
+            'У' => 'Y',
+            'Х' => 'X',
+            'З' => '3',
+            other => other,
+        };
+        if !latin.is_ascii() || !CODE_ALPHABET.contains(&(latin as u8)) {
+            return Err(format_err(format!("в коде нет знака «{c}»: только латинские буквы и цифры с экрана того устройства")));
+        }
+        out.push(latin);
+    }
+    if out.len() != CODE_LEN {
+        return Err(format_err("в коде восемь знаков, например 6WVG-HEWK"));
+    }
+    Ok(out)
+}
+
+pub const SCHEME_V2: &str = "karman://pair?v=2&";
+
+/// QR-код связи с 0.15: адрес устройства в сети и код связи. Ключа в нём нет.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct Invite {
+    pub device: String,
+    pub name: String,
+    pub hosts: Vec<String>,
+    pub port: u16,
+    pub code: String,
+}
+
+impl Invite {
+    pub fn to_uri(&self) -> String {
+        format!("{SCHEME_V2}d={}&n={}&h={}&p={}&c={}", self.device, B64.encode(self.name.as_bytes()), self.hosts.join(","), self.port, self.code)
+    }
+}
+
+/// Что внутри QR-кода связи.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Qr {
+    /// С 0.15: адрес и код связи.
+    Invite(Invite),
+    /// До 0.15: адрес и одноразовый ключ — обмен один раз, без запоминания.
+    Legacy(Pairing),
+}
+
+/// Разбирает QR-код связи любой версии.
+pub fn parse_qr(uri: &str) -> Result<Qr> {
+    let t = uri.trim();
+    let Some(q) = t.strip_prefix(SCHEME) else {
+        return Err(format_err("это не QR-код «Кармана» для связи"));
+    };
+    let mut fields = std::collections::BTreeMap::new();
+    for part in q.split('&') {
+        let (k, v) = part.split_once('=').ok_or_else(|| format_err("испорченный QR-код связи"))?;
+        fields.insert(k, v);
+    }
+    match fields.get("v").copied() {
+        Some("1") => Pairing::from_uri(t).map(Qr::Legacy),
+        Some("2") => {
+            let name = match fields.get("n") {
+                Some(v) => String::from_utf8(B64.decode(v).map_err(|_| format_err("имя устройства не читается"))?).map_err(|_| format_err("имя устройства не читается"))?,
+                None => String::new(),
+            };
+            let hosts: Vec<String> = fields.get("h").map(|h| h.split(',').filter(|h| !h.is_empty()).map(String::from).collect()).unwrap_or_default();
+            if hosts.is_empty() {
+                return Err(format_err("в QR нет адреса"));
+            }
+            let hosts: Vec<String> = hosts.into_iter().filter(|h| is_local_address(h)).collect();
+            if hosts.is_empty() {
+                return Err(format_err("в QR-коде адрес не из домашней сети: связь — только между устройствами в одной сети Wi-Fi"));
+            }
+            let device = fields.get("d").filter(|d| !d.is_empty() && d.len() <= 64).ok_or_else(|| format_err("в QR нет устройства"))?.to_string();
+            let port = fields.get("p").and_then(|p| p.parse::<u16>().ok()).ok_or_else(|| format_err("в QR нет порта"))?;
+            let code = normalize_code(fields.get("c").copied().unwrap_or(""))?;
+            Ok(Qr::Invite(Invite { device, name, hosts, port, code }))
+        }
+        _ => Err(format_err("QR-код от более новой версии приложения: обновите «Карман» на этом устройстве")),
     }
 }
 
@@ -131,6 +252,38 @@ mod tests {
         assert_eq!(Pairing::from_uri(&p.to_uri()).unwrap().hosts, ["192.168.1.20"]);
         p.hosts = vec!["evil.example.com".into(), "93.184.216.34".into()];
         assert!(matches!(Pairing::from_uri(&p.to_uri()), Err(Error::Format(m)) if m.contains("не из домашней сети")));
+    }
+
+    #[test]
+    fn codes_are_random_readable_and_forgiving() {
+        let a = new_code().unwrap();
+        let b = new_code().unwrap();
+        assert_eq!(a.len(), CODE_LEN);
+        assert_ne!(a, b);
+        assert!(a.bytes().all(|c| CODE_ALPHABET.contains(&c)), "{a}");
+        assert_eq!(show_code("6WVGHEWK"), "6WVG-HEWK");
+        assert_eq!(normalize_code(" 6wvg-hewk ").unwrap(), "6WVGHEWK");
+        // С русской раскладки: «Н», «Е», «В», «К», «Р», «С», «Т», «М», «Х», «А» — как латинские.
+        assert_eq!(normalize_code("НЕВК–РСТМ").unwrap(), "HEBKPCTM");
+        assert_eq!(normalize_code("ха3у ксам").unwrap(), "XA3YKCAM");
+        assert!(normalize_code("6WVG-HEW").unwrap_err().to_string().contains("восемь знаков"));
+        assert!(normalize_code("6WVG-HEW0").unwrap_err().to_string().contains("«0»"), "нуля в коде не бывает");
+        assert!(normalize_code("6WVG-HEWЖ").unwrap_err().to_string().contains("«Ж»"));
+    }
+
+    #[test]
+    fn invite_qr_roundtrip_and_old_qr() {
+        let inv = Invite { device: "a1b2".into(), name: "Ноутбук".into(), hosts: vec!["192.168.1.20".into(), "8.8.8.8".into()], port: 47_500, code: "6WVGHEWK".into() };
+        let Qr::Invite(back) = parse_qr(&inv.to_uri()).unwrap() else { panic!() };
+        assert_eq!(back, Invite { hosts: vec!["192.168.1.20".into()], ..inv.clone() }, "адрес из интернета отброшен");
+        let only_internet = Invite { hosts: vec!["8.8.8.8".into()], ..inv.clone() };
+        assert!(parse_qr(&only_internet.to_uri()).unwrap_err().to_string().contains("не из домашней сети"));
+        let bad_code = inv.to_uri().replace("c=6WVGHEWK", "c=123");
+        assert!(parse_qr(&bad_code).is_err());
+        let old = Pairing { device: "a".into(), name: "Ноутбук".into(), hosts: vec!["192.168.1.20".into()], port: 47_500, key: [3u8; 32] };
+        assert!(matches!(parse_qr(&old.to_uri()).unwrap(), Qr::Legacy(p) if p == old), "QR прежней версии ещё читается");
+        assert!(parse_qr("karman://pair?v=3&d=x").unwrap_err().to_string().contains("более новой версии"));
+        assert!(parse_qr("https://example.com").is_err());
     }
 
     #[test]
