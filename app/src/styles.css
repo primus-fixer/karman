@@ -105,8 +105,10 @@ button {
   border-right: 1px solid var(--line);
 }
 
+/* Логотип — по центру бокового меню. */
 .logo {
-  margin: 0 0 24px 12px;
+  margin: 0 0 24px;
+  text-align: center;
   font-family: var(--num);
   font-weight: 500;
   font-size: 44px;
