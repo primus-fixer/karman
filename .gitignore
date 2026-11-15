@@ -5,4 +5,6 @@ node_modules/
 *.db
 *.db-wal
 *.db-shm
+# Образцы форматов для проверок — в репозитории.
+!crates/*/tests/fixtures/**/*.db
 .DS_Store

@@ -672,6 +672,25 @@ fn answer_ip(ip: IpAddr) -> IpAddr {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Ключи связи выводятся как в 0.15.0: иначе устройства с прежней версией перестанут
+    /// узнавать друг друга. Значения посчитаны версией 0.15.1 и не меняются.
+    #[test]
+    fn keys_are_derived_as_before() {
+        let hex = |b: [u8; 32]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+        let k = [0x11u8; 32];
+        let (nc, ns) = ([0x22u8; 32], [0x33u8; 32]);
+        assert_eq!(hex(mac(&k, &[b"pair key"])), "aabab280e54c704ab6e05232726f10bc96b5c82962d0e967ddc508ad014dfc1f");
+        assert_eq!(hex(mac(&k, &[b"joiner confirm"])), "2759a4300e7305a0a46f3352be33d0c35fa3bcece1ecb601f9af51405d044ba7");
+        assert_eq!(hex(mac(&k, &[b"host confirm"])), "7193ad7b9e7c6666ca83b8a779f10695bbe7b7ede7eee426d13ee62e304b59b1");
+        assert_eq!(hex(mac(&k, &[b"sync c2s", &nc, &ns])), "0aa9e7686201ec9e2dc5eff40091c196097b41b049d03fcf49e7b78f300b5921");
+        assert_eq!(hex(mac(&k, &[b"sync s2c", &nc, &ns])), "9edd66e3dae789177ee32b8c9b9bd081ebda5b6657505124dafb3529ecfe31b7");
+        assert_eq!(hex(mac(&k, &[b"query", b"aaaa", b"bbbb", &nc])), "f24f3f3795362077b87008ce52825d5f56315dd5528b2e566514fff9d4f2f7a1");
+        assert_eq!(hex(mac(&k, &[b"answer", b"bbbb", b"aaaa", &nc, b"47500"])), "a88d68b9754fc83de670a3507cbd17010fa24dd0bb8803085f126ce9e1dab01f");
+        assert_eq!((MAGIC, Q_MAGIC, A_MAGIC, VERSION), (b"KRML", b"KRMQ", b"KRMA", 1));
+        assert_eq!((ID_JOINER, ID_HOST), (&b"karman-joiner"[..], &b"karman-host"[..]));
+        assert_eq!((TCP_PORT, DISCOVERY_PORT), (47500, 47501));
+    }
     use crate::demo;
 
     struct Side {
