@@ -34,6 +34,9 @@ pub mod trip;
 pub mod xlsx;
 pub mod zip;
 
+/// Как «Карман» называется в сообщениях — для общего модуля kit (копии, коннектор, вход).
+pub const NAMES: kit_core::AppNames = kit_core::AppNames { id: "karman", name: "Карман", name_acc: "Карман", name_gen: "Кармана", feminine: false };
+
 pub use date::Date;
 pub use error::{Error, Result};
 pub use money::Kop;

@@ -5,7 +5,7 @@
 //! а новый телефон получает всё обратно, когда его свяжут с компьютером.
 
 use crate::{err, notify, snap, AppState, Res};
-use karman_core::backup::{self, BackupKey, Checked, MadeBy, Manifest, Reader, Writer};
+use karman_core::backup::{self, BackupKey, Checked, MadeBy, Reader, Writer};
 use karman_core::db::Store;
 use karman_core::sync::{EventBody, VersionVector, APP_VERSION};
 use karman_core::Date;
@@ -281,7 +281,7 @@ fn make(app: &AppHandle, auto: bool) -> Res<Last> {
         let events = st.events_after(&VersionVector::new()).map_err(err)?;
         let blobs = st.present_blobs().map_err(err)?;
         let by = MadeBy { app: APP_VERSION.into(), created: at, device: state.me.name.clone(), device_id: st.device().to_string() };
-        let manifest = Manifest::new(&by, events.len() as u64, blobs.len() as u64, st.ops().map_err(err)?.len() as u64, st.trips().map_err(err)?.len() as u64);
+        let manifest = backup::manifest(&by, events.len() as u64, blobs.len() as u64, st.ops().map_err(err)?.len() as u64, st.trips().map_err(err)?.len() as u64);
         (key, dir_of(app, &st).0, events, blobs, manifest)
     };
     check_writable(&dir)?;
@@ -487,7 +487,7 @@ pub async fn backup_inspect(app: AppHandle, id: String, password: String) -> Res
         let bytes = std::fs::metadata(&path).map_err(|_| "Файл копии не загружен — выберите его снова".to_string())?.len();
         let c = check_file(&state, &path, &password)?;
         let m = c.manifest;
-        Ok(Info { created: m.created, device: m.device, app: m.app, ops: m.ops, trips: m.trips, events: c.events, blobs: c.blobs, bytes })
+        Ok(Info { created: m.created, device: m.device, app: m.app, ops: m.counts.ops, trips: m.counts.trips, events: c.events, blobs: c.blobs, bytes })
     })
     .await
     .map_err(err)?
