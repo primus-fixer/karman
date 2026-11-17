@@ -99,7 +99,8 @@ docs/                 правила расчёта и план проверки
 ## Сборки
 
 «Сборки» в Actions запускаются после слияния в `main` и вручную: **Actions → Сборки → Run workflow**,
-там же можно выбрать ветку. Готовые файлы — в разделе Artifacts у запуска:
+там же можно выбрать ветку. Собирают их общие сценарии [kit](https://github.com/primus-fixer/kit), своя
+донастройка Android-проекта — `scripts/android-patch.sh`. Готовые файлы — в разделе Artifacts у запуска:
 
 - `karman-windows` — установщик `.exe` и `.msi`;
 - `karman-android` — `.apk` для телефона. С секретами `ANDROID_KEYSTORE` и `ANDROID_KEYSTORE_PASSWORD`
