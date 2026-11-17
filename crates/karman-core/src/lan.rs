@@ -14,7 +14,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-pub use kit::{valid_id, CodeState, Found, OnPaired, Peer, CODE_TRIES, CODE_TTL};
+pub use kit::{valid_id, CodeState, Found, Invite, OnPaired, Peer, CODE_TRIES, CODE_TTL};
 
 /// Связь по Wi-Fi «Кармана». Порт обмена — тот же, что у связи по QR-коду до 0.15; у «Полки» свои.
 pub const LAN: kit::Lan = kit::Lan {
@@ -29,7 +29,22 @@ pub const LAN: kit::Lan = kit::Lan {
     host: b"karman-host",
     personal: b"karman-lan",
     not_ours: "это не «Карман» 0.15 или новее",
+    qr_scheme: crate::pairing::SCHEME,
+    qr_version: 2,
 };
+
+/// Что нужно связи по Wi-Fi в приложении от базы: местные настройки и число событий.
+impl kit::Device for Store {
+    fn local(&self, key: &str) -> Option<String> {
+        self.meta(key).ok().flatten()
+    }
+    fn set_local(&self, key: &str, value: &str) -> kit_core::Result<()> {
+        self.set_meta(key, value).map_err(|e| kit_core::Error::Store(e.to_string()))
+    }
+    fn event_count(&self) -> u64 {
+        Store::event_count(self).unwrap_or(0)
+    }
+}
 
 /// Порт обмена (TCP).
 pub const TCP_PORT: u16 = LAN.tcp_port;

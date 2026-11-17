@@ -20,11 +20,9 @@ karman-core = { path = "../../crates/karman-core" }
 # Общий модуль kit 0.11.0: ключ базы в хранилище системы, PIN-код и вход
 # (https://github.com/primus-fixer/kit). Ссылка — на коммит версии; когда у kit появится метка
 # v0.11.0, `rev` заменяется на `tag = "v0.11.0"`.
-kit-core = { git = "https://github.com/primus-fixer/kit", rev = "c513bcc1931ad8ae4977c597c5c3b8f7eb1a4fc4" }
-kit-secure = { git = "https://github.com/primus-fixer/kit", rev = "c513bcc1931ad8ae4977c597c5c3b8f7eb1a4fc4" }
-kit-tauri = { git = "https://github.com/primus-fixer/kit", rev = "c513bcc1931ad8ae4977c597c5c3b8f7eb1a4fc4" }
-qrcode = { version = "0.14", default-features = false, features = ["svg"] }
-if-addrs = "0.13"
+kit-core = { git = "https://github.com/primus-fixer/kit", rev = "b44b2f377f44a7ce4039066b52247c1b18263a38" }
+kit-secure = { git = "https://github.com/primus-fixer/kit", rev = "b44b2f377f44a7ce4039066b52247c1b18263a38" }
+kit-tauri = { git = "https://github.com/primus-fixer/kit", rev = "b44b2f377f44a7ce4039066b52247c1b18263a38" }
 getrandom = "0.3"
 base64 = "0.22"
 ureq = { version = "3", default-features = false, features = ["rustls"] }

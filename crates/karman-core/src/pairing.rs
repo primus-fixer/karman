@@ -37,23 +37,8 @@ pub fn normalize_code(input: &str) -> Result<String> {
     Ok(kit_core::lan::normalize_code(input)?)
 }
 
-pub const SCHEME_V2: &str = "karman://pair?v=2&";
-
-/// QR-код связи с 0.15: адрес устройства в сети и код связи. Ключа в нём нет.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct Invite {
-    pub device: String,
-    pub name: String,
-    pub hosts: Vec<String>,
-    pub port: u16,
-    pub code: String,
-}
-
-impl Invite {
-    pub fn to_uri(&self) -> String {
-        format!("{SCHEME_V2}d={}&n={}&h={}&p={}&c={}", self.device, B64.encode(self.name.as_bytes()), self.hosts.join(","), self.port, self.code)
-    }
-}
+/// QR-код связи с 0.15: адрес устройства в сети и код связи (из общего модуля kit, `karman://pair?v=2&…`).
+pub use kit_core::lan::Invite;
 
 /// Что внутри QR-кода связи.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -64,39 +49,13 @@ pub enum Qr {
     Legacy(Pairing),
 }
 
-/// Разбирает QR-код связи любой версии.
+/// Разбирает QR-код связи любой версии: версия 1 (до 0.15) — ключ, иначе — как у всех приложений на kit.
 pub fn parse_qr(uri: &str) -> Result<Qr> {
     let t = uri.trim();
-    let Some(q) = t.strip_prefix(SCHEME) else {
-        return Err(format_err("это не QR-код «Кармана» для связи"));
-    };
-    let mut fields = std::collections::BTreeMap::new();
-    for part in q.split('&') {
-        let (k, v) = part.split_once('=').ok_or_else(|| format_err("испорченный QR-код связи"))?;
-        fields.insert(k, v);
+    if t.strip_prefix(SCHEME).is_some_and(|q| q.split('&').any(|p| p == "v=1")) {
+        return Pairing::from_uri(t).map(Qr::Legacy);
     }
-    match fields.get("v").copied() {
-        Some("1") => Pairing::from_uri(t).map(Qr::Legacy),
-        Some("2") => {
-            let name = match fields.get("n") {
-                Some(v) => String::from_utf8(B64.decode(v).map_err(|_| format_err("имя устройства не читается"))?).map_err(|_| format_err("имя устройства не читается"))?,
-                None => String::new(),
-            };
-            let hosts: Vec<String> = fields.get("h").map(|h| h.split(',').filter(|h| !h.is_empty()).map(String::from).collect()).unwrap_or_default();
-            if hosts.is_empty() {
-                return Err(format_err("в QR нет адреса"));
-            }
-            let hosts: Vec<String> = hosts.into_iter().filter(|h| is_local_address(h)).collect();
-            if hosts.is_empty() {
-                return Err(format_err("в QR-коде адрес не из домашней сети: связь — только между устройствами в одной сети Wi-Fi"));
-            }
-            let device = fields.get("d").filter(|d| !d.is_empty() && d.len() <= 64).ok_or_else(|| format_err("в QR нет устройства"))?.to_string();
-            let port = fields.get("p").and_then(|p| p.parse::<u16>().ok()).ok_or_else(|| format_err("в QR нет порта"))?;
-            let code = normalize_code(fields.get("c").copied().unwrap_or(""))?;
-            Ok(Qr::Invite(Invite { device, name, hosts, port, code }))
-        }
-        _ => Err(format_err("QR-код от более новой версии приложения: обновите «Карман» на этом устройстве")),
-    }
+    Ok(Qr::Invite(Invite::parse(&crate::lan::LAN, t)?))
 }
 
 pub fn random_key() -> Result<[u8; 32]> {
@@ -214,11 +173,11 @@ mod tests {
     #[test]
     fn invite_qr_roundtrip_and_old_qr() {
         let inv = Invite { device: "a1b2".into(), name: "Ноутбук".into(), hosts: vec!["192.168.1.20".into(), "8.8.8.8".into()], port: 47_500, code: "6WVGHEWK".into() };
-        let Qr::Invite(back) = parse_qr(&inv.to_uri()).unwrap() else { panic!() };
+        let Qr::Invite(back) = parse_qr(&inv.to_uri(&crate::lan::LAN)).unwrap() else { panic!() };
         assert_eq!(back, Invite { hosts: vec!["192.168.1.20".into()], ..inv.clone() }, "адрес из интернета отброшен");
         let only_internet = Invite { hosts: vec!["8.8.8.8".into()], ..inv.clone() };
-        assert!(parse_qr(&only_internet.to_uri()).unwrap_err().to_string().contains("не из домашней сети"));
-        let bad_code = inv.to_uri().replace("c=6WVGHEWK", "c=123");
+        assert!(parse_qr(&only_internet.to_uri(&crate::lan::LAN)).unwrap_err().to_string().contains("не из домашней сети"));
+        let bad_code = inv.to_uri(&crate::lan::LAN).replace("c=6WVGHEWK", "c=123");
         assert!(parse_qr(&bad_code).is_err());
         let old = Pairing { device: "a".into(), name: "Ноутбук".into(), hosts: vec!["192.168.1.20".into()], port: 47_500, key: [3u8; 32] };
         assert!(matches!(parse_qr(&old.to_uri()).unwrap(), Qr::Legacy(p) if p == old), "QR прежней версии ещё читается");
