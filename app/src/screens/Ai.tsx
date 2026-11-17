@@ -61,7 +61,7 @@ export default function AiSection({ snap, flash, locked }: { snap: Snapshot; fla
   if (!st) {
     return (
       <Cut id="ai" title="ИИ">
-        {error ? <ErrorText text={error} /> : <p className="note">Загружаю…</p>}
+        {error ? <ErrorText text={error} /> : <p className="small muted">Загружаю…</p>}
       </Cut>
     );
   }
@@ -122,14 +122,14 @@ export default function AiSection({ snap, flash, locked }: { snap: Snapshot; fla
   };
   const keyForm = (
     <div className="stack gap10">
-      <ol className="note" style={{ margin: 0, paddingLeft: 20, display: 'grid', gap: 4 }}>
+      <ol className="small muted" style={{ margin: 0, paddingLeft: 20, display: 'grid', gap: 4 }}>
         <li>Войдите в Claude Console (platform.claude.com) и пополните баланс — раздел Billing.</li>
         <li>API keys → Create key. В поле Workspace выберите одно пространство, например Default.</li>
         <li>Скопируйте ключ — Console показывает его один раз — вставьте сюда и нажмите «Подключить»: «Карман» проверит его одним коротким запросом.</li>
       </ol>
-      <div className="wrap" style={{ alignItems: 'center' }}>
+      <div className="sec-actions" style={{ alignItems: 'center' }}>
         <input
-          className="field"
+          className="input"
           type="password"
           autoComplete="off"
           spellCheck={false}
@@ -146,7 +146,7 @@ export default function AiSection({ snap, flash, locked }: { snap: Snapshot; fla
         {replace && (
           <button
             type="button"
-            className="btn ghost"
+            className="btn line"
             onClick={() => {
               setReplace(false);
               setKey('');
@@ -160,25 +160,25 @@ export default function AiSection({ snap, flash, locked }: { snap: Snapshot; fla
   );
   return (
     <Cut id="ai" title="ИИ">
-      <p className="note" style={{ marginBottom: 8 }}>
+      <p className="small muted" style={{ marginBottom: 8 }}>
         Claude читает наряды, билеты, счета гостиниц и приказы, заполняет операцию по фразе, отвечает на вопросы о деньгах и проверяет отчёт — вы проверяете и сохраняете. Нужен ваш ключ API Claude: запросы оплачиваются с вашего счёта в Claude Console, отдельно от подписки.
       </p>
       {st.key && !replace ? (
         <div className="setrow">
           <span>
             <span>Ключ API</span>
-            <span className="note">
+            <span className="small muted">
               {st.tail} · {st.checked ? 'проверен ' + whenText(st.checked) : 'не проверен'}
             </span>
           </span>
-          <span className="wrap" style={{ flex: 'none', justifyContent: 'flex-end' }}>
-            <button type="button" className="btn ghost small" disabled={busy} onClick={() => check()}>
+          <span className="sec-actions" style={{ flex: 'none', justifyContent: 'flex-end' }}>
+            <button type="button" className="btn line small" disabled={busy} onClick={() => check()}>
               {busy ? 'Проверяю…' : 'Проверить'}
             </button>
-            <button type="button" className="btn ghost small" disabled={busy} onClick={() => setReplace(true)}>
+            <button type="button" className="btn line small" disabled={busy} onClick={() => setReplace(true)}>
               Заменить
             </button>
-            <button type="button" className="btn link" disabled={busy} onClick={removeKey}>
+            <button type="button" className="link-btn warn-text" disabled={busy} onClick={removeKey}>
               Удалить
             </button>
           </span>
@@ -194,7 +194,7 @@ export default function AiSection({ snap, flash, locked }: { snap: Snapshot; fla
           <label key={f.id} className="setrow" style={{ opacity: enabled ? 1 : 0.55, paddingLeft: sub ? 18 : undefined }}>
             <span>
               <span>{f.title}</span>
-              <span className="note">{f.note(st)}</span>
+              <span className="small muted">{f.note(st)}</span>
             </span>
             <input type="checkbox" role="switch" aria-label={f.title} checked={st.features[f.id]} disabled={!enabled} onChange={(e) => toggle(f, e.target.checked)} style={{ flex: 'none', width: 20, height: 20, margin: 0, accentColor: 'var(--own)' }} />
           </label>
@@ -203,7 +203,7 @@ export default function AiSection({ snap, flash, locked }: { snap: Snapshot; fla
       <div className="setrow">
         <span>
           <span>Запросы к Claude</span>
-          <span className="note">
+          <span className="small muted">
             В этом месяце: {usageText(st.month, snap.fx)}. Всего: {usageText(st.total, snap.fx)}. Сумма — оценка по ценам Anthropic, точная — в Claude Console
           </span>
         </span>
@@ -214,16 +214,16 @@ export default function AiSection({ snap, flash, locked }: { snap: Snapshot; fla
       </button>
       {wsOpen && (
         <div className="stack gap6">
-          <p className="note">Если ключ создан для всех пространств, Claude API просит ID пространства. Он — в Claude Console на странице Workspaces, столбец ID.</p>
-          <div className="wrap" style={{ alignItems: 'center' }}>
-            <input className="field" aria-label="ID пространства" spellCheck={false} placeholder="wrkspc_…" value={ws} onChange={(e) => setWs(e.target.value)} style={{ flex: '1 1 220px', minWidth: 0 }} />
-            <button type="button" className="btn ghost" disabled={ws.trim() === st.workspace} onClick={saveWs}>
+          <p className="small muted">Если ключ создан для всех пространств, Claude API просит ID пространства. Он — в Claude Console на странице Workspaces, столбец ID.</p>
+          <div className="sec-actions" style={{ alignItems: 'center' }}>
+            <input className="input" aria-label="ID пространства" spellCheck={false} placeholder="wrkspc_…" value={ws} onChange={(e) => setWs(e.target.value)} style={{ flex: '1 1 220px', minWidth: 0 }} />
+            <button type="button" className="btn line" disabled={ws.trim() === st.workspace} onClick={saveWs}>
               Применить
             </button>
           </div>
         </div>
       )}
-      <p className="note" style={{ marginTop: 8 }}>
+      <p className="small muted" style={{ marginTop: 8 }}>
         Ключ хранится только на этом устройстве, зашифрованным, — в обмен по Wi-Fi и резервные копии не попадает. В Anthropic уходит только то, что вы отправили сами: листы документа по кнопке «Распознать», фраза, вопрос и данные, которые Claude запросит для ответа, данные поездки или месяца для проверки и сводки.
       </p>
       <ErrorText text={error} />

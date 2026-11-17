@@ -57,8 +57,8 @@ function dayLabel(iso: string): string {
 function dayKind(row: OtRow): { label: string; cls: string } | null {
   const wd = toDate(row.date).getUTCDay();
   const weekend = wd === 0 || wd === 6;
-  if (row.off) return { label: weekend ? 'выходной' : 'праздник', cls: 'off' };
-  return weekend ? { label: 'рабочий', cls: 'grey' } : null;
+  if (row.off) return { label: weekend ? 'выходной' : 'праздник', cls: 'pos' };
+  return weekend ? { label: 'рабочий', cls: '' } : null;
 }
 
 /** Часы дня одной строкой: «2 ч ×1,5 · 7 ч ×2». */
@@ -153,19 +153,19 @@ function Totals({ sheet, rules, title }: { sheet: OtSheet; rules: OtRules; title
   const parts = [sheet.x2 ? `будни после ${afterTwo} — ${hoursText(sheet.x2)}` : '', sheet.off ? `выходные — ${hoursText(sheet.off)}` : ''].filter(Boolean);
   return (
     <>
-      <h2 className="h2">{title}</h2>
-      <div className="figures">
-        <div className="figure">
+      <h2 className="sec">{title}</h2>
+      <div className="figs">
+        <div className="fig">
           <span className="lab">Коэффициент 1,5</span>
           <span className="val">{hoursFull(sheet.x15)}</span>
-          <span className="note">
+          <span className="small muted">
             будни {clock(rules.day_end)}–{afterTwo}
           </span>
         </div>
-        <div className="figure">
+        <div className="fig">
           <span className="lab">Коэффициент 2</span>
           <span className="val">{hoursFull(sheet.x2 + sheet.off)}</span>
-          <span className="note">{parts.length ? parts.join(', ') : `будни после ${afterTwo} и выходные`}</span>
+          <span className="small muted">{parts.length ? parts.join(', ') : `будни после ${afterTwo} и выходные`}</span>
         </div>
       </div>
     </>
@@ -197,22 +197,22 @@ export function SalaryForm({ snap, run, onDone }: { snap: Snapshot; run: Run; on
   return (
     <div className="stack gap10">
       <div className="form-grid" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
-        <label className="label">
+        <label className="field">
           <span>Оклад, ₽</span>
-          <input className="field num" inputMode="decimal" value={salary} onChange={(e) => setSalary(e.target.value)} onKeyDown={enter} />
+          <input className="input num" inputMode="decimal" value={salary} onChange={(e) => setSalary(e.target.value)} onKeyDown={enter} />
         </label>
-        <label className="label">
+        <label className="field">
           <span>Премия, ₽</span>
-          <input className="field num" inputMode="decimal" value={bonus} onChange={(e) => setBonus(e.target.value)} onKeyDown={enter} />
+          <input className="input num" inputMode="decimal" value={bonus} onChange={(e) => setBonus(e.target.value)} onKeyDown={enter} />
         </label>
       </div>
       <ErrorText text={error} />
-      <div className="wrap">
-        <button type="button" className="btn ghost small" disabled={busy} onClick={save}>
+      <div className="sec-actions">
+        <button type="button" className="btn line small" disabled={busy} onClick={save}>
           Сохранить
         </button>
         {onDone && (
-          <button type="button" className="btn link" style={{ color: 'var(--ink2)' }} onClick={onDone}>
+          <button type="button" className="link-btn" style={{ color: 'var(--ink2)' }} onClick={onDone}>
             Отмена
           </button>
         )}
@@ -235,9 +235,9 @@ function NormForm({ p, run, onDone }: { p: OtPay; run: Run; onDone: () => void }
   };
   return (
     <div className="stack gap6">
-      <div className="wrap" style={{ alignItems: 'center' }}>
+      <div className="sec-actions" style={{ alignItems: 'center' }}>
         <input
-          className="field num"
+          className="input num"
           inputMode="decimal"
           aria-label={`Норма часов за ${monthTitle(p.month)}`}
           value={text}
@@ -245,12 +245,12 @@ function NormForm({ p, run, onDone }: { p: OtPay; run: Run; onDone: () => void }
           onKeyDown={(e) => e.key === 'Enter' && save()}
           style={{ width: 96, textAlign: 'right' }}
         />
-        <span className="note">ч</span>
-        <button type="button" className="btn ghost small" onClick={save}>
+        <span className="small muted">ч</span>
+        <button type="button" className="btn line small" onClick={save}>
           Сохранить
         </button>
         {p.custom && (
-          <button type="button" className="btn link" style={{ color: 'var(--own)' }} onClick={reset}>
+          <button type="button" className="link-btn" onClick={reset}>
             По календарю
           </button>
         )}
@@ -270,40 +270,40 @@ function PayLine({ snap, p, run }: { snap: Snapshot; p: OtPay; run: Run }) {
         <span>К оплате за {monthTitle(p.month)}</span>
         <span>{rub(p.sum)}</span>
       </div>
-      <span className="note">До вычета налога. Сумма видна только здесь, в отчёт не входит.</span>
-      <button type="button" className="btn link" style={{ alignSelf: 'flex-start', padding: 0, color: 'var(--own)' }} aria-expanded={open} onClick={() => setOpen(!open)}>
+      <span className="small muted">До вычета налога. Сумма видна только здесь, в отчёт не входит.</span>
+      <button type="button" className="link-btn" style={{ alignSelf: 'flex-start' }} aria-expanded={open} onClick={() => setOpen(!open)}>
         {open ? 'Скрыть расчёт' : 'Как посчитано'}
       </button>
       {open && (
-        <div className="stack">
-          <div className="line">
+        <div className="stack gap0">
+          <div className="kv">
             <span>Часы</span>
             <span>
               {hoursText(p.x15)} × 1,5 + {hoursText(p.x2)} × 2
             </span>
           </div>
-          <div className="line">
+          <div className="kv">
             <span>Оклад и премия</span>
             <span>{rub(base)}</span>
           </div>
-          <div className="line">
+          <div className="kv">
             <span>
               Норма за {monthName(p.month + '-01').toLowerCase()}
-              <span className="note" style={{ display: 'block' }}>
+              <span className="small muted" style={{ display: 'block' }}>
                 {p.custom ? 'своя' : p.exact ? 'по производственному календарю' : 'оценка: календаря на этот год нет — проверьте'}
               </span>
             </span>
             <span>{hoursFull(p.norm)}</span>
           </div>
-          <div className="line">
+          <div className="kv">
             <span>Час работы: оклад и премия / норма</span>
             <span>{rub(p.rate)}</span>
           </div>
-          <div className="wrap" style={{ marginTop: 6 }}>
-            <button type="button" className="btn ghost small" aria-pressed={edit === 'norm'} onClick={() => setEdit(edit === 'norm' ? null : 'norm')}>
+          <div className="sec-actions" style={{ marginTop: 6 }}>
+            <button type="button" className="btn line small" aria-pressed={edit === 'norm'} onClick={() => setEdit(edit === 'norm' ? null : 'norm')}>
               Поправить норму
             </button>
-            <button type="button" className="btn ghost small" aria-pressed={edit === 'salary'} onClick={() => setEdit(edit === 'salary' ? null : 'salary')}>
+            <button type="button" className="btn line small" aria-pressed={edit === 'salary'} onClick={() => setEdit(edit === 'salary' ? null : 'salary')}>
               Изменить оклад
             </button>
           </div>
@@ -324,11 +324,11 @@ function Pay({ snap, pay, sheet, run }: { snap: Snapshot; pay: OtPay[]; sheet: O
   if (!hasHours || base > 0) return null;
   return (
     <div className="stack gap10" style={{ paddingTop: 10, borderTop: '1px solid var(--line)' }}>
-      <span className="note">Укажите оклад и премию — покажу, сколько начислят за переработки. Сумма видна только здесь, в отчёт не входит.</span>
+      <span className="small muted">Укажите оклад и премию — покажу, сколько начислят за переработки. Сумма видна только здесь, в отчёт не входит.</span>
       {ask ? (
         <SalaryForm snap={snap} run={run} onDone={() => setAsk(false)} />
       ) : (
-        <button type="button" className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => setAsk(true)}>
+        <button type="button" className="btn line small" style={{ alignSelf: 'flex-start' }} onClick={() => setAsk(true)}>
           Указать оклад и премию
         </button>
       )}
@@ -351,10 +351,10 @@ export function NameField({ snap, run }: { snap: Snapshot; run: Run }) {
     <label className="setrow">
       <span>
         <span>Фамилия в имени отчёта</span>
-        <span className="note">{saved ? `Например, «${folderName(snap, monthTitle(todayIso().slice(0, 7)))}»` : 'Добавится в имя папки отчёта'}</span>
+        <span className="small muted">{saved ? `Например, «${folderName(snap, monthTitle(todayIso().slice(0, 7)))}»` : 'Добавится в имя папки отчёта'}</span>
       </span>
       <input
-        className="field"
+        className="input"
         aria-label="Фамилия в имени отчёта"
         value={text}
         maxLength={60}
@@ -372,7 +372,7 @@ function Report({ snap, act, what, folder, orders, names }: { snap: Snapshot; ac
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<OtExported | null>(null);
   if (act.mobile) {
-    return <p className="note">Отчёт — таблица Excel и папка с нарядами — собирается на компьютере: свяжите устройства по Wi-Fi и выгрузите там.</p>;
+    return <p className="small muted">Отчёт — таблица Excel и папка с нарядами — собирается на компьютере: свяжите устройства по Wi-Fi и выгрузите там.</p>;
   }
   const withPhoto = orders.filter((o) => o.att.length).length;
   const noPhoto = orders.map((o, i) => (o.att.length ? '' : names[i] || orderFileName(o))).filter(Boolean);
@@ -395,13 +395,13 @@ function Report({ snap, act, what, folder, orders, names }: { snap: Snapshot; ac
         <Icon name="download" size={18} stroke={2} />
         {busy ? 'Собираю отчёт…' : 'Отчёт в «Загрузки»'}
       </button>
-      <p className="note">
+      <p className="small muted">
         Папка «{folder}»: таблица Excel{withPhoto ? ` и ${ordersText(withPhoto)} в PDF в папке «Наряды»` : ''}.
       </p>
-      {noPhoto.length > 0 && <p className="note warn">Без снимка, в папку не попадут: {noPhoto.join('; ')}.</p>}
+      {noPhoto.length > 0 && <p className="small warn-text">Без снимка, в папку не попадут: {noPhoto.join('; ')}.</p>}
       {!snap.settings['ot.name'] && <NameField snap={snap} run={act.run} />}
       {done && (
-        <p className="note pos" role="status">
+        <p className="small muted pos" role="status">
           Сохранено: {done.path}
           {done.notes.length ? `. Не вошло: ${done.notes.join('; ')}` : ''}
         </p>
@@ -417,7 +417,7 @@ type AiState = { ready: boolean; key: boolean };
 
 function ScanButton({ busy, small, onClick }: { busy: boolean; small?: boolean; onClick: () => void }) {
   return (
-    <button type="button" className={'btn ghost' + (small ? ' small' : '')} style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={busy} onClick={onClick}>
+    <button type="button" className={'btn line' + (small ? ' small' : '')} style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={busy} onClick={onClick}>
       <Icon name="spark" size={small ? 16 : 18} />
       {busy ? 'Claude читает наряд…' : 'Распознать'}
     </button>
@@ -473,49 +473,49 @@ function OrderForm({ initial, trip, act, ai, onScanned, onDone }: { initial: Wor
   return (
     <div className="card stack gap12" role="group" aria-label={initial.id ? 'Наряд' : 'Новый наряд'}>
       <div className="form-grid">
-        <label className="label">
+        <label className="field">
           <span>Номер наряда</span>
-          <input className="field" value={o.number} maxLength={40} placeholder="например, 3-2/23" autoFocus={!act.mobile} onChange={(e) => set({ number: e.target.value })} />
+          <input className="input" value={o.number} maxLength={40} placeholder="например, 3-2/23" autoFocus={!act.mobile} onChange={(e) => set({ number: e.target.value })} />
         </label>
-        <label className="label">
+        <label className="field">
           <span>С</span>
-          <input className="field" type="date" value={o.from} onChange={(e) => set({ from: e.target.value })} />
+          <input className="input" type="date" value={o.from} onChange={(e) => set({ from: e.target.value })} />
         </label>
-        <label className="label">
+        <label className="field">
           <span>По</span>
-          <input className="field" type="date" value={o.to} onChange={(e) => set({ to: e.target.value })} />
+          <input className="input" type="date" value={o.to} onChange={(e) => set({ to: e.target.value })} />
         </label>
       </div>
-      <label className="label">
+      <label className="field">
         <span>Объект и работы</span>
-        <input className="field" value={o.object} maxLength={300} placeholder="например, Чекмагуш. 2СШ яч. №12–15" onChange={(e) => set({ object: e.target.value })} />
+        <input className="input" value={o.object} maxLength={300} placeholder="например, Чекмагуш. 2СШ яч. №12–15" onChange={(e) => set({ object: e.target.value })} />
       </label>
       <div className="stack gap6">
-        <span className="note">Снимки или PDF наряда — все листы{ai ? '. Claude может прочитать их и заполнить наряд и дни' : ''}</span>
+        <span className="small muted">Снимки или PDF наряда — все листы{ai ? '. Claude может прочитать их и заполнить наряд и дни' : ''}</span>
         {o.att.length > 0 && <Thumbs items={o.att} onOpen={act.view} onRemove={(id) => set({ att: o.att.filter((a) => a.id !== id) })} />}
-        <div className="wrap">
+        <div className="sec-actions">
           {act.mobile && (
-            <button type="button" className="btn ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={busy || scanning} onClick={() => add(true)}>
+            <button type="button" className="btn line" style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={busy || scanning} onClick={() => add(true)}>
               <Icon name="camera" size={18} />
               Снять
             </button>
           )}
-          <button type="button" className="btn ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={busy || scanning} onClick={() => add(false)}>
+          <button type="button" className="btn line" style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={busy || scanning} onClick={() => add(false)}>
             <Icon name="file" size={18} />
             {act.mobile ? 'Из файлов' : 'Снимок или PDF'}
           </button>
           {ai && o.att.length > 0 && <ScanButton busy={scanning} onClick={scan} />}
         </div>
-        {scanning && <p className="note">{SCAN_NOTE}</p>}
+        {scanning && <p className="small muted">{SCAN_NOTE}</p>}
       </div>
-      <p className="note">В отчёте: «{orderFileName(o)}.pdf»</p>
-      {outside && <p className="note warn">Даты наряда — вне поездки ({dRange(trip.start, trip.end)}).</p>}
+      <p className="small muted">В отчёте: «{orderFileName(o)}.pdf»</p>
+      {outside && <p className="small warn-text">Даты наряда — вне поездки ({dRange(trip.start, trip.end)}).</p>}
       <ErrorText text={error} />
-      <div className="wrap">
+      <div className="sec-actions">
         <button type="button" className="btn work" disabled={busy || scanning} onClick={save}>
           {initial.id ? 'Сохранить' : 'Добавить наряд'}
         </button>
-        <button type="button" className="btn ghost" onClick={onDone}>
+        <button type="button" className="btn line" onClick={onDone}>
           Отмена
         </button>
       </div>
@@ -563,27 +563,27 @@ function OrderItem({ o, name, act, ai, onEdit, onScanned }: { o: WorkOrder; name
     <div className="otorder">
       <div className="between">
         <span style={{ fontWeight: 500 }}>{o.number ? `Наряд № ${o.number}` : 'Наряд без номера'}</span>
-        <span className="note" style={{ flex: 'none' }}>
+        <span className="small muted" style={{ flex: 'none' }}>
           {orderDates(o)}
         </span>
       </div>
       {o.object && <span>{o.object}</span>}
-      {o.att.length ? <Thumbs items={o.att} onOpen={act.view} /> : <span className="note warn">Нет снимка — в папку отчёта не попадёт</span>}
-      <span className="note faint">В отчёте: «{name}.pdf»</span>
-      <div className="wrap">
-        <button type="button" className="btn ghost small" style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={busy || scanning} onClick={attach}>
+      {o.att.length ? <Thumbs items={o.att} onOpen={act.view} /> : <span className="small warn-text">Нет снимка — в папку отчёта не попадёт</span>}
+      <span className="small muted muted3">В отчёте: «{name}.pdf»</span>
+      <div className="sec-actions">
+        <button type="button" className="btn line small" style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={busy || scanning} onClick={attach}>
           <Icon name="camera" size={16} />
           {o.att.length ? 'Ещё снимок' : 'Снимок'}
         </button>
         {ai && o.att.length > 0 && <ScanButton small busy={scanning} onClick={scan} />}
-        <button type="button" className="btn ghost small" disabled={scanning} onClick={onEdit}>
+        <button type="button" className="btn line small" disabled={scanning} onClick={onEdit}>
           Изменить
         </button>
-        <button type="button" className="btn link" disabled={scanning} onClick={remove}>
+        <button type="button" className="link-btn warn-text" disabled={scanning} onClick={remove}>
           Удалить
         </button>
       </div>
-      {scanning && <p className="note">{SCAN_NOTE}</p>}
+      {scanning && <p className="small muted">{SCAN_NOTE}</p>}
       <ErrorText text={error} />
     </div>
   );
@@ -673,62 +673,62 @@ function ScanReview({ base, scan, tv, act, onDone }: { base: WorkOrder; scan: Or
           <Icon name="spark" size={18} />
           Claude прочитал наряд — проверьте
         </span>
-        {scan.usd > 0 && <span className="note faint">{costText(scan.usd)}</span>}
+        {scan.usd > 0 && <span className="small muted muted3">{costText(scan.usd)}</span>}
       </div>
       <div className="form-grid">
-        <label className="label">
+        <label className="field">
           <span>Номер наряда</span>
-          <input className="field" value={number} maxLength={40} onChange={(e) => setNumber(e.target.value)} />
+          <input className="input" value={number} maxLength={40} onChange={(e) => setNumber(e.target.value)} />
         </label>
-        <label className="label">
+        <label className="field">
           <span>С</span>
-          <input className="field" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <input className="input" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
         </label>
-        <label className="label">
+        <label className="field">
           <span>По</span>
-          <input className="field" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+          <input className="input" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
         </label>
       </div>
-      <label className="label">
+      <label className="field">
         <span>Объект и работы</span>
-        <input className="field" value={object} maxLength={300} onChange={(e) => setObject(e.target.value)} />
+        <input className="input" value={object} maxLength={300} onChange={(e) => setObject(e.target.value)} />
       </label>
       <div className="stack gap6">
-        <p className={'note' + (me.warn ? ' warn' : '')}>{me.text}</p>
-        {scan.brigade && <p className="note faint">Бригада: {scan.brigade}</p>}
-        {scan.problems && <p className="note warn">Claude не уверен: {scan.problems}</p>}
+        <p className={'small muted' + (me.warn ? ' warn-text' : '')}>{me.text}</p>
+        {scan.brigade && <p className="small muted muted3">Бригада: {scan.brigade}</p>}
+        {scan.problems && <p className="small warn-text">Claude не уверен: {scan.problems}</p>}
       </div>
-      <div className="stack">
+      <div className="stack gap0">
         <span style={{ marginBottom: 4 }}>Дни по наряду</span>
-        {days.length === 0 && <p className="note warn">Строк ежедневного допуска Claude не нашёл — дни впишите сами в таблице «По дням».</p>}
+        {days.length === 0 && <p className="small warn-text">Строк ежедневного допуска Claude не нашёл — дни впишите сами в таблице «По дням».</p>}
         {days.map((d, i) => (
-          <div key={d.date} className={'scanday' + (d.on ? '' : ' faint')}>
+          <div key={d.date} className={'scanday' + (d.on ? '' : ' muted3')}>
             <label className="scanpick">
               <input type="checkbox" checked={d.on} aria-label={`Взять ${dayLabel(d.date)}`} onChange={(e) => upd(i, { on: e.target.checked })} />
               <span>{dayLabel(d.date)}</span>
-              <span className={'tag ' + (d.take ? 'grey' : 'warn')}>{RULE_TAG[d.rule]}</span>
+              <span className={'tag ' + (d.take ? '' : 'warn')}>{RULE_TAG[d.rule]}</span>
             </label>
-            <span className="note num scanorder">
+            <span className="small muted num scanorder">
               по наряду {d.order_start}–{d.order_end || '?'}
             </span>
             <span className="scantimes">
-              <input className="field num" inputMode="decimal" aria-label={`${dayLabel(d.date)}: начало`} placeholder="8:00" value={d.s} disabled={!d.on} onChange={(e) => upd(i, { s: e.target.value })} onBlur={() => upd(i, { s: timeInput(d.s) ?? d.s })} />
+              <input className="input num" inputMode="decimal" aria-label={`${dayLabel(d.date)}: начало`} placeholder="8:00" value={d.s} disabled={!d.on} onChange={(e) => upd(i, { s: e.target.value })} onBlur={() => upd(i, { s: timeInput(d.s) ?? d.s })} />
               <span>–</span>
-              <input className="field num" inputMode="decimal" aria-label={`${dayLabel(d.date)}: окончание`} placeholder="17:00" value={d.e} disabled={!d.on} onChange={(e) => upd(i, { e: e.target.value })} onBlur={() => upd(i, { e: timeInput(d.e) ?? d.e })} />
+              <input className="input num" inputMode="decimal" aria-label={`${dayLabel(d.date)}: окончание`} placeholder="17:00" value={d.e} disabled={!d.on} onChange={(e) => upd(i, { e: e.target.value })} onBlur={() => upd(i, { e: timeInput(d.e) ?? d.e })} />
             </span>
-            {d.was && <span className="note">{d.same ? 'уже так записано' : d.was.start ? `сейчас ${d.was.start}–${d.was.end}` : 'сейчас без времени'}</span>}
+            {d.was && <span className="small muted">{d.same ? 'уже так записано' : d.was.start ? `сейчас ${d.was.start}–${d.was.end}` : 'сейчас без времени'}</span>}
           </div>
         ))}
       </div>
-      <p className="note">
+      <p className="small muted">
         Будни — с {clock(rules.day_start)}, окончание по наряду, но не раньше {clock(rules.day_end)}. Выходные, праздники и допуск после {clock(rules.day_end)} — по наряду. Дни до ввода в бригаду не берутся. Комментарий дня — «Объект и работы», если свой не вписан.
       </p>
       <ErrorText text={error} />
-      <div className="wrap">
+      <div className="sec-actions">
         <button type="button" className="btn work" disabled={busy} onClick={save}>
           {n ? `Сохранить наряд и ${n}${NB}${plural(n, 'день', 'дня', 'дней')}` : 'Сохранить наряд'}
         </button>
-        <button type="button" className="btn ghost" disabled={busy} onClick={onDone}>
+        <button type="button" className="btn line" disabled={busy} onClick={onDone}>
           Отмена
         </button>
       </div>
@@ -754,11 +754,11 @@ function Orders({ tv, act }: { tv: TripView; act: OtActions }) {
   };
   const reviewOf = (base: WorkOrder, scan: OrderScan) => <ScanReview key={'scan' + base.id} base={base} scan={scan} tv={tv} act={act} onDone={() => setReview(null)} />;
   return (
-    <section className="stack">
+    <section className="stack gap0">
       <div className="between" style={{ alignItems: 'center', marginBottom: 6 }}>
-        <h2 className="h2">Наряды</h2>
+        <h2 className="sec">Наряды</h2>
         {!form && !review && (
-          <button type="button" className="btn ghost small" style={{ display: 'flex', alignItems: 'center', gap: 6 }} onClick={() => setForm(blank())}>
+          <button type="button" className="btn line small" style={{ display: 'flex', alignItems: 'center', gap: 6 }} onClick={() => setForm(blank())}>
             <Icon name="plus" size={16} stroke={2} />
             Добавить наряд
           </button>
@@ -766,7 +766,7 @@ function Orders({ tv, act }: { tv: TripView; act: OtActions }) {
       </div>
       {review && !review.base.id && reviewOf(review.base, review.scan)}
       {form && !form.id && <OrderForm initial={form} trip={t} act={act} ai={ai.ready} onScanned={scanned} onDone={() => setForm(null)} />}
-      {orders.length === 0 && !form && !review && <p className="empty">Нарядов пока нет. Снимок или PDF наряда ляжет в отчёт отдельным файлом — с номером и датами в имени.</p>}
+      {orders.length === 0 && !form && !review && <p className="row muted">Нарядов пока нет. Снимок или PDF наряда ляжет в отчёт отдельным файлом — с номером и датами в имени.</p>}
       {orders.map((o, i) =>
         review && review.base.id === o.id ? (
           reviewOf(review.base, review.scan)
@@ -776,7 +776,7 @@ function Orders({ tv, act }: { tv: TripView; act: OtActions }) {
           <OrderItem key={o.id} o={o} name={tv.ot.names[i] || orderFileName(o)} act={act} ai={ai.ready && !review} onEdit={() => setForm(o)} onScanned={scanned} />
         ),
       )}
-      {!ai.key && <p className="note faint">Наряд по снимкам может заполнить Claude — ключ API вводится в настройках, раздел «ИИ».</p>}
+      {!ai.key && <p className="small muted muted3">Наряд по снимкам может заполнить Claude — ключ API вводится в настройках, раздел «ИИ».</p>}
     </section>
   );
 }
@@ -819,14 +819,14 @@ function RowCells({ row, showTrip }: { row: OtRow; showTrip?: boolean }) {
       <span className="otd">
         <span>{dayLabel(row.date)}</span>
         {kind && <span className={'tag ' + kind.cls}>{kind.label}</span>}
-        {showTrip && row.trip && <span className="tag grey">{row.trip}</span>}
+        {showTrip && row.trip && <span className="tag">{row.trip}</span>}
       </span>
-      <span className="ott num">{row.start ? `${row.start} – ${row.end}` : <span className="faint">—</span>}</span>
+      <span className="ott num">{row.start ? `${row.start} – ${row.end}` : <span className="muted3">—</span>}</span>
       <span className="oth">{num(h?.x15 ?? 0)}</span>
       <span className="oth">{num(h?.x2 ?? 0)}</span>
       <span className="oth">{num(h?.off ?? 0)}</span>
       <span className="otc">{row.comment}</span>
-      <span className="oths note">{hoursShort(h)}</span>
+      <span className="oths small muted">{hoursShort(h)}</span>
     </>
   );
 }
@@ -903,17 +903,17 @@ function DayEditor({
   return (
     <div className="oted" role="group" aria-label={`${dayLabel(row.date)}: время работы`} onKeyDown={keys}>
       <div className="ottimes">
-        <label className="label">
+        <label className="field">
           <span>Начало</span>
-          <input ref={first} className="field num" inputMode="decimal" placeholder="8:00" value={start} onChange={(e) => setStart(e.target.value)} onBlur={() => setStart((v) => timeInput(v) ?? v)} />
+          <input ref={first} className="input num" inputMode="decimal" placeholder="8:00" value={start} onChange={(e) => setStart(e.target.value)} onBlur={() => setStart((v) => timeInput(v) ?? v)} />
         </label>
-        <label className="label">
+        <label className="field">
           <span>Окончание</span>
-          <input className="field num" inputMode="decimal" placeholder="17:00" value={end} onChange={(e) => setEnd(e.target.value)} onBlur={() => setEnd((v) => timeInput(v) ?? v)} />
+          <input className="input num" inputMode="decimal" placeholder="17:00" value={end} onChange={(e) => setEnd(e.target.value)} onBlur={() => setEnd((v) => timeInput(v) ?? v)} />
         </label>
-        <label className="label otcm">
+        <label className="field otcm">
           <span>Комментарий: где и что делали</span>
-          <input className="field" value={comment} maxLength={500} onChange={(e) => setComment(e.target.value)} />
+          <input className="input" value={comment} maxLength={500} onChange={(e) => setComment(e.target.value)} />
         </label>
       </div>
       {(copyPrev || fromOrders.length > 0) && (
@@ -939,25 +939,25 @@ function DayEditor({
         </div>
       )}
       <ErrorText text={error} />
-      <div className="wrap">
+      <div className="sec-actions">
         <button type="button" className="btn work" disabled={busy} onClick={() => submit(false)}>
           Сохранить
         </button>
         {!last && (
-          <button type="button" className="btn ghost" disabled={busy} onClick={() => submit(true)}>
+          <button type="button" className="btn line" disabled={busy} onClick={() => submit(true)}>
             Сохранить и дальше
           </button>
         )}
         {(row.start || row.comment) && (
-          <button type="button" className="btn link" disabled={busy} onClick={onClear}>
+          <button type="button" className="link-btn warn-text" disabled={busy} onClick={onClear}>
             Очистить день
           </button>
         )}
-        <button type="button" className="btn ghost" onClick={onCancel}>
+        <button type="button" className="btn line" onClick={onCancel}>
           Отмена
         </button>
       </div>
-      {wide && <p className="note">Enter — сохранить и перейти к следующему дню, Esc — отмена. Работали за полночь — пишите окончание как есть, например 2:00.</p>}
+      {wide && <p className="small muted">Enter — сохранить и перейти к следующему дню, Esc — отмена. Работали за полночь — пишите окончание как есть, например 2:00.</p>}
     </div>
   );
 }
@@ -988,11 +988,11 @@ function Days({ tv, act, wide }: { tv: TripView; act: OtActions; wide: boolean }
     return null;
   };
   return (
-    <section className="stack">
-      <h2 className="h2" style={{ marginBottom: 6 }}>
+    <section className="stack gap0">
+      <h2 className="sec" style={{ marginBottom: 6 }}>
         По дням
       </h2>
-      <p className="note" style={{ marginBottom: 8 }}>
+      <p className="small muted" style={{ marginBottom: 8 }}>
         Нажмите на день и впишите, во сколько начали и закончили работу. Часы переработки посчитаются сами.
       </p>
       <div className="otdays">
@@ -1053,9 +1053,9 @@ function MonthPart({ snap, tv, act }: { snap: Snapshot; tv: TripView; act: OtAct
   const shown = data && data.month === month ? data : null;
   return (
     <>
-      <label className="label">
+      <label className="field">
         <span>Месяц</span>
-        <select className="field" value={month} onChange={(e) => setMonth(e.target.value)}>
+        <select className="input" value={month} onChange={(e) => setMonth(e.target.value)}>
           {months.map((m) => (
             <option key={m} value={m}>
               {monthTitle(m)[0].toUpperCase() + monthTitle(m).slice(1)}
@@ -1064,8 +1064,8 @@ function MonthPart({ snap, tv, act }: { snap: Snapshot; tv: TripView; act: OtAct
         </select>
       </label>
       <ErrorText text={error} />
-      {!shown && !error && <p className="note">Считаю…</p>}
-      {shown && shown.sheet.rows.length === 0 && <p className="empty">В этом месяце поездок нет.</p>}
+      {!shown && !error && <p className="small muted">Считаю…</p>}
+      {shown && shown.sheet.rows.length === 0 && <p className="row muted">В этом месяце поездок нет.</p>}
       {shown && shown.sheet.rows.length > 0 && (
         <>
           <section className="card stack gap10">
@@ -1073,28 +1073,28 @@ function MonthPart({ snap, tv, act }: { snap: Snapshot; tv: TripView; act: OtAct
             <Pay snap={snap} pay={shown.pay} sheet={shown.sheet} run={act.run} />
             <Report snap={snap} act={act} what={{ month }} folder={folderName(snap, shown.title)} orders={shown.orders} names={shown.names} />
           </section>
-          <section className="stack">
-            <h2 className="h2" style={{ marginBottom: 6 }}>
+          <section className="stack gap0">
+            <h2 className="sec" style={{ marginBottom: 6 }}>
               Наряды месяца
             </h2>
-            {shown.orders.length === 0 && <p className="empty">Нарядов за этот месяц нет.</p>}
+            {shown.orders.length === 0 && <p className="row muted">Нарядов за этот месяц нет.</p>}
             {shown.orders.map((o, i) => (
               <div key={o.id} className="otorder">
                 <div className="between">
                   <span>«{shown.names[i] || orderFileName(o)}.pdf»</span>
-                  <span className="tag grey" style={{ flex: 'none' }}>
+                  <span className="tag" style={{ flex: 'none' }}>
                     {o.trip}
                   </span>
                 </div>
-                {!o.att.length && <span className="note warn">Нет снимка — в папку отчёта не попадёт</span>}
+                {!o.att.length && <span className="small warn-text">Нет снимка — в папку отчёта не попадёт</span>}
               </div>
             ))}
           </section>
-          <section className="stack">
-            <h2 className="h2" style={{ marginBottom: 6 }}>
+          <section className="stack gap0">
+            <h2 className="sec" style={{ marginBottom: 6 }}>
               По дням
             </h2>
-            <p className="note" style={{ marginBottom: 8 }}>
+            <p className="small muted" style={{ marginBottom: 8 }}>
               Из всех поездок месяца, с днями между ними. Время и комментарии правятся в карточке поездки.
             </p>
             <div className="otdays">
@@ -1120,13 +1120,13 @@ export default function OvertimeTab({ snap, tv, act, wide }: { snap: Snapshot; t
   const ot = tv.ot;
   return (
     <div className="stack gap20">
-      <Seg
+      <Seg cols
         label="Переработки"
         value={view}
-        onPick={setView}
-        items={[
-          { id: 'trip', label: 'Эта поездка' },
-          { id: 'month', label: 'Общая за месяц' },
+        onChange={setView}
+        options={[
+          ['trip', 'Эта поездка'],
+          ['month', 'Общая за месяц'],
         ]}
       />
       {view === 'trip' ? (
@@ -1142,7 +1142,7 @@ export default function OvertimeTab({ snap, tv, act, wide }: { snap: Snapshot; t
       ) : (
         <MonthPart snap={snap} tv={tv} act={act} />
       )}
-      <p className="note">{rulesText(ot.rules)} Правила и оклад — в настройках.</p>
+      <p className="small muted">{rulesText(ot.rules)} Правила и оклад — в настройках.</p>
     </div>
   );
 }
@@ -1163,17 +1163,17 @@ export function OvertimeSettings({ snap, run }: { snap: Snapshot; run: Run }) {
   const startBad = /^\d\d:\d\d$/.test(start) && (start < '05:00' || start > '12:00');
   return (
     <Cut id="ot" title="Переработки">
-      <p className="note" style={{ marginBottom: 8 }}>
+      <p className="small muted" style={{ marginBottom: 8 }}>
         Наряды и часы — в карточке поездки, раздел «Наряды». Здесь — как считать часы и оклад для суммы к оплате.
       </p>
       <NameField snap={snap} run={run} />
       <label className="setrow">
         <span>
           <span>Начало рабочего дня</span>
-          <span className={'note' + (startBad ? ' warn' : '')}>{startBad ? 'Время — от 5:00 до 12:00' : 'С него в будни пишется работа, когда наряд распознаёт Claude'}</span>
+          <span className={'small muted' + (startBad ? ' warn-text' : '')}>{startBad ? 'Время — от 5:00 до 12:00' : 'С него в будни пишется работа, когда наряд распознаёт Claude'}</span>
         </span>
         <input
-          className="field num"
+          className="input num"
           type="time"
           aria-label="Начало рабочего дня"
           value={start}
@@ -1191,10 +1191,10 @@ export function OvertimeSettings({ snap, run }: { snap: Snapshot; run: Run }) {
       <label className="setrow">
         <span>
           <span>Конец рабочего дня</span>
-          <span className={'note' + (endBad ? ' warn' : '')}>{endBad ? 'Время — от 12:00 до 22:00' : 'С него в будни идут переработки: два часа с коэффициентом 1,5, дальше — 2'}</span>
+          <span className={'small muted' + (endBad ? ' warn-text' : '')}>{endBad ? 'Время — от 12:00 до 22:00' : 'С него в будни идут переработки: два часа с коэффициентом 1,5, дальше — 2'}</span>
         </span>
         <input
-          className="field num"
+          className="input num"
           type="time"
           aria-label="Конец рабочего дня"
           value={end}
@@ -1211,39 +1211,39 @@ export function OvertimeSettings({ snap, run }: { snap: Snapshot; run: Run }) {
       </label>
       <div className="stack gap6" style={{ padding: '10px 0', borderTop: '1px solid var(--line)' }}>
         <span>Обед в выходной</span>
-        <span className="note">Не считается, если работа захватила время с 12 до 13</span>
-        <Seg
+        <span className="small muted">Не считается, если работа захватила время с 12 до 13</span>
+        <Seg cols small
           label="Обед в выходной"
           value={String(rules.lunch)}
-          onPick={(v) => run(api.settingSet('ot.lunch', v), v === '0' ? 'Обед в выходной не вычитается' : 'Обед в выходной — ' + lunchText(Number(v)))}
-          items={[
-            { id: '0', label: 'Нет' },
-            { id: '30', label: '30 мин' },
-            { id: '60', label: '1 час' },
-            { id: '90', label: '1,5 часа' },
+          onChange={(v) => run(api.settingSet('ot.lunch', v), v === '0' ? 'Обед в выходной не вычитается' : 'Обед в выходной — ' + lunchText(Number(v)))}
+          options={[
+            ['0', 'Нет'],
+            ['30', '30 мин'],
+            ['60', '1 час'],
+            ['90', '1,5 часа'],
           ]}
         />
       </div>
       <div className="stack gap6" style={{ padding: '10px 0', borderTop: '1px solid var(--line)' }}>
         <span>Округление часов</span>
-        <Seg
+        <Seg cols small
           label="Округление часов"
           value={String(rules.step)}
-          onPick={(v) => run(api.settingSet('ot.round', v), v === '1' ? 'Часы не округляются' : 'Часы округляются до ' + stepText(Number(v)))}
-          items={[
-            { id: '1', label: 'Нет' },
-            { id: '15', label: '15 мин' },
-            { id: '30', label: '30 мин' },
-            { id: '60', label: '1 час' },
+          onChange={(v) => run(api.settingSet('ot.round', v), v === '1' ? 'Часы не округляются' : 'Часы округляются до ' + stepText(Number(v)))}
+          options={[
+            ['1', 'Нет'],
+            ['15', '15 мин'],
+            ['30', '30 мин'],
+            ['60', '1 час'],
           ]}
         />
       </div>
       <div className="stack gap6" style={{ padding: '10px 0', borderTop: '1px solid var(--line)' }}>
         <span>Оклад и премия</span>
-        <span className="note">Для суммы к оплате: час работы — оклад и премия, делённые на норму часов месяца. Сумма видна только в карточке поездки, в отчёт не входит.</span>
+        <span className="small muted">Для суммы к оплате: час работы — оклад и премия, делённые на норму часов месяца. Сумма видна только в карточке поездки, в отчёт не входит.</span>
         <SalaryForm key={(s['ot.salary'] || '') + '/' + (s['ot.bonus'] || '')} snap={snap} run={run} />
       </div>
-      <p className="note" style={{ paddingTop: 10, borderTop: '1px solid var(--line)' }}>
+      <p className="small muted" style={{ paddingTop: 10, borderTop: '1px solid var(--line)' }}>
         {rulesText(rules)}
       </p>
     </Cut>

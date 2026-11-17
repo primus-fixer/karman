@@ -17,9 +17,9 @@ export function Figures({ snap, nav, big = true }: { snap: Snapshot; nav: Nav; b
     items.push({ label: 'Вернуть компании', value: rub(snap.due), note: snap.debt_due > 0 ? 'в т. ч. долг ' + rub(snap.debt_due) : '', mark: 'mark due', go: () => nav.go('trips') });
   if (!items.length) return null;
   return (
-    <div className="figures">
+    <div className="figs">
       {items.map((f) => (
-        <button key={f.label} type="button" className="figure" onClick={f.go}>
+        <button key={f.label} type="button" className="fig" onClick={f.go}>
           <span className="lab">
             <span className={f.mark} />
             {f.label}
@@ -27,7 +27,7 @@ export function Figures({ snap, nav, big = true }: { snap: Snapshot; nav: Nav; b
           <span className="val" style={big ? undefined : { fontSize: 22, lineHeight: '28px' }}>
             {f.value}
           </span>
-          {f.note && <span className="note warn">{f.note}</span>}
+          {f.note && <span className="small warn-text">{f.note}</span>}
         </button>
       ))}
     </div>
@@ -41,31 +41,31 @@ export function TripList({ snap, nav, closed = false }: { snap: Snapshot; nav: N
       {rows.map((r) =>
         closed ? (
           <button key={r.tv.trip.id} type="button" className="triprow" style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }} onClick={() => nav.openTrip(r.tv.trip.id)}>
-            <span className="stack">
+            <span className="stack gap0">
               <span style={{ fontWeight: 500 }}>{r.name}</span>
-              <span className="note">{r.dates}</span>
+              <span className="small muted">{r.dates}</span>
             </span>
-            <span className="note">{r.balanceNote}</span>
+            <span className="small muted">{r.balanceNote}</span>
           </button>
         ) : (
           <button key={r.tv.trip.id} type="button" className="triprow" onClick={() => nav.openTrip(r.tv.trip.id)}>
             <span className="between">
               <span style={{ fontWeight: 500 }}>{r.name}</span>
-              <span className={'num' + (r.balanceWarn ? ' warn' : '')} style={{ flex: 'none', fontWeight: 500 }}>
+              <span className={'num' + (r.balanceWarn ? ' warn-text' : '')} style={{ flex: 'none', fontWeight: 500 }}>
                 {r.balanceText}
               </span>
             </span>
             <span className="between" style={{ alignItems: 'center' }}>
               <Dots statusIdx={r.statusIdx} label={r.statusText} />
-              <span className="note" style={{ textAlign: 'right' }}>
+              <span className="small muted" style={{ textAlign: 'right' }}>
                 {r.balanceNote}
               </span>
             </span>
-            <span className="note">
+            <span className="small muted">
               {r.dates}. {r.statusNote}
             </span>
             {r.docWarn && (
-              <span className="note warn" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <span className="small warn-text" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 <Icon name="alert" size={14} stroke={2} />
                 {r.docWarn}
               </span>
@@ -104,7 +104,7 @@ export default function Overview({ snap, nav, act, fin, openFinance, mobile, ask
   if (snap.owed_to_me > 0) debts.push('мне должны ' + rub(snap.owed_to_me));
   return (
     <div className="stack gap26">
-      <p className="note" style={{ fontSize: 15, lineHeight: '21px', margin: '-4px 0 -14px' }}>
+      <p className="small muted" style={{ fontSize: 15, lineHeight: '21px', margin: '-4px 0 -14px' }}>
         {weekdayLabel(snap.today)}
       </p>
       {ask && (
@@ -115,10 +115,10 @@ export default function Overview({ snap, nav, act, fin, openFinance, mobile, ask
       )}
       <section className="stack gap16">
         <div>
-          <h1 className="note" style={{ fontSize: 15, lineHeight: '20px', fontWeight: 500 }}>
+          <h1 className="small muted" style={{ fontSize: 15, lineHeight: '20px', fontWeight: 500 }}>
             Мои деньги
           </h1>
-          <p className="big">
+          <p className="hero">
             {comma < 0 ? mine : mine.slice(0, comma)}
             <small>
               {comma < 0 ? '' : mine.slice(comma)}
@@ -138,24 +138,24 @@ export default function Overview({ snap, nav, act, fin, openFinance, mobile, ask
             </span>
           </button>
           {accountsOpen && (
-            <div className="stack" style={{ paddingBottom: 6 }}>
+            <div className="stack gap0" style={{ paddingBottom: 6 }}>
               {snap.accounts
                 .filter((a) => !a.account.archived)
                 .map((a) => (
                   <div key={a.account.id} className="between" style={{ padding: '5px 0' }}>
-                    <span className="note" style={{ fontSize: 15 }}>
+                    <span className="small muted" style={{ fontSize: 15 }}>
                       {a.account.name}
                     </span>
                     <span className="num" style={{ textAlign: 'right' }}>
                       {rub(a.balance, a.account.currency)}
-                      {a.account.currency !== 'RUB' && <span className="note faint" style={{ display: 'block' }}>≈{NB + rub(a.balance_rub)}</span>}
+                      {a.account.currency !== 'RUB' && <span className="small muted muted3" style={{ display: 'block' }}>≈{NB + rub(a.balance_rub)}</span>}
                     </span>
                   </div>
                 ))}
               <button
                 type="button"
-                className="btn link"
-                style={{ alignSelf: 'flex-start', color: 'var(--own)', fontWeight: 500, padding: 0 }}
+                className="link-btn"
+                style={{ alignSelf: 'flex-start', fontWeight: 500 }}
                 onClick={() => {
                   nav.go('settings');
                   showSection('accounts');
@@ -169,7 +169,7 @@ export default function Overview({ snap, nav, act, fin, openFinance, mobile, ask
             <button type="button" className="collapse" onClick={() => openFinance('save')}>
               <span>
                 Отложено
-                {snap.saved_in_mine && <span className="note faint"> — входит в «Мои деньги»</span>}
+                {snap.saved_in_mine && <span className="small muted muted3"> — входит в «Мои деньги»</span>}
               </span>
               <span className="num" style={{ color: 'var(--ink)' }}>
                 {rub(snap.saved)}
@@ -192,10 +192,10 @@ export default function Overview({ snap, nav, act, fin, openFinance, mobile, ask
       </section>
 
       {budgets.length > 0 && (
-        <section className="stack">
+        <section className="stack gap0">
           <div className="between" style={{ marginBottom: 8 }}>
-            <h2 className="h2">Бюджет на месяц</h2>
-            <button type="button" className="btn link" style={{ color: 'var(--own)', padding: 0 }} onClick={() => openFinance('budget')}>
+            <h2 className="sec">Бюджет на месяц</h2>
+            <button type="button" className="link-btn" onClick={() => openFinance('budget')}>
               Подробнее
             </button>
           </div>
@@ -203,7 +203,7 @@ export default function Overview({ snap, nav, act, fin, openFinance, mobile, ask
             const over = b.cats.filter((c) => c.limit != null && c.spent > c.limit);
             return (
               <button key={b.id} type="button" className="budrow" style={{ width: '100%', textAlign: 'left', background: 'none', border: 0, borderTop: '1px solid var(--line)', color: 'inherit', font: 'inherit' }} onClick={() => openFinance('budget')}>
-                <span className="stack" style={{ minWidth: 0, gap: 4, width: '100%' }}>
+                <span className="stack gap0" style={{ minWidth: 0, gap: 4, width: '100%' }}>
                   <span className="between">
                     <span>{b.id === 'family' ? 'Семейный' : 'Личный'}</span>
                     <span className="num">
@@ -212,8 +212,8 @@ export default function Overview({ snap, nav, act, fin, openFinance, mobile, ask
                     </span>
                   </span>
                   <Bar value={b.spent} limit={b.total} />
-                  {b.total ? <span className={'note' + (b.spent > b.total ? ' warn' : '')}>{leftText(b.spent, b.total)}</span> : null}
-                  {over.length > 0 && <span className="note warn">Сверх лимита: {over.map((c) => (CATS[c.cat] || CATS.other).n.toLowerCase()).join(', ')}</span>}
+                  {b.total ? <span className={'small muted' + (b.spent > b.total ? ' warn-text' : '')}>{leftText(b.spent, b.total)}</span> : null}
+                  {over.length > 0 && <span className="small warn-text">Сверх лимита: {over.map((c) => (CATS[c.cat] || CATS.other).n.toLowerCase()).join(', ')}</span>}
                 </span>
               </button>
             );
@@ -222,10 +222,10 @@ export default function Overview({ snap, nav, act, fin, openFinance, mobile, ask
       )}
 
       {soon.length > 0 && (
-        <section className="stack">
+        <section className="stack gap0">
           <div className="between" style={{ marginBottom: 8 }}>
-            <h2 className="h2">Скоро платежи</h2>
-            <button type="button" className="btn link" style={{ color: 'var(--own)', padding: 0 }} onClick={() => openFinance('pay')}>
+            <h2 className="sec">Скоро платежи</h2>
+            <button type="button" className="link-btn" onClick={() => openFinance('pay')}>
               Все в финансах
             </button>
           </div>
@@ -239,11 +239,11 @@ export default function Overview({ snap, nav, act, fin, openFinance, mobile, ask
         <section className="card stack gap6 backupnote">
           <div className="between" style={{ alignItems: 'center' }}>
             <span style={{ fontWeight: 500 }}>{backupDays == null ? 'Резервных копий ещё не было' : `Последняя копия — ${backupDays}${NB}${plural(backupDays, 'день', 'дня', 'дней')} назад`}</span>
-            <button type="button" className="btn ghost small" style={{ flex: 'none' }} onClick={() => goBackup(nav)}>
+            <button type="button" className="btn line small" style={{ flex: 'none' }} onClick={() => goBackup(nav)}>
               {mobile ? 'Подробнее' : 'Настроить'}
             </button>
           </div>
-          <span className="note">
+          <span className="small muted">
             {mobile
               ? backupDays == null
                 ? 'Их делает «Карман» на компьютере: задайте там пароль копии.'
@@ -257,29 +257,29 @@ export default function Overview({ snap, nav, act, fin, openFinance, mobile, ask
 
       {empty && (
         <section className="card stack gap10">
-          <h2 className="h2">С чего начать</h2>
-          <p className="note">
+          <h2 className="sec">С чего начать</h2>
+          <p className="small muted">
             Заведите поездку по заявке из 1С — аванс, суточные и отчёт посчитаются сами. Личные расходы можно записывать сразу кнопкой «+».
             Остатки по счетам укажите в настройках.
           </p>
-          <div className="wrap">
+          <div className="sec-actions">
             <button type="button" className="btn work" onClick={() => nav.newTrip()}>
               Новая поездка
             </button>
-            <button type="button" className="btn ghost" onClick={() => nav.openEntry()}>
+            <button type="button" className="btn line" onClick={() => nav.openEntry()}>
               Записать расход
             </button>
           </div>
-          <p className="note">Уже пользовались «Карманом»? Восстановите данные из резервной копии или свяжите это устройство с другим по Wi-Fi.</p>
-          <button type="button" className="btn link" style={{ alignSelf: 'flex-start', color: 'var(--own)', padding: 0, minHeight: 32 }} onClick={() => goBackup(nav)}>
+          <p className="small muted">Уже пользовались «Карманом»? Восстановите данные из резервной копии или свяжите это устройство с другим по Wi-Fi.</p>
+          <button type="button" className="link-btn" style={{ alignSelf: 'flex-start', minHeight: 32 }} onClick={() => goBackup(nav)}>
             Восстановить из копии
           </button>
         </section>
       )}
 
       {openTrips.length > 0 && (
-        <section className="stack">
-          <h2 className="h2" style={{ marginBottom: 8 }}>
+        <section className="stack gap0">
+          <h2 className="sec" style={{ marginBottom: 8 }}>
             Открытые поездки
           </h2>
           <TripList snap={snap} nav={nav} />
@@ -287,10 +287,10 @@ export default function Overview({ snap, nav, act, fin, openFinance, mobile, ask
       )}
 
       {todayOps.length > 0 && (
-        <section className="stack">
+        <section className="stack gap0">
           <div className="between" style={{ marginBottom: 8 }}>
-            <h2 className="h2">Сегодня</h2>
-            <span className="num note" style={{ fontSize: 15 }}>
+            <h2 className="sec">Сегодня</h2>
+            <span className="num small muted" style={{ fontSize: 15 }}>
               {todaySpend ? '−' + rub(todaySpend) : ''}
             </span>
           </div>

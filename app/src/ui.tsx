@@ -1,28 +1,21 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { addIcons, Icon as KitIcon } from '@primus-fixer/kit/ui';
+import { addIcons, Cut as KitCut, Icon as KitIcon } from '@primus-fixer/kit/ui';
 import { useCut } from './cuts';
 import type { Attachment, Check, Op, Snapshot } from './api';
 import { blobUrl, sizeText } from './media';
 import { ICON } from './icons';
 import { opView, rail } from './logic';
 
-/** Раздел настроек под катом: заголовок — кнопка, содержимое раскрывается; раскрытые разделы запоминаются. */
-export function Cut({ id, title, children, gap }: { id: string; title: string; children: ReactNode; gap?: 'gap10' }) {
+/**
+ * Раздел настроек под катом — элемент kit. Какие разделы раскрыты, помнит cuts.ts: «Карман» сам раскрывает
+ * раздел, когда к нему переходят с другого экрана (showSection).
+ */
+export function Cut({ id, title, hint, children }: { id: string; title: string; hint?: string; children: ReactNode }) {
   const [open, setOpen] = useCut(id);
   return (
-    <section className={'cut' + (open ? ' open' : '')} id={id}>
-      <h2 className="h2">
-        <button type="button" className="cuthead" aria-expanded={open} aria-controls={id + '-body'} onClick={() => setOpen(!open)}>
-          <span>{title}</span>
-          <span className="chev">
-            <Icon name="down" size={20} stroke={2} />
-          </span>
-        </button>
-      </h2>
-      <div id={id + '-body'} className={'stack cutbody' + (gap ? ' ' + gap : '')} hidden={!open}>
-        {children}
-      </div>
-    </section>
+    <KitCut id={id} title={title} hint={hint} open={open} onToggle={setOpen}>
+      {children}
+    </KitCut>
   );
 }
 
@@ -34,18 +27,8 @@ export function Icon({ name, size = 20, stroke = 1.75, d }: { name?: string; siz
   return <KitIcon d={d || ICON[name || 'other'] || ICON.other} size={size} stroke={stroke} />;
 }
 
-/** Переключатель; `fit` — колонки по длине подписей (когда подписи разной длины и их много). */
-export function Seg<T extends string>({ items, value, onPick, label, fit = false }: { items: { id: T; label: string; tone?: 'own' | 'work' }[]; value: T; onPick: (id: T) => void; label: string; fit?: boolean }) {
-  return (
-    <div className={'seg' + (fit ? ' fit' : '')} role="group" aria-label={label} style={fit ? undefined : { gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
-      {items.map((it) => (
-        <button key={it.id} type="button" aria-pressed={it.id === value} className={(it.id === value ? 'on ' : '') + (it.tone || '')} onClick={() => onPick(it.id)}>
-          {it.label}
-        </button>
-      ))}
-    </div>
-  );
-}
+/** Переключатель — элемент kit. */
+export { Seg } from '@primus-fixer/kit/ui';
 
 /** Маленькая полоска статуса в списке поездок. */
 export function Dots({ statusIdx, label }: { statusIdx: number; label: string }) {
@@ -70,7 +53,7 @@ export function Rail({ statusIdx }: { statusIdx: number }) {
         <li key={s.label} aria-current={s.current ? 'step' : undefined}>
           <span className="track">
             <span className={'sq' + (s.done || s.current ? ' on' : '') + (s.current && statusIdx < 5 ? ' cur' : '')} />
-            {i < steps.length - 1 && <span className={'bar' + (i < statusIdx ? ' on' : '')} />}
+            {i < steps.length - 1 && <span className={'rline' + (i < statusIdx ? ' on' : '')} />}
           </span>
           <span className={'lab' + (s.current ? ' cur' : '')}>{s.label}</span>
         </li>
@@ -84,7 +67,7 @@ export function Checks({ items }: { items: Check[] }) {
     <ul className="checks">
       {items.map((c, i) => (
         <li key={i}>
-          <svg className={c.ok ? 'pos' : 'warn'} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-label={c.ok ? 'Да' : 'Нет'}>
+          <svg className={c.ok ? 'pos' : 'warn-text'} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-label={c.ok ? 'Да' : 'Нет'}>
             <path d={c.ok ? 'M20 6 9 17l-5-5' : 'M18 6 6 18M6 6l12 12'} />
           </svg>
           <span>{c.text}</span>
@@ -187,7 +170,7 @@ export function Viewer({ att, pdfInline, onClose }: { att: Attachment; pdfInline
   return (
     <div className="viewer" role="dialog" aria-modal="true" aria-label={att.name}>
       <header>
-        <span className="stack" style={{ minWidth: 0 }}>
+        <span className="stack gap0" style={{ minWidth: 0 }}>
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{att.name}</span>
           <small style={{ opacity: 0.75 }}>{sizeText(att.size)}</small>
         </span>
@@ -217,7 +200,7 @@ export function OpRow({ snap, op, act, dateSub }: { snap: Snapshot; op: Op; act:
         <span className={'opicon' + (v.own ? ' own' : '')}>
           <Icon d={v.icon} size={19} />
         </span>
-        <span className="stack" style={{ minWidth: 0 }}>
+        <span className="stack gap0" style={{ minWidth: 0 }}>
           <span className="optitle">{v.title}</span>
           <span className="opsub">{dateSub ? v.dateSub : v.sub}</span>
         </span>
@@ -225,12 +208,12 @@ export function OpRow({ snap, op, act, dateSub }: { snap: Snapshot; op: Op; act:
           <span className={'amount' + (v.inc ? ' in' : '')}>{v.amount}</span>
           <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             {!!op.att?.length && (
-              <span className="faint" title="Есть снимок чека" style={{ display: 'flex' }}>
+              <span className="muted3" title="Есть снимок чека" style={{ display: 'flex' }}>
                 <Icon name="clip" size={14} />
               </span>
             )}
             {v.noDoc && <span className="tag warn">без чека</span>}
-            {v.chip && <span className={'tag' + (v.chipTagged ? ' grey' : v.chipFamily ? ' own' : '')}>{v.chip}</span>}
+            {v.chip && <span className={'tag ' + (v.chipTagged ? '' : v.chipFamily ? 'own' : 'work')}>{v.chip}</span>}
           </span>
         </span>
       </button>
@@ -243,9 +226,9 @@ export function OpRow({ snap, op, act, dateSub }: { snap: Snapshot; op: Op; act:
             </div>
           ))}
           {!!op.att?.length && <Thumbs items={op.att} onOpen={act.view} />}
-          <div className="wrap">
+          <div className="sec-actions">
             {op.kind !== 'transfer' && (
-              <button type="button" className="btn ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }} onClick={() => act.attach(op)}>
+              <button type="button" className="btn line" style={{ display: 'flex', alignItems: 'center', gap: 6 }} onClick={() => act.attach(op)}>
                 <Icon name="camera" size={18} />
                 {op.att?.length ? 'Ещё снимок' : 'Снимок чека'}
               </button>
@@ -258,7 +241,7 @@ export function OpRow({ snap, op, act, dateSub }: { snap: Snapshot; op: Op; act:
             {EDITABLE.has(op.kind) && (
               <button
                 type="button"
-                className="btn ghost"
+                className="btn line"
                 onClick={() => {
                   setOpen(false);
                   act.edit(op);
@@ -267,7 +250,7 @@ export function OpRow({ snap, op, act, dateSub }: { snap: Snapshot; op: Op; act:
                 Изменить
               </button>
             )}
-            <button type="button" className="btn link" onClick={() => act.remove(op)}>
+            <button type="button" className="link-btn warn-text" onClick={() => act.remove(op)}>
               Удалить
             </button>
           </div>

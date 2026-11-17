@@ -171,30 +171,30 @@ export default function TripForm({
         <button type="button" className="back" aria-label="Назад" onClick={onCancel}>
           <Icon name="left" size={22} stroke={2} />
         </button>
-        <h1 className="h1">{existing ? `Поездка ${existing.id}` : 'Новая поездка'}</h1>
+        <h1 className="screen-title">{existing ? `Поездка ${existing.id}` : 'Новая поездка'}</h1>
       </div>
-      {!existing && <p className="note" style={{ marginTop: -10 }}>Перенесите данные из заявки в 1С. Аванс будет равен сумме заявки, суточные посчитаются по ставке из настроек.</p>}
+      {!existing && <p className="small muted" style={{ marginTop: -10 }}>Перенесите данные из заявки в 1С. Аванс будет равен сумме заявки, суточные посчитаются по ставке из настроек.</p>}
       {!existing && aiOn(ai, 'docs') && (
         <section className="card stack gap6" aria-label="Из приказа или заявки">
           <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 500 }}>
             <Icon name="spark" size={18} />
             Из приказа или заявки
           </span>
-          <span className="note">Снимок или PDF — Claude заполнит номер, город, даты, цель и суммы по статьям. Проверьте перед сохранением.</span>
-          <div className="wrap">
+          <span className="small muted">Снимок или PDF — Claude заполнит номер, город, даты, цель и суммы по статьям. Проверьте перед сохранением.</span>
+          <div className="sec-actions">
             {mobile && (
-              <button type="button" className="btn ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={scan?.busy} onClick={() => fromDocument(true)}>
+              <button type="button" className="btn line" style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={scan?.busy} onClick={() => fromDocument(true)}>
                 <Icon name="camera" size={18} />
                 Снять
               </button>
             )}
-            <button type="button" className="btn ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={scan?.busy} onClick={() => fromDocument(false)}>
+            <button type="button" className="btn line" style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={scan?.busy} onClick={() => fromDocument(false)}>
               <Icon name="file" size={18} />
               {mobile ? 'Из файлов' : 'Снимок или PDF'}
             </button>
           </div>
           {scan && (
-            <p className={'note' + (scan.warn ? ' warn' : '')} role="status">
+            <p className={'small muted' + (scan.warn ? ' warn-text' : '')} role="status">
               {scan.note}
             </p>
           )}
@@ -202,46 +202,46 @@ export default function TripForm({
       )}
 
       <section className="stack gap12">
-        <h2 className="h2">Заявка</h2>
+        <h2 className="sec">Заявка</h2>
         <div className="form-grid">
-          <label className="label">
+          <label className="field">
             <span>Номер поездки</span>
-            <input className="field num" value={d.id} readOnly={!!existing} onChange={(e) => set({ id: e.target.value })} placeholder="Например, 573" autoFocus={!existing} />
+            <input className="input num" value={d.id} readOnly={!!existing} onChange={(e) => set({ id: e.target.value })} placeholder="Например, 573" autoFocus={!existing} />
           </label>
-          <label className="label">
+          <label className="field">
             <span>Город</span>
-            <input className="field" value={d.city} onChange={(e) => set({ city: e.target.value })} placeholder="Например, Нягань" />
+            <input className="input" value={d.city} onChange={(e) => set({ city: e.target.value })} placeholder="Например, Нягань" />
           </label>
-          <label className="label">
+          <label className="field">
             <span>Номер заявки в 1С</span>
-            <input className="field num" value={d.reqNo} onChange={(e) => set({ reqNo: e.target.value })} />
+            <input className="input num" value={d.reqNo} onChange={(e) => set({ reqNo: e.target.value })} />
           </label>
-          <label className="label">
+          <label className="field">
             <span>Дата заявки</span>
-            <input className="field" type="date" value={d.reqDate} onChange={(e) => set({ reqDate: e.target.value })} />
+            <input className="input" type="date" value={d.reqDate} onChange={(e) => set({ reqDate: e.target.value })} />
           </label>
-          <label className="label">
+          <label className="field">
             <span>Начало по заявке</span>
-            <input className="field" type="date" value={d.planStart} onChange={(e) => setPlanDate('planStart', e.target.value)} />
+            <input className="input" type="date" value={d.planStart} onChange={(e) => setPlanDate('planStart', e.target.value)} />
           </label>
-          <label className="label">
+          <label className="field">
             <span>Окончание по заявке</span>
-            <input className="field" type="date" value={d.planEnd} onChange={(e) => setPlanDate('planEnd', e.target.value)} />
+            <input className="input" type="date" value={d.planEnd} onChange={(e) => setPlanDate('planEnd', e.target.value)} />
           </label>
         </div>
-        <label className="label">
+        <label className="field">
           <span>Описание цели</span>
-          <textarea className="field" rows={2} value={d.goal} onChange={(e) => set({ goal: e.target.value })} placeholder="Как в заявке: наладка, монтаж, обучение…" />
+          <textarea className="input" rows={2} value={d.goal} onChange={(e) => set({ goal: e.target.value })} placeholder="Как в заявке: наладка, монтаж, обучение…" />
         </label>
       </section>
 
       <section className="stack gap12">
-        <h2 className="h2">Фактические даты</h2>
+        <h2 className="sec">Фактические даты</h2>
         <div className="form-grid">
-          <label className="label">
+          <label className="field">
             <span>Начало</span>
             <input
-              className="field"
+              className="input"
               type="date"
               value={d.start}
               onChange={(e) => {
@@ -250,10 +250,10 @@ export default function TripForm({
               }}
             />
           </label>
-          <label className="label">
+          <label className="field">
             <span>Окончание</span>
             <input
-              className="field"
+              className="input"
               type="date"
               value={d.end}
               onChange={(e) => {
@@ -262,46 +262,46 @@ export default function TripForm({
               }}
             />
           </label>
-          <label className="label">
+          <label className="field">
             <span>Сдать отчёт до</span>
-            <input className="field" type="date" value={d.deadline} onChange={(e) => set({ deadline: e.target.value })} />
+            <input className="input" type="date" value={d.deadline} onChange={(e) => set({ deadline: e.target.value })} />
           </label>
         </div>
-        <p className="note">{factTouched ? 'Суточные считаются по фактическим датам.' : 'Пока совпадают с заявкой. Если поездка сдвинется, поменяйте.'}</p>
+        <p className="small muted">{factTouched ? 'Суточные считаются по фактическим датам.' : 'Пока совпадают с заявкой. Если поездка сдвинется, поменяйте.'}</p>
       </section>
 
       <section className="stack gap12">
-        <h2 className="h2">Суммы по статьям</h2>
-        <div className="stack">
+        <h2 className="sec">Суммы по статьям</h2>
+        <div className="stack gap0">
           {ARTICLES.map(([code, name], i) => (
             <div key={code} className="stack gap6" style={{ padding: '10px 0', borderTop: '1px solid var(--line)' }}>
               <div className="plan-grid">
-                <label htmlFor={'plan' + i} className="stack" style={{ minWidth: 0 }}>
+                <label htmlFor={'plan' + i} className="stack gap0" style={{ minWidth: 0 }}>
                   <span>
-                    <span className="faint">{code}</span> {name}
+                    <span className="muted3">{code}</span> {name}
                   </span>
                   {i === 3 && perDiemHint > 0 && planKop[3] !== perDiemHint && (
-                    <button type="button" className="btn link" style={{ alignSelf: 'flex-start', padding: 0, minHeight: 32, color: 'var(--own)', fontSize: 14 }} onClick={() => setArr('plan', 3, amountText(perDiemHint))}>
+                    <button type="button" className="link-btn" style={{ alignSelf: 'flex-start', minHeight: 32, fontSize: 14 }} onClick={() => setArr('plan', 3, amountText(perDiemHint))}>
                       Подставить {planDays} × {rub(rate)} = {rub(perDiemHint)}
                     </button>
                   )}
                 </label>
-                <input id={'plan' + i} className="field num" inputMode="decimal" style={{ textAlign: 'right' }} value={d.plan[i]} onChange={(e) => setArr('plan', i, e.target.value)} placeholder="0" />
+                <input id={'plan' + i} className="input num" inputMode="decimal" style={{ textAlign: 'right' }} value={d.plan[i]} onChange={(e) => setArr('plan', i, e.target.value)} placeholder="0" />
               </div>
-              <input className="field" aria-label={`Примечание к статье ${name}`} value={d.planNotes[i]} onChange={(e) => setArr('planNotes', i, e.target.value)} placeholder="Примечание" style={{ fontSize: 14 }} />
-              {i === 2 && <input className="field" aria-label="Регион проживания" value={d.region} onChange={(e) => set({ region: e.target.value })} placeholder="Регион, например ХМАО" style={{ fontSize: 14 }} />}
+              <input className="input" aria-label={`Примечание к статье ${name}`} value={d.planNotes[i]} onChange={(e) => setArr('planNotes', i, e.target.value)} placeholder="Примечание" style={{ fontSize: 14 }} />
+              {i === 2 && <input className="input" aria-label="Регион проживания" value={d.region} onChange={(e) => set({ region: e.target.value })} placeholder="Регион, например ХМАО" style={{ fontSize: 14 }} />}
             </div>
           ))}
           <div className="between" style={{ padding: '11px 0', borderTop: '2px solid var(--ink)' }}>
-            <span className="stack">
+            <span className="stack gap0">
               <span style={{ fontWeight: 500 }}>Итого по заявке</span>
-              <span className="note">{st >= 1 ? `Аванс уже выдан: ${rub(issued)}` : 'Аванс будет равен этой сумме'}</span>
+              <span className="small muted">{st >= 1 ? `Аванс уже выдан: ${rub(issued)}` : 'Аванс будет равен этой сумме'}</span>
             </span>
             <span className="num" style={{ fontWeight: 500 }}>
               {rub(total)}
             </span>
           </div>
-          {st >= 1 && issued !== total && <p className="note warn">Сумма заявки отличается от выданного аванса. Если компания доплатила, запишите доплату как доход в поездку.</p>}
+          {st >= 1 && issued !== total && <p className="small warn-text">Сумма заявки отличается от выданного аванса. Если компания доплатила, запишите доплату как доход в поездку.</p>}
         </div>
       </section>
 
@@ -312,13 +312,13 @@ export default function TripForm({
         </button>
         {showNotes && (
           <div className="stack gap10">
-            <p className="note">Попадут в раздел «Для 1С» → «Авансовый отчёт». Материалы и инструменты дописываются к статье 05 сами.</p>
+            <p className="small muted">Попадут в раздел «Для 1С» → «Авансовый отчёт». Материалы и инструменты дописываются к статье 05 сами.</p>
             {ARTICLES.map(([code, name], i) => (
-              <label key={code} className="label">
+              <label key={code} className="field">
                 <span>
                   {code} {name}
                 </span>
-                <input className="field" value={d.notes[i]} onChange={(e) => setArr('notes', i, e.target.value)} />
+                <input className="input" value={d.notes[i]} onChange={(e) => setArr('notes', i, e.target.value)} />
               </label>
             ))}
           </div>
@@ -326,11 +326,11 @@ export default function TripForm({
       </section>
 
       <ErrorText text={error} />
-      <div className="wrap">
+      <div className="sec-actions">
         <button type="submit" className="btn work" disabled={busy}>
           {existing ? 'Сохранить' : 'Создать поездку'}
         </button>
-        <button type="button" className="btn ghost" onClick={onCancel}>
+        <button type="button" className="btn line" onClick={onCancel}>
           Отмена
         </button>
       </div>

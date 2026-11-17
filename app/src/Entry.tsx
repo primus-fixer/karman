@@ -605,17 +605,17 @@ export default function Entry({
   const style = { '--accent': accent, '--onAccent': isTrip ? 'var(--onWork)' : 'var(--onOwn)', '--tint': isTrip ? 'var(--workBg)' : 'var(--ownBg)' } as CSSProperties;
 
   return (
-    <form className="sheet" aria-label="Новая операция" onSubmit={save} style={style}>
+    <form className="entry" aria-label="Новая операция" onSubmit={save} style={style}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <div style={{ flex: 1 }}>
-          <Seg
+          <Seg cols
             label="Тип операции"
             value={e.dir}
-            onPick={pickDir}
-            items={[
-              { id: 'out', label: 'Расход' },
-              { id: 'in', label: 'Доход' },
-              { id: 'move', label: 'Перевод' },
+            onChange={pickDir}
+            options={[
+              ['out', 'Расход'],
+              ['in', 'Доход'],
+              ['move', 'Перевод'],
             ]}
           />
         </div>
@@ -627,7 +627,7 @@ export default function Entry({
       {aiOn(ai, 'phrase') && !editing && (
         <div className="phrase">
           <input
-            className="field"
+            className="input"
             type="text"
             aria-label="Фразой"
             placeholder="Фразой: такси 640 до объекта, чек есть"
@@ -641,14 +641,14 @@ export default function Entry({
               }
             }}
           />
-          <button type="button" className="btn ghost" aria-label="Заполнить по фразе" disabled={!phrase.trim() || !!aiBusy} onClick={fillFromPhrase}>
+          <button type="button" className="btn line" aria-label="Заполнить по фразе" disabled={!phrase.trim() || !!aiBusy} onClick={fillFromPhrase}>
             <Icon name="spark" size={18} />
             {aiBusy === 'phrase' ? 'Claude…' : 'Заполнить'}
           </button>
         </div>
       )}
       {aiNote && aiBusy !== 'doc' && (
-        <p className={'note' + (aiNote.warn ? ' warn' : '')} role="status" style={{ fontSize: 13, lineHeight: '18px', margin: '-2px 0 0' }}>
+        <p className={'small muted' + (aiNote.warn ? ' warn-text' : '')} role="status" style={{ fontSize: 13, lineHeight: '18px', margin: '-2px 0 0' }}>
           {aiNote.text}
         </p>
       )}
@@ -659,16 +659,16 @@ export default function Entry({
             {amountShown}
             <span style={{ marginLeft: 6, fontSize: 24, color: 'var(--ink2)' }}>{sign}</span>
           </p>
-          <p className={'note' + (error ? ' warn' : '')} style={{ minHeight: 18, fontSize: 13, lineHeight: '18px' }}>
+          <p className={'small muted' + (error ? ' warn-text' : '')} style={{ minHeight: 18, fontSize: 13, lineHeight: '18px' }}>
             {note}
           </p>
         </div>
       ) : (
         <>
-          <label className="label">
+          <label className="field">
             <span>Сумма, {sign}</span>
             <input
-              className="field num"
+              className="input num"
               type="text"
               inputMode="decimal"
               autoComplete="off"
@@ -679,7 +679,7 @@ export default function Entry({
               style={{ height: 60, color: accent, fontWeight: 300, fontSize: 32 }}
             />
           </label>
-          <p className={'note' + (error ? ' warn' : '')} style={{ margin: '-8px 0 0', minHeight: 18, fontSize: 13, lineHeight: '18px' }}>
+          <p className={'small muted' + (error ? ' warn-text' : '')} style={{ margin: '-8px 0 0', minHeight: 18, fontSize: 13, lineHeight: '18px' }}>
             {note}
           </p>
         </>
@@ -687,7 +687,7 @@ export default function Entry({
 
       {move ? (
         <>
-          <div className="label">
+          <div className="field">
             <span>Откуда</span>
             <div className="chips scroll" role="group" aria-label="Откуда">
               {accounts.map((a) => (
@@ -697,7 +697,7 @@ export default function Entry({
               ))}
             </div>
           </div>
-          <div className="label">
+          <div className="field">
             <span>Куда</span>
             <div className="chips scroll" role="group" aria-label="Куда">
               {accounts
@@ -708,13 +708,13 @@ export default function Entry({
                   </button>
                 ))}
             </div>
-            {accounts.length < 2 && <p className="note warn">Для перевода нужно два счёта. Добавьте счёт в настройках.</p>}
+            {accounts.length < 2 && <p className="small warn-text">Для перевода нужно два счёта. Добавьте счёт в настройках.</p>}
           </div>
           {cross && (
-            <label className="label">
+            <label className="field">
               <span>Пришло, {toSign}</span>
               <input
-                className="field num"
+                className="input num"
                 type="text"
                 inputMode="decimal"
                 autoComplete="off"
@@ -758,10 +758,10 @@ export default function Entry({
                 {a.account.short || a.account.name}
               </button>
             ))}
-            {accounts.length === 0 && <p className="note warn">Нет счетов. Добавьте счёт в настройках.</p>}
+            {accounts.length === 0 && <p className="small warn-text">Нет счетов. Добавьте счёт в настройках.</p>}
           </div>
           {budgetNote && (
-            <p className={'note' + (budgetWarn ? ' warn' : '')} style={{ fontSize: 13, lineHeight: '18px' }}>
+            <p className={'small muted' + (budgetWarn ? ' warn-text' : '')} style={{ fontSize: 13, lineHeight: '18px' }}>
               {budgetNote}
             </p>
           )}
@@ -769,8 +769,8 @@ export default function Entry({
       )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '138px minmax(0,1fr)', gap: 6 }}>
-        <input className="field" type="date" aria-label="Дата" value={e.date} onChange={(ev) => onDate(ev.target.value)} style={{ height: 44, padding: '0 8px', fontSize: 14 }} />
-        <input className="field" type="text" aria-label="Комментарий" placeholder="Комментарий" value={e.comment} onChange={(ev) => set({ comment: ev.target.value })} style={{ minWidth: 0, height: 44, fontSize: 14 }} />
+        <input className="input" type="date" aria-label="Дата" value={e.date} onChange={(ev) => onDate(ev.target.value)} style={{ height: 44, padding: '0 8px', fontSize: 14 }} />
+        <input className="input" type="text" aria-label="Комментарий" placeholder="Комментарий" value={e.comment} onChange={(ev) => set({ comment: ev.target.value })} style={{ minWidth: 0, height: 44, fontSize: 14 }} />
       </div>
       {showHist && histCat && (
         <div className="chips">
@@ -798,31 +798,31 @@ export default function Entry({
           </div>
           {e.att.length > 0 && <Thumbs items={e.att} onRemove={removeFile} />}
           {e.att.length > 0 && aiOn(ai, 'docs') && (
-            <button type="button" className="btn ghost small" style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 6 }} disabled={!!aiBusy || filesBusy} onClick={fillFromDoc}>
+            <button type="button" className="btn line small" style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 6 }} disabled={!!aiBusy || filesBusy} onClick={fillFromDoc}>
               <Icon name="spark" size={16} />
               {aiBusy === 'doc' ? 'Claude читает документ…' : 'Распознать: сумма, дата, статья'}
             </button>
           )}
           {!e.receipt && !filesBusy && (
-            <button type="button" className="btn link" style={{ alignSelf: 'flex-start', padding: 0, minHeight: 32, color: 'var(--own)', fontSize: 14 }} onClick={() => set({ receipt: 'photo' })}>
+            <button type="button" className="link-btn" style={{ alignSelf: 'flex-start', minHeight: 32, fontSize: 14 }} onClick={() => set({ receipt: 'photo' })}>
               Чек есть, сниму позже
             </button>
           )}
           {e.receipt === 'qr' && !mobile && !e.receiptNote && (
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: 6 }}>
-              <input className="field" aria-label="Текст QR-кода с чека" placeholder="Вставьте текст QR-кода: t=…&s=…" value={qrText} onChange={(ev) => setQrText(ev.target.value)} style={{ height: 44, fontSize: 14 }} />
-              <button type="button" className="btn ghost" disabled={!qrText.trim()} onClick={() => applyReceipt(qrText.trim())}>
+              <input className="input" aria-label="Текст QR-кода с чека" placeholder="Вставьте текст QR-кода: t=…&s=…" value={qrText} onChange={(ev) => setQrText(ev.target.value)} style={{ height: 44, fontSize: 14 }} />
+              <button type="button" className="btn line" disabled={!qrText.trim()} onClick={() => applyReceipt(qrText.trim())}>
                 Разобрать
               </button>
             </div>
           )}
-          <p className={'note' + (docWarn ? ' warn' : '')} style={{ fontSize: 13, lineHeight: '18px' }}>
+          <p className={'small muted' + (docWarn ? ' warn-text' : '')} style={{ fontSize: 13, lineHeight: '18px' }}>
             {docNote}
           </p>
         </div>
       )}
       {foodNote && (
-        <p className="note" style={{ fontSize: 13, lineHeight: '18px' }}>
+        <p className="small muted" style={{ fontSize: 13, lineHeight: '18px' }}>
           {foodNote}
         </p>
       )}

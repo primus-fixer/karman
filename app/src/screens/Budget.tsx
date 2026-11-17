@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api, type Budget, type BudgetView, type Snapshot } from '../api';
 import { NB, amountText, dRange, parseAmount, plural, rub } from '../format';
 import { CATS, OWN_OUT, OWN_OUT_ALL } from '../logic';
+import { Bar as KitBar } from '@primus-fixer/kit/ui';
 import { ErrorText, Icon, Seg } from '../ui';
 import type { FinanceActions } from './Finance';
 
@@ -11,9 +12,7 @@ export function Bar({ value, limit }: { value: number; limit: number | null }) {
   const share = Math.min(1, value / limit);
   const over = value > limit;
   return (
-    <span className={'bar' + (over ? ' over' : share >= 0.85 ? ' near' : '')} role="img" aria-label={over ? 'сверх лимита' : `${Math.round(share * 100)}% лимита`}>
-      <i style={{ width: `${Math.round(share * 100)}%` }} />
-    </span>
+    <KitBar thick pct={Math.round(share * 100)} color={over ? 'var(--warn)' : share >= 0.85 ? 'var(--work)' : 'var(--own)'} label={over ? 'сверх лимита' : `${Math.round(share * 100)}% лимита`} />
   );
 }
 
@@ -37,10 +36,10 @@ function BudgetCard({ snap, view, act }: { snap: Snapshot; view: BudgetView; act
   const empty = !view.total && limited.length === 0;
   return (
     <div className="stack gap10">
-      <p className="note">
+      <p className="small muted">
         {dRange(view.start, view.end)}, {view.days_left > 0 ? `осталось ${view.days_left}${NB}${plural(view.days_left, 'день', 'дня', 'дней')}` : 'последний день'}
       </p>
-      <div className="stack" style={{ gap: 6 }}>
+      <div className="stack gap0" style={{ gap: 6 }}>
         <div className="between">
           <span style={{ fontWeight: 500 }}>Всего</span>
           <span className="num">
@@ -50,7 +49,7 @@ function BudgetCard({ snap, view, act }: { snap: Snapshot; view: BudgetView; act
         </div>
         <Bar value={view.spent} limit={view.total} />
         {view.total ? (
-          <span className={'note' + (view.spent > view.total ? ' warn' : '')}>
+          <span className={'small muted' + (view.spent > view.total ? ' warn-text' : '')}>
             {leftText(view.spent, view.total)}
             {perDay > 0 ? `, ≈${NB}${rub(perDay)} в день` : ''}
           </span>
@@ -64,7 +63,7 @@ function BudgetCard({ snap, view, act }: { snap: Snapshot; view: BudgetView; act
             <span className="opicon own">
               <Icon name={(CATS[c.cat] || CATS.other).i} size={18} />
             </span>
-            <span className="stack" style={{ minWidth: 0, gap: 4 }}>
+            <span className="stack gap0" style={{ minWidth: 0, gap: 4 }}>
               <span className="between">
                 <span>{(CATS[c.cat] || CATS.other).n}</span>
                 <span className="num">
@@ -72,19 +71,19 @@ function BudgetCard({ snap, view, act }: { snap: Snapshot; view: BudgetView; act
                 </span>
               </span>
               <Bar value={c.spent} limit={c.limit} />
-              <span className={'note' + (c.spent > (c.limit as number) ? ' warn' : '')}>{leftText(c.spent, c.limit as number)}</span>
+              <span className={'small muted' + (c.spent > (c.limit as number) ? ' warn-text' : '')}>{leftText(c.spent, c.limit as number)}</span>
             </span>
           </div>
         ))}
       {free.length > 0 && (
-        <div className="stack" style={{ gap: 2 }}>
-          <span className="note">Без лимита</span>
+        <div className="stack gap0" style={{ gap: 2 }}>
+          <span className="small muted">Без лимита</span>
           {free
             .slice()
             .sort((a, b) => b.spent - a.spent)
             .map((c) => (
               <div key={c.cat} className="between" style={{ padding: '4px 0' }}>
-                <span className="note" style={{ fontSize: 15, color: 'var(--ink)' }}>
+                <span className="small muted" style={{ fontSize: 15, color: 'var(--ink)' }}>
                   {(CATS[c.cat] || CATS.other).n}
                 </span>
                 <span className="num">{rub(c.spent)}</span>
@@ -92,8 +91,8 @@ function BudgetCard({ snap, view, act }: { snap: Snapshot; view: BudgetView; act
             ))}
         </div>
       )}
-      {empty && <p className="empty">Лимиты не заданы. Задайте общий лимит на месяц и, если нужно, — по категориям.</p>}
-      <button type="button" className="btn ghost" style={{ alignSelf: 'flex-start' }} onClick={() => setEdit(true)}>
+      {empty && <p className="row muted">Лимиты не заданы. Задайте общий лимит на месяц и, если нужно, — по категориям.</p>}
+      <button type="button" className="btn line" style={{ alignSelf: 'flex-start' }} onClick={() => setEdit(true)}>
         {empty ? 'Задать лимиты' : 'Изменить лимиты'}
       </button>
     </div>
@@ -125,23 +124,23 @@ function BudgetEditor({ snap, view, act, onClose }: { snap: Snapshot; view: Budg
   };
   return (
     <div className="card stack gap12">
-      <h2 className="h2">{NAMES[view.id]} бюджет на месяц</h2>
-      <label className="label">
+      <h2 className="sec">{NAMES[view.id]} бюджет на месяц</h2>
+      <label className="field">
         <span>Всего на месяц, ₽</span>
-        <input className="field num" inputMode="decimal" value={total} onChange={(e) => setTotal(e.target.value)} placeholder="без лимита" />
+        <input className="input num" inputMode="decimal" value={total} onChange={(e) => setTotal(e.target.value)} placeholder="без лимита" />
       </label>
-      <span className="note">По категориям — пустое поле значит «без лимита»</span>
+      <span className="small muted">По категориям — пустое поле значит «без лимита»</span>
       <div className="form-grid">
         {limitCats.map((c) => (
-          <label key={c} className="label">
+          <label key={c} className="field">
             <span>{(CATS[c] || CATS.other).n}</span>
-            <input className="field num" inputMode="decimal" value={cats[c] ?? ''} onChange={(e) => setCats({ ...cats, [c]: e.target.value })} placeholder="—" aria-label={`Лимит: ${(CATS[c] || CATS.other).n}`} />
+            <input className="input num" inputMode="decimal" value={cats[c] ?? ''} onChange={(e) => setCats({ ...cats, [c]: e.target.value })} placeholder="—" aria-label={`Лимит: ${(CATS[c] || CATS.other).n}`} />
           </label>
         ))}
       </div>
-      <label className="label">
+      <label className="field">
         <span>Месяц бюджета начинается</span>
-        <select className="field" value={day} onChange={(e) => setDay(e.target.value)}>
+        <select className="input" value={day} onChange={(e) => setDay(e.target.value)}>
           {Array.from({ length: 28 }, (_, i) => String(i + 1)).map((d) => (
             <option key={d} value={d}>
               {d === '1' ? 'с 1-го числа' : `с ${d}-го числа (например, с дня зарплаты)`}
@@ -150,11 +149,11 @@ function BudgetEditor({ snap, view, act, onClose }: { snap: Snapshot; view: Budg
         </select>
       </label>
       <ErrorText text={error} />
-      <div className="wrap">
+      <div className="sec-actions">
         <button type="button" className="btn own" onClick={save}>
           Сохранить
         </button>
-        <button type="button" className="btn ghost" onClick={onClose}>
+        <button type="button" className="btn line" onClick={onClose}>
           Отмена
         </button>
       </div>
@@ -167,16 +166,16 @@ export default function BudgetScreen({ snap, act }: { snap: Snapshot; act: Finan
   const view = snap.budgets.find((b) => b.id === which);
   return (
     <div className="stack gap16">
-      <Seg
+      <Seg cols
         label="Чей бюджет"
         value={which}
-        onPick={setWhich}
-        items={[
-          { id: 'personal', label: 'Личный' },
-          { id: 'family', label: 'Семейный' },
+        onChange={setWhich}
+        options={[
+          ['personal', 'Личный'],
+          ['family', 'Семейный'],
         ]}
       />
-      <p className="note" style={{ marginTop: -8 }}>
+      <p className="small muted" style={{ marginTop: -8 }}>
         {which === 'personal'
           ? 'Личные расходы, в том числе с меткой поездки и оплаты по графику. Расходы поездок, переводы и долги не входят.'
           : 'Расходы с меткой «Семья».'}

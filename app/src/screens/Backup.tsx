@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, LOCKED, message, onBackup, type BackupInfo, type BackupStatus, type Snapshot } from '../api';
 import { NB, plural } from '../format';
 import { pickFiles } from '../media';
+import { Bar } from '@primus-fixer/kit/ui';
 import { Cut, ErrorText, Icon, Seg } from '../ui';
 
 type Run = (p: Promise<Snapshot>, ok?: string) => Promise<Snapshot | null>;
@@ -134,10 +135,8 @@ function Restore({ first, mobile, run, onClose }: { first: File; mobile: boolean
       </div>
       {step === 'upload' && !error && (
         <div className="stack gap6">
-          <span className="bar" aria-hidden="true">
-            <i style={{ width: `${file.size ? Math.round((done / file.size) * 100) : 0}%` }} />
-          </span>
-          <span className="note">
+          <Bar thick pct={file.size ? Math.round((done / file.size) * 100) : 0} />
+          <span className="small muted">
             Загружаю файл: {bytesText(done)} из {bytesText(file.size)}
           </span>
         </div>
@@ -151,32 +150,32 @@ function Restore({ first, mobile, run, onClose }: { first: File; mobile: boolean
           }}
         >
           <label className="stack gap6">
-            <span className="note">Пароль этой копии</span>
-            <input className="field" type="password" autoComplete="current-password" aria-label="Пароль копии" value={password} onChange={(e) => setPassword(e.target.value)} disabled={step === 'check'} autoFocus />
+            <span className="small muted">Пароль этой копии</span>
+            <input className="input" type="password" autoComplete="current-password" aria-label="Пароль копии" value={password} onChange={(e) => setPassword(e.target.value)} disabled={step === 'check'} autoFocus />
           </label>
-          <button type="submit" className="btn" style={{ alignSelf: 'flex-start' }} disabled={!password || step === 'check'}>
+          <button type="submit" className="btn primary" style={{ alignSelf: 'flex-start' }} disabled={!password || step === 'check'}>
             {step === 'check' ? 'Проверяю копию…' : 'Открыть копию'}
           </button>
         </form>
       )}
       {(step === 'preview' || step === 'restore') && info && (
         <div className="stack gap10">
-          <div className="stack">
+          <div className="stack gap0">
             <span>
               Копия от {whenText(info.created)}
               {info.device ? `, «${info.device}»` : ''}
             </span>
-            <span className="note">
+            <span className="small muted">
               {[count(info.ops, 'операция', 'операции', 'операций'), count(info.trips, 'поездка', 'поездки', 'поездок'), count(info.blobs, 'снимок чека', 'снимка чеков', 'снимков чеков'), bytesText(info.bytes)].join(' · ')}
               {info.app ? ` · «Карман» ${info.app}` : ''}
             </span>
           </div>
-          <p className="note">Записи из копии добавятся к нынешним: ничего не пропадёт и не задвоится. То, что удалили или поправили уже после копии, так и останется.</p>
-          <div className="wrap">
+          <p className="small muted">Записи из копии добавятся к нынешним: ничего не пропадёт и не задвоится. То, что удалили или поправили уже после копии, так и останется.</p>
+          <div className="sec-actions">
             <button type="button" className="btn own" onClick={restore} disabled={step === 'restore'}>
               {step === 'restore' ? 'Восстанавливаю…' : 'Добавить к данным'}
             </button>
-            <button type="button" className="btn ghost" onClick={cancel} disabled={step === 'restore'}>
+            <button type="button" className="btn line" onClick={cancel} disabled={step === 'restore'}>
               Отмена
             </button>
           </div>
@@ -184,7 +183,7 @@ function Restore({ first, mobile, run, onClose }: { first: File; mobile: boolean
       )}
       <ErrorText text={error} />
       {(step === 'upload' || step === 'password') && (error || step === 'password') && (
-        <button type="button" className="btn link" style={{ alignSelf: 'flex-start', color: 'var(--own)', padding: 0, minHeight: 32 }} onClick={another}>
+        <button type="button" className="link-btn" style={{ alignSelf: 'flex-start', minHeight: 32 }} onClick={another}>
           Выбрать другой файл
         </button>
       )}
@@ -192,10 +191,10 @@ function Restore({ first, mobile, run, onClose }: { first: File; mobile: boolean
   );
 }
 
-const EVERY: { id: BackupStatus['every']; label: string }[] = [
-  { id: 'day', label: 'Каждый день' },
-  { id: 'week', label: 'Раз в неделю' },
-  { id: 'off', label: 'Выключены' },
+const EVERY: [BackupStatus['every'], string][] = [
+  ['day', 'Каждый день'],
+  ['week', 'Раз в неделю'],
+  ['off', 'Выключены'],
 ];
 
 /** Пароль копии: два поля, не короче восьми символов. */
@@ -229,20 +228,20 @@ function PasswordForm({ first, cloud, onSaved, onCancel }: { first: boolean; clo
         save();
       }}
     >
-      <p className="note">
+      <p className="small muted">
         Не короче 8 символов, лучше — фраза из нескольких слов. Пароль нигде не хранится и не восстанавливается: забудете — копию не открыть.
         {first ? '' : ' Прежние копии открываются прежним паролем.'}
         {cloud ? ' Этим же паролем зашифровано облако: новый пароль уйдёт туда при ближайшем обмене. Если старый пароль мог узнать кто-то ещё, после смены отключите облако с удалением данных и подключите снова — сменится и ключ облака.' : ''}
       </p>
-      <input className="field" type="password" autoComplete="new-password" aria-label="Новый пароль копии" placeholder="Пароль копии" value={a} onChange={(e) => setA(e.target.value)} />
-      <input className="field" type="password" autoComplete="new-password" aria-label="Пароль копии ещё раз" placeholder="Ещё раз" value={b} onChange={(e) => setB(e.target.value)} />
+      <input className="input" type="password" autoComplete="new-password" aria-label="Новый пароль копии" placeholder="Пароль копии" value={a} onChange={(e) => setA(e.target.value)} />
+      <input className="input" type="password" autoComplete="new-password" aria-label="Пароль копии ещё раз" placeholder="Ещё раз" value={b} onChange={(e) => setB(e.target.value)} />
       <ErrorText text={error} />
-      <div className="wrap">
-        <button type="submit" className="btn" disabled={busy || !a || !b}>
+      <div className="sec-actions">
+        <button type="submit" className="btn primary" disabled={busy || !a || !b}>
           {busy ? 'Сохраняю…' : first ? 'Задать пароль' : 'Сменить пароль'}
         </button>
         {onCancel && (
-          <button type="button" className="btn ghost" onClick={onCancel} disabled={busy}>
+          <button type="button" className="btn line" onClick={onCancel} disabled={busy}>
             Отмена
           </button>
         )}
@@ -302,35 +301,35 @@ export default function BackupSection({ snap, mobile, run, flash }: { snap: Snap
     <Cut id="backup" title="Резервная копия">
       {desktop ? (
         <>
-          <p className="note" style={{ marginBottom: 8 }}>
+          <p className="small muted" style={{ marginBottom: 8 }}>
             Все записи и снимки чеков в одном файле, зашифрованном паролем копии. Файл открывается на любом компьютере или телефоне с «Карманом» — по паролю.
           </p>
           <div className="row" style={{ alignItems: 'baseline' }}>
-            <span>Последняя копия</span>
-            <span style={{ textAlign: 'right' }}>
+            <span className="muted">Последняя копия</span>
+            <span className="row-val">
               {st?.last ? (
                 <>
                   {whenText(st.last.at)}
-                  <span className="note" style={{ display: 'block' }}>
+                  <span className="small muted" style={{ display: 'block' }}>
                     {(st.last.auto ? 'автокопия' : 'по кнопке') + ', ' + bytesText(st.last.bytes)}
                   </span>
                 </>
               ) : shared ? (
                 `${whenText(shared.at)}${shared.device ? `, «${shared.device}»` : ''}`
               ) : (
-                <span className="warn">ещё не было</span>
+                <span className="warn-text">ещё не было</span>
               )}
             </span>
           </div>
-          {st?.error && <p className="note warn">Автокопия не получилась: {st.error}</p>}
+          {st?.error && <p className="small warn-text">Автокопия не получилась: {st.error}</p>}
 
           <div className="setrow" style={{ cursor: 'default' }}>
             <span>
               <span>Пароль копии</span>
-              <span className={'note' + (st && !st.password ? ' warn' : '')}>{st ? (st.password ? (st.cloud ? 'Задан, им же зашифровано облако' : 'Задан') : 'Не задан — без него копии не делаются') : '…'}</span>
+              <span className={'small muted' + (st && !st.password ? ' warn-text' : '')}>{st ? (st.password ? (st.cloud ? 'Задан, им же зашифровано облако' : 'Задан') : 'Не задан — без него копии не делаются') : '…'}</span>
             </span>
             {st?.password && !changing && (
-              <button type="button" className="btn ghost" style={{ flex: 'none' }} onClick={() => setChanging(true)}>
+              <button type="button" className="btn line" style={{ flex: 'none' }} onClick={() => setChanging(true)}>
                 Сменить
               </button>
             )}
@@ -351,47 +350,47 @@ export default function BackupSection({ snap, mobile, run, flash }: { snap: Snap
           <div className="setrow" style={{ cursor: 'default', alignItems: 'flex-start' }}>
             <span>
               <span>Папка</span>
-              <span className="note" style={{ overflowWrap: 'anywhere' }}>
+              <span className="small muted" style={{ overflowWrap: 'anywhere' }}>
                 {st?.dir ?? '…'}
               </span>
-              {st && !st.chosen && <span className="note">По умолчанию. Выберите папку Яндекс Диска или Google Drive на компьютере — копии сами уйдут в облако.</span>}
+              {st && !st.chosen && <span className="small muted">По умолчанию. Выберите папку Яндекс Диска или Google Drive на компьютере — копии сами уйдут в облако.</span>}
               {st?.chosen && (
-                <button type="button" className="btn link" style={{ alignSelf: 'flex-start', color: 'var(--own)', padding: 0, minHeight: 32 }} onClick={() => act(api.backupDir(null))}>
+                <button type="button" className="link-btn" style={{ alignSelf: 'flex-start', minHeight: 32 }} onClick={() => act(api.backupDir(null))}>
                   Вернуть папку по умолчанию
                 </button>
               )}
             </span>
-            <button type="button" className="btn ghost" style={{ flex: 'none', marginTop: 6 }} onClick={() => act(api.backupPickDir())}>
+            <button type="button" className="btn line" style={{ flex: 'none', marginTop: 6 }} onClick={() => act(api.backupPickDir())}>
               Выбрать папку
             </button>
           </div>
 
           <div className="stack gap6" style={{ marginTop: 10 }}>
-            <span className="note">Автокопии</span>
-            <Seg
+            <span className="small muted">Автокопии</span>
+            <Seg cols
               label="Как часто делать автокопию"
               value={st?.every ?? 'day'}
-              onPick={(v) =>
+              onChange={(v) =>
                 act(api.backupEvery(v)).then(() => {
                   // Выключены или включены — видно и в «Обзоре»: напоминание о копиях.
                   run(api.snapshot());
                 })
               }
-              items={EVERY}
+              options={EVERY}
             />
-            <p className="note">
+            <p className="small muted">
               {st?.every === 'off'
                 ? 'Только по кнопке «Сделать копию». «Обзор» о копиях не напоминает.'
                 : `${st?.every === 'week' ? 'Раз в неделю' : 'Раз в день'}, пока «Карман» открыт или в трее. Хранятся последние ${st?.keep ?? 14}, старые удаляются сами.`}
             </p>
           </div>
 
-          <div className="wrap" style={{ marginTop: 12 }}>
-            <button type="button" className="btn" disabled={!st?.password || making || st?.running} onClick={now}>
+          <div className="sec-actions" style={{ marginTop: 12 }}>
+            <button type="button" className="btn primary" disabled={!st?.password || making || st?.running} onClick={now}>
               {making || st?.running ? 'Делаю копию…' : 'Сделать копию'}
             </button>
             {!restoring && (
-              <button type="button" className="btn ghost" onClick={startRestore}>
+              <button type="button" className="btn line" onClick={startRestore}>
                 Восстановить из копии
               </button>
             )}
@@ -399,20 +398,20 @@ export default function BackupSection({ snap, mobile, run, flash }: { snap: Snap
         </>
       ) : (
         <>
-          <p className="note" style={{ marginBottom: 8 }}>
+          <p className="small muted" style={{ marginBottom: 8 }}>
             Копии делает «Карман» на компьютере: задайте там пароль копии. Записи телефона попадают в копию после обмена по Wi-Fi или через облако, а новый телефон получит всё обратно из облака или от компьютера.
           </p>
           <div className="row" style={{ alignItems: 'baseline' }}>
-            <span>Последняя копия</span>
-            <span style={{ textAlign: 'right' }}>{shared ? `${whenText(shared.at)}${shared.device ? `, «${shared.device}»` : ''}` : <span className="warn">ещё не было</span>}</span>
+            <span className="muted">Последняя копия</span>
+            <span className="row-val">{shared ? `${whenText(shared.at)}${shared.device ? `, «${shared.device}»` : ''}` : <span className="warn-text">ещё не было</span>}</span>
           </div>
           {!restoring && (
             <div className="setrow" style={{ cursor: 'default' }}>
               <span>
                 <span>Восстановить из файла</span>
-                <span className="note">Если компьютера нет под рукой: скачайте файл копии из облака на телефон</span>
+                <span className="small muted">Если компьютера нет под рукой: скачайте файл копии из облака на телефон</span>
               </span>
-              <button type="button" className="btn ghost" style={{ flex: 'none' }} onClick={startRestore}>
+              <button type="button" className="btn line" style={{ flex: 'none' }} onClick={startRestore}>
                 Выбрать файл
               </button>
             </div>
