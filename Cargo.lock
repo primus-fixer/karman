@@ -2125,7 +2125,7 @@ dependencies = [
 
 [[package]]
 name = "karman-app"
-version = "0.15.9"
+version = "0.16.0"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.3.4",
@@ -2152,7 +2152,7 @@ dependencies = [
 
 [[package]]
 name = "karman-cloud"
-version = "0.15.9"
+version = "0.16.0"
 dependencies = [
  "base64 0.22.1",
  "karman-core",
@@ -2165,7 +2165,7 @@ dependencies = [
 
 [[package]]
 name = "karman-core"
-version = "0.15.9"
+version = "0.16.0"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -2197,7 +2197,7 @@ dependencies = [
 [[package]]
 name = "kit-cloud"
 version = "0.11.0"
-source = "git+https://github.com/primus-fixer/kit?rev=b537338f2d8ad77bf6f56f9cb526289079eed9aa#b537338f2d8ad77bf6f56f9cb526289079eed9aa"
+source = "git+https://github.com/primus-fixer/kit?rev=326f7aa5623a0ea38122a3bc2650682896536c86#326f7aa5623a0ea38122a3bc2650682896536c86"
 dependencies = [
  "base64 0.22.1",
  "kit-core",
@@ -2209,7 +2209,7 @@ dependencies = [
 [[package]]
 name = "kit-core"
 version = "0.11.0"
-source = "git+https://github.com/primus-fixer/kit?rev=b537338f2d8ad77bf6f56f9cb526289079eed9aa#b537338f2d8ad77bf6f56f9cb526289079eed9aa"
+source = "git+https://github.com/primus-fixer/kit?rev=326f7aa5623a0ea38122a3bc2650682896536c86#326f7aa5623a0ea38122a3bc2650682896536c86"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -2228,7 +2228,7 @@ dependencies = [
 [[package]]
 name = "kit-secure"
 version = "0.11.0"
-source = "git+https://github.com/primus-fixer/kit?rev=b537338f2d8ad77bf6f56f9cb526289079eed9aa#b537338f2d8ad77bf6f56f9cb526289079eed9aa"
+source = "git+https://github.com/primus-fixer/kit?rev=326f7aa5623a0ea38122a3bc2650682896536c86#326f7aa5623a0ea38122a3bc2650682896536c86"
 dependencies = [
  "jni",
  "ndk-context",
@@ -2240,7 +2240,7 @@ dependencies = [
 [[package]]
 name = "kit-tauri"
 version = "0.11.0"
-source = "git+https://github.com/primus-fixer/kit?rev=b537338f2d8ad77bf6f56f9cb526289079eed9aa#b537338f2d8ad77bf6f56f9cb526289079eed9aa"
+source = "git+https://github.com/primus-fixer/kit?rev=326f7aa5623a0ea38122a3bc2650682896536c86#326f7aa5623a0ea38122a3bc2650682896536c86"
 dependencies = [
  "base64 0.22.1",
  "if-addrs",
