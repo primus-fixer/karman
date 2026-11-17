@@ -1,7 +1,9 @@
 //! Синхронизация: события, шифрование пакетов и обмен по локальной сети.
 //!
 //! Все каналы (Wi-Fi, облако, свой сервер) передают одни и те же
-//! зашифрованные пакеты. Здесь — общий формат и обмен напрямую по TCP.
+//! зашифрованные пакеты. Протокол обмена — общий из kit (`kit_core::sync`), тот же, что у «Полки»;
+//! здесь — события «Кармана», его журнал для протокола, настройки обмена (поле `files` для версий
+//! до 0.4) и прежняя связь по QR-коду с ключом (до 0.15) поверх общего обмена.
 
 use crate::db::Store;
 use crate::error::{Error, Result};
@@ -13,11 +15,10 @@ use crate::finance::{Debt, Plan};
 use crate::overtime::{WorkDay, WorkOrder};
 use crate::savings::Goal;
 use crate::trip::{Op, Trip};
-use base64::engine::general_purpose::STANDARD as B64;
-use base64::Engine;
 use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, OsRng};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use serde::{Deserialize, Serialize};
+use kit_core::sync::{self as kit, Journal, NoFile, Profile};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
@@ -28,6 +29,8 @@ use std::time::Duration;
 
 /// Последний известный номер события от каждого устройства.
 pub type VersionVector = BTreeMap<String, u64>;
+
+pub(crate) use kit::{prepare, Wire, MAX_FRAME};
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Event {
@@ -105,11 +108,6 @@ impl EventBody {
 }
 
 const MAGIC: &[u8; 4] = b"KRM1";
-pub(crate) const MAX_FRAME: usize = 64 * 1024 * 1024;
-/// Первое сообщение (приветствие) маленькое: до проверки ключа не принимаем больше мегабайта
-/// и ждём его недолго — чужой в сети не займёт приём подключений.
-const HELLO_MAX: usize = 1024 * 1024;
-const HELLO_WAIT: Duration = Duration::from_secs(15);
 /// QR-код действует 15 минут: потом приём подключений останавливается сам.
 pub const SERVER_TTL: Duration = Duration::from_secs(15 * 60);
 
@@ -140,119 +138,29 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Устройство до 0.4 не может принять записи новых видов.
 const OLD_PEER: &str = "На другом устройстве старая версия «Кармана», и она не приняла новые записи. Обновите «Карман» там и свяжите устройства снова";
 
-/// Сообщения обмена. Поле `files` — устройство умеет передавать вложения
-/// (версии до 0.4 его не присылают, и шаг с вложениями пропускается).
-/// Поле `app` — версия «Кармана» (присылают версии с 0.5).
-#[derive(Serialize, Deserialize)]
-#[serde(tag = "t", rename_all = "snake_case")]
-pub(crate) enum Msg {
-    /// Кто я — сразу после связи по коду (с 0.15).
-    Ident { device: String, name: String, app: String },
-    Hello {
-        device: String,
-        name: String,
-        vv: VersionVector,
-        #[serde(default)]
-        files: bool,
-        #[serde(default)]
-        app: String,
-    },
-    Batch {
-        device: String,
-        name: String,
-        vv: VersionVector,
-        events: Vec<Event>,
-        #[serde(default)]
-        files: bool,
-        #[serde(default)]
-        app: String,
-    },
-    Done {
-        applied: usize,
-    },
-    /// Каких вложений не хватает.
-    Want { ids: Vec<String> },
-    /// Вложения по запросу и свой список недостающих.
-    Give { blobs: Vec<Blob>, want: Vec<String> },
-}
+/// Обмен «Кармана»: поле `files` (версии до 0.4 вложений не передают), больших файлов нет.
+pub const PROFILE: Profile = Profile { version: APP_VERSION, files_flag: true, old_peer: OLD_PEER, chunked_since: None };
 
-#[derive(Serialize, Deserialize)]
-pub(crate) struct Blob {
-    id: String,
-    mime: String,
-    /// Содержимое в base64.
-    data: String,
-}
+/// Сообщения обмена.
+pub(crate) type Msg = kit::Msg<Event>;
 
-/// Столько байт вложений в одном пакете — с запасом до предела кадра.
-const FILES_PER_PACKET: usize = 24 * 1024 * 1024;
-/// Больше кругов обмена вложениями за одно подключение не делаем.
-const MAX_ROUNDS: usize = 50;
-
-/// Достаёт запрошенные вложения, пока не наберётся предел пакета.
-/// Возвращает вложения и сколько из имеющихся не поместилось.
-fn collect_blobs(store: &Mutex<Store>, ids: &[String]) -> Result<(Vec<Blob>, usize)> {
-    let st = lock(store);
-    let (mut out, mut total, mut left) = (Vec::new(), 0usize, 0usize);
-    for id in ids {
-        if let Some((mime, data)) = st.blob(id)? {
-            if total + data.len() > FILES_PER_PACKET && !out.is_empty() {
-                left += 1;
-                continue;
-            }
-            total += data.len();
-            out.push(Blob { id: id.clone(), mime, data: B64.encode(&data) });
-        }
+/// Сообщения поверх канала — для связи по коду (кто я) и проверок.
+pub(crate) trait MsgWire: Wire + Sized {
+    fn send(&mut self, msg: &Msg) -> Result<()> {
+        Ok(kit::send(self, msg)?)
     }
-    Ok((out, left))
-}
-
-/// Сохраняет полученные вложения: только запрошенные и только с верным отпечатком.
-fn store_blobs(store: &Mutex<Store>, asked: &[String], blobs: Vec<Blob>) -> usize {
-    let st = lock(store);
-    let mut n = 0;
-    for b in blobs {
-        if !asked.contains(&b.id) {
-            continue;
-        }
-        let Ok(data) = B64.decode(b.data.as_bytes()) else { continue };
-        if st.put_blob_checked(&b.id, &b.mime, &data).is_ok() {
-            n += 1;
-        }
-    }
-    n
-}
-
-fn write_msg(s: &mut TcpStream, key: &[u8; 32], msg: &Msg) -> Result<()> {
-    let frame = seal(key, &serde_json::to_vec(msg)?)?;
-    s.write_all(&(frame.len() as u32).to_be_bytes())?;
-    s.write_all(&frame)?;
-    s.flush()?;
-    Ok(())
-}
-
-fn read_msg_max(s: &mut TcpStream, key: &[u8; 32], max: usize) -> Result<Msg> {
-    let mut len = [0u8; 4];
-    s.read_exact(&mut len)?;
-    let len = u32::from_be_bytes(len) as usize;
-    if len > max {
-        return Err(Error::Format("слишком большой пакет".into()));
-    }
-    let mut buf = vec![0u8; len];
-    s.read_exact(&mut buf)?;
-    Ok(serde_json::from_slice(&open(key, &buf)?)?)
-}
-
-/// Канал обмена: зашифрованные сообщения поверх TCP.
-pub(crate) trait Wire {
-    fn send(&mut self, msg: &Msg) -> Result<()>;
     /// Следующее сообщение, не больше `max` байт.
-    fn recv_max(&mut self, max: usize) -> Result<Msg>;
-    fn stream(&self) -> &TcpStream;
+    fn recv_max(&mut self, max: usize) -> Result<Msg> {
+        Ok(kit::recv_max(self, max)?)
+    }
+    /// Следующее сообщение любого размера до предела — в проверках канала.
+    #[cfg(test)]
     fn recv(&mut self) -> Result<Msg> {
         self.recv_max(MAX_FRAME)
     }
 }
+
+impl<W: Wire> MsgWire for W {}
 
 /// Канал с одним ключом на обе стороны и случайным nonce в каждом пакете — связь по QR-коду до 0.15.
 struct KeyWire<'a> {
@@ -261,11 +169,23 @@ struct KeyWire<'a> {
 }
 
 impl Wire for KeyWire<'_> {
-    fn send(&mut self, msg: &Msg) -> Result<()> {
-        write_msg(&mut self.s, self.key, msg)
+    fn send_bytes(&mut self, data: &[u8]) -> kit_core::Result<()> {
+        let frame = seal(self.key, data).map_err(|_| kit_core::Error::Decrypt)?;
+        self.s.write_all(&(frame.len() as u32).to_be_bytes())?;
+        self.s.write_all(&frame)?;
+        self.s.flush()?;
+        Ok(())
     }
-    fn recv_max(&mut self, max: usize) -> Result<Msg> {
-        read_msg_max(&mut self.s, self.key, max)
+    fn recv_bytes(&mut self, max: usize) -> kit_core::Result<Vec<u8>> {
+        let mut len = [0u8; 4];
+        self.s.read_exact(&mut len)?;
+        let len = u32::from_be_bytes(len) as usize;
+        if len > max {
+            return Err(kit_core::Error::Format("слишком большой пакет".into()));
+        }
+        let mut buf = vec![0u8; len];
+        self.s.read_exact(&mut buf)?;
+        open(self.key, &buf).map_err(|_| kit_core::Error::Decrypt)
     }
     fn stream(&self) -> &TcpStream {
         &self.s
@@ -290,16 +210,42 @@ pub struct SyncReport {
     pub peer_app: String,
 }
 
-fn lock(store: &Mutex<Store>) -> std::sync::MutexGuard<'_, Store> {
-    store.lock().unwrap_or_else(|e| e.into_inner())
+impl From<kit::SyncReport> for SyncReport {
+    fn from(r: kit::SyncReport) -> Self {
+        SyncReport { peer: r.peer, peer_name: r.peer_name, sent: r.sent, received: r.received, files_sent: r.files_sent, files_received: r.files_received, peer_app: r.peer_app }
+    }
 }
 
-pub(crate) fn prepare(s: &TcpStream) -> Result<()> {
-    // Пакет со снимками по медленному Wi-Fi идёт долго.
-    s.set_read_timeout(Some(Duration::from_secs(60)))?;
-    s.set_write_timeout(Some(Duration::from_secs(60)))?;
-    s.set_nodelay(true)?;
-    Ok(())
+fn store_err(e: Error) -> kit_core::Error {
+    kit_core::Error::Store(e.to_string())
+}
+
+/// Журнал «Кармана» для общего протокола: события и снимки чеков.
+impl Journal for Store {
+    type Event = Event;
+    type File = NoFile;
+
+    fn device(&self) -> String {
+        Store::device(self).to_string()
+    }
+    fn versions(&self) -> kit_core::Result<VersionVector> {
+        self.version_vector().map_err(store_err)
+    }
+    fn events_missing(&self, theirs: &VersionVector) -> kit_core::Result<Vec<Event>> {
+        self.events_after(theirs).map_err(store_err)
+    }
+    fn apply_remote(&mut self, events: &[Event]) -> kit_core::Result<usize> {
+        self.apply(events).map_err(store_err)
+    }
+    fn missing_blobs(&self) -> kit_core::Result<Vec<String>> {
+        Store::missing_blobs(self).map_err(store_err)
+    }
+    fn blob(&self, id: &str) -> kit_core::Result<Option<(String, Vec<u8>)>> {
+        Store::blob(self, id).map_err(store_err)
+    }
+    fn put_blob_checked(&mut self, id: &str, mime: &str, data: &[u8]) -> kit_core::Result<()> {
+        Store::put_blob_checked(self, id, mime, data).map_err(store_err)
+    }
 }
 
 /// Сторона, которая подключается (обычно телефон, отсканировавший QR).
@@ -310,58 +256,7 @@ pub fn sync_over(s: TcpStream, key: &[u8; 32], store: &Mutex<Store>, name: &str)
 /// Обмен со стороны подключившегося — по любому каналу. `expect` — какое устройство должно ответить
 /// (по ключу пары): ответ другого — обрыв до того, как его записи приняты.
 pub(crate) fn run_client(w: &mut impl Wire, store: &Mutex<Store>, name: &str, expect: Option<&str>) -> Result<SyncReport> {
-    prepare(w.stream())?;
-    let (device, vv) = {
-        let st = lock(store);
-        (st.device().to_string(), st.version_vector()?)
-    };
-    w.send(&Msg::Hello { device: device.clone(), name: name.into(), vv, files: true, app: APP_VERSION.into() })?;
-    let (peer, peer_name, their_vv, events, peer_files, peer_app) = match w.recv()? {
-        Msg::Batch { device, name, vv, events, files, app } => (device, name, vv, events, files, app),
-        _ => return Err(Error::Format("неожиданный ответ".into())),
-    };
-    if expect.is_some_and(|e| e != peer) {
-        return Err(Error::Format("ответило не то устройство".into()));
-    }
-    let (received, ours) = {
-        let mut st = lock(store);
-        let n = st.apply(&events)?;
-        (n, st.events_after(&their_vv)?)
-    };
-    let vv = lock(store).version_vector()?;
-    w.send(&Msg::Batch { device, name: name.into(), vv, events: ours, files: true, app: APP_VERSION.into() })?;
-    let sent = match w.recv() {
-        Ok(Msg::Done { applied }) => applied,
-        // Старая версия не разобрала пакет с записями новых видов и оборвала связь.
-        Err(_) if !peer_files => return Err(Error::Peer(OLD_PEER.into())),
-        Err(e) => return Err(e),
-        _ => return Err(Error::Format("неожиданный ответ".into())),
-    };
-    let (mut files_sent, mut files_received) = (0, 0);
-    if peer_files {
-        for _ in 0..MAX_ROUNDS {
-            let want = lock(store).missing_blobs()?;
-            w.send(&Msg::Want { ids: want.clone() })?;
-            let (blobs, their_want) = match w.recv()? {
-                Msg::Give { blobs, want } => (blobs, want),
-                _ => return Err(Error::Format("неожиданный ответ".into())),
-            };
-            let got = store_blobs(store, &want, blobs);
-            files_received += got;
-            let (mine, left) = collect_blobs(store, &their_want)?;
-            w.send(&Msg::Give { blobs: mine, want: Vec::new() })?;
-            match w.recv()? {
-                Msg::Done { applied } => files_sent += applied,
-                _ => return Err(Error::Format("неожиданный ответ".into())),
-            }
-            let still = lock(store).missing_blobs()?.len();
-            if (still == 0 || got == 0) && left == 0 {
-                break;
-            }
-        }
-        w.send(&Msg::Done { applied: 0 })?;
-    }
-    Ok(SyncReport { peer, peer_name, sent, received, files_sent, files_received, peer_app })
+    Ok(kit::run_client(&PROFILE, w, store, name, expect)?.into())
 }
 
 /// Подключается к устройству из QR-кода: пробует все его адреса по очереди.
@@ -393,54 +288,7 @@ pub fn serve_one(s: TcpStream, key: &[u8; 32], store: &Mutex<Store>, name: &str)
 /// Обмен со стороны ждущего — по любому каналу. `expect` — какое устройство должно прийти
 /// (по ключу пары): другое имя в приветствии — обрыв.
 pub(crate) fn run_server(w: &mut impl Wire, store: &Mutex<Store>, name: &str, expect: Option<&str>) -> Result<SyncReport> {
-    prepare(w.stream())?;
-    w.stream().set_read_timeout(Some(HELLO_WAIT))?;
-    let (peer, peer_name, their_vv, peer_files, peer_app) = match w.recv_max(HELLO_MAX)? {
-        Msg::Hello { device, name, vv, files, app } => (device, name, vv, files, app),
-        _ => return Err(Error::Format("ожидалось приветствие".into())),
-    };
-    if expect.is_some_and(|e| e != peer) {
-        return Err(Error::Format("приветствие не от того устройства".into()));
-    }
-    // Ключ подошёл — дальше пакеты со снимками, их можно ждать дольше.
-    prepare(w.stream())?;
-    let (device, vv, events) = {
-        let st = lock(store);
-        (st.device().to_string(), st.version_vector()?, st.events_after(&their_vv)?)
-    };
-    let sent = events.len();
-    w.send(&Msg::Batch { device, name: name.into(), vv, events, files: true, app: APP_VERSION.into() })?;
-    let incoming = match w.recv() {
-        Ok(Msg::Batch { events, .. }) => events,
-        Err(_) if !peer_files => return Err(Error::Peer(OLD_PEER.into())),
-        Err(e) => return Err(e),
-        _ => return Err(Error::Format("ожидались события".into())),
-    };
-    let received = lock(store).apply(&incoming)?;
-    w.send(&Msg::Done { applied: received })?;
-    let (mut files_sent, mut files_received) = (0, 0);
-    if peer_files {
-        for _ in 0..MAX_ROUNDS {
-            match w.recv()? {
-                Msg::Want { ids } => {
-                    let (blobs, _) = collect_blobs(store, &ids)?;
-                    files_sent += blobs.len();
-                    let want = lock(store).missing_blobs()?;
-                    w.send(&Msg::Give { blobs, want: want.clone() })?;
-                    let incoming = match w.recv()? {
-                        Msg::Give { blobs, .. } => blobs,
-                        _ => return Err(Error::Format("ожидались вложения".into())),
-                    };
-                    let n = store_blobs(store, &want, incoming);
-                    files_received += n;
-                    w.send(&Msg::Done { applied: n })?;
-                }
-                Msg::Done { .. } => break,
-                _ => return Err(Error::Format("неожиданное сообщение".into())),
-            }
-        }
-    }
-    Ok(SyncReport { peer, peer_name, sent, received, files_sent, files_received, peer_app })
+    Ok(kit::run_server(&PROFILE, w, store, name, expect)?.into())
 }
 
 /// Фоновый приём подключений, пока не остановят.
@@ -514,7 +362,7 @@ mod tests {
         assert!(server.running());
         // Чужой без ключа объявляет огромное приветствие — отказ сразу, без ожидания данных.
         let mut s = TcpStream::connect(("127.0.0.1", server.port)).unwrap();
-        s.write_all(&((HELLO_MAX as u32 + 1).to_be_bytes())).unwrap();
+        s.write_all(&((kit::HELLO_MAX as u32 + 1).to_be_bytes())).unwrap();
         let t0 = std::time::Instant::now();
         let mut buf = [0u8; 1];
         let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
