@@ -6,6 +6,7 @@
 //! каждом запуске и лежит в папке данных; по сети он не ходит: стороны доказывают друг другу, что знают
 //! его (MAC от одноразовых чисел). Программа, занявшая порт закрытого «Кармана», не получит ни ключа,
 //! ни запроса. Если «Карман» закрыт, посредник его запускает (на Windows).
+//! Посредник и приём запросов — общие из kit (`kit_core::link`); здесь — инструменты «Кармана».
 //!
 //! Чтение — когда подключение включено в настройках. Запись — только если она отдельно разрешена;
 //! каждое действие Claude видно в «Кармане» и отменяется кнопкой «Вернуть».
@@ -18,59 +19,15 @@ use karman_core::book::Snapshot;
 use karman_core::db::Store;
 use karman_core::sync::EventBody;
 use karman_core::{mcp, tools, Date};
-use serde::{Deserialize, Serialize};
+use kit_core::link::{self, Connector};
+use serde::Serialize;
 use serde_json::{json, Value};
-use std::io::{BufRead, BufReader, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-/// Где запущенный «Карман» ждёт посредника: порт и ключ.
-const LINK_FILE: &str = "claude.json";
 const META_ON: &str = "claude.on";
 const META_WRITE: &str = "claude.write";
-/// Запрос посредника — одна строка JSON, не больше.
-const MAX_REQUEST: u64 = 1 << 20;
-
-#[derive(Serialize, Deserialize)]
-struct Link {
-    port: u16,
-    token: String,
-    pid: u32,
-    app: String,
-}
-
-/// Запрос посредника — после того как «Карман» доказал, что знает ключ связи.
-#[derive(Serialize, Deserialize)]
-struct Request {
-    /// Доказательство посредника: MAC от одноразового числа «Кармана».
-    auth: String,
-    tool: String,
-    #[serde(default)]
-    args: Value,
-}
-
-/// Одноразовое число для проверки: 32 случайных байта.
-fn nonce() -> Option<String> {
-    karman_core::pairing::random_key().ok().map(|k| k.iter().map(|b| format!("{b:02x}")).collect())
-}
-
-fn valid_nonce(n: &str) -> bool {
-    n.len() == 64 && n.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-/// Посредник из прежней версии «Кармана» присылает ключ открытым текстом.
-const OUTDATED: &str = "«Карман» обновился — перезапустите приложение Claude, чтобы обновился и коннектор";
-
-#[derive(Serialize, Deserialize, Default)]
-struct Reply {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    ok: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    err: Option<String>,
-}
-
 /// Действие Claude, которое можно отменить.
 struct Action {
     id: u64,
@@ -97,11 +54,6 @@ fn local_today() -> Date {
 
 fn meta_flag(st: &Store, key: &str) -> bool {
     st.meta(key).ok().flatten().is_some_and(|v| v == "1")
-}
-
-/// Ключ без тайминговых подсказок: сравнение всегда до конца.
-fn same(a: &str, b: &str) -> bool {
-    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 fn locked_text() -> String {
@@ -205,225 +157,25 @@ fn still_current(st: &Store, done: &[EventBody]) -> Res<bool> {
     }))
 }
 
-// ——— Приём запросов посредника (компьютер) ———
+// ——— Связь с посредником `karman --mcp` (компьютер) ———
 
-/// «Карман»: посредник прислал своё одноразовое число — отвечаем доказательством и своим числом;
-/// дальше принимаем запрос, только если посредник доказал, что знает ключ. `None` — связь оборвалась.
-fn accept(stream: &std::net::TcpStream, token: &str) -> Option<Result<Request, String>> {
-    let mut reader = BufReader::new(stream.take(MAX_REQUEST));
-    let mut line = String::new();
-    if reader.read_line(&mut line).ok()? == 0 {
-        return None;
-    }
-    let hello: Value = match serde_json::from_str(&line) {
-        Ok(v) => v,
-        Err(_) => return Some(Err("неверный запрос".into())),
-    };
-    let Some(theirs) = hello["hello"].as_str().filter(|n| valid_nonce(n)) else {
-        return Some(Err(if hello.get("token").is_some() { OUTDATED } else { "неверный запрос" }.into()));
-    };
-    let Some(mine) = nonce() else { return Some(Err("нет случайных чисел".into())) };
-    let mut out = stream;
-    writeln!(out, "{}", json!({ "proof": mcp::link_proof(token, "karman", theirs), "nonce": mine })).ok()?;
-    line.clear();
-    if reader.read_line(&mut line).ok()? == 0 {
-        return None;
-    }
-    Some(match serde_json::from_str::<Request>(&line) {
-        Ok(r) if same(&r.auth, &mcp::link_proof(token, "bridge", &mine)) => Ok(r),
-        Ok(_) => Err("неверный ключ".into()),
-        Err(_) => Err("неверный запрос".into()),
-    })
-}
+/// Коннектор «Кармана» для связи посредника с запущенным «Карманом». Идентификатор — имя папки данных
+/// (`identifier` в `tauri.conf.json`); его, как и строку ключа связи, менять нельзя.
+pub const CONNECTOR: Connector = Connector { server: mcp::SERVER, extension: mcp::EXTENSION, names: crate::names::APP, identifier: "io.github.primusfixer.karman" };
 
-#[cfg(desktop)]
-fn serve(app: &AppHandle, stream: std::net::TcpStream, token: &str) {
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
-    let reply = match accept(&stream, token) {
-        None => return,
-        Some(Ok(r)) => match execute(app, &r.tool, &r.args) {
-            Ok(v) => Reply { ok: Some(v), err: None },
-            Err(e) => Reply { ok: None, err: Some(e) },
-        },
-        Some(Err(e)) => Reply { ok: None, err: Some(e) },
-    };
-    let mut out = &stream;
-    let _ = writeln!(out, "{}", serde_json::to_string(&reply).unwrap_or_default());
-}
-
-/// При запуске на компьютере: ждём посредника на 127.0.0.1 и записываем, где нас искать.
+/// При запуске на компьютере — после того как база открыта: ждём посредника на 127.0.0.1 и записываем,
+/// где нас искать.
 #[cfg(desktop)]
 pub fn start(app: AppHandle, data_dir: PathBuf) {
-    std::thread::spawn(move || {
-        let listener = match std::net::TcpListener::bind(("127.0.0.1", 0)) {
-            Ok(l) => l,
-            Err(e) => return eprintln!("коннектор для Claude: {e}"),
-        };
-        let Ok(port) = listener.local_addr().map(|a| a.port()) else { return };
-        let Ok(key) = karman_core::pairing::random_key() else { return };
-        let token: String = key.iter().map(|b| format!("{b:02x}")).collect();
-        let link = Link { port, token: token.clone(), pid: std::process::id(), app: env!("CARGO_PKG_VERSION").into() };
-        if let Err(e) = write_link(&data_dir, &link) {
-            return eprintln!("коннектор для Claude: {e}");
-        }
-        for stream in listener.incoming().flatten() {
-            let (app, token) = (app.clone(), token.clone());
-            std::thread::spawn(move || serve(&app, stream, &token));
-        }
-    });
-}
-
-#[cfg(desktop)]
-fn write_link(dir: &Path, link: &Link) -> std::io::Result<()> {
-    let path = dir.join(LINK_FILE);
-    let tmp = dir.join(format!("{LINK_FILE}.tmp"));
-    std::fs::write(&tmp, serde_json::to_vec(link)?)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+    if let Err(e) = link::listen(&CONNECTOR, &data_dir, env!("CARGO_PKG_VERSION"), move |tool, args| execute(&app, tool, args)) {
+        eprintln!("коннектор для Claude: {e}");
     }
-    std::fs::rename(tmp, path)
-}
-
-// ——— Посредник: `karman --mcp` ———
-
-/// Папка данных «Кармана» — та же, что у запущенного приложения.
-#[cfg(desktop)]
-fn data_dir() -> PathBuf {
-    if let Some(d) = std::env::var_os("KARMAN_DIR").filter(|d| !d.is_empty()) {
-        return PathBuf::from(d);
-    }
-    let base = if cfg!(windows) {
-        std::env::var_os("APPDATA").map(PathBuf::from)
-    } else if cfg!(target_os = "macos") {
-        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support"))
-    } else {
-        std::env::var_os("XDG_DATA_HOME").filter(|d| !d.is_empty()).map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-    };
-    base.unwrap_or_default().join("io.github.primusfixer.karman")
-}
-
-#[cfg(desktop)]
-enum CallError {
-    /// «Карман» не запущен (или ещё не успел открыться).
-    NotRunning,
-    Failed(String),
-}
-
-#[cfg(desktop)]
-fn call_app(dir: &Path, tool: &str, args: &Value) -> Result<Value, CallError> {
-    let link: Link = std::fs::read(dir.join(LINK_FILE)).ok().and_then(|b| serde_json::from_slice(&b).ok()).ok_or(CallError::NotRunning)?;
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], link.port));
-    let stream = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(2)).map_err(|_| CallError::NotRunning)?;
-    // Отчёт с нарядами собирается дольше обычного запроса.
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(120)));
-    talk(&stream, &link.token, tool, args)
-}
-
-/// Посредник: сначала «Карман» доказывает, что знает ключ связи, потом — запрос с доказательством
-/// посредника. Если на порту не «Карман» (порт занят другой программой), запрос не уходит.
-#[cfg(desktop)]
-fn talk(stream: &std::net::TcpStream, token: &str, tool: &str, args: &Value) -> Result<Value, CallError> {
-    let mine = nonce().ok_or_else(|| CallError::Failed("нет случайных чисел".into()))?;
-    let mut out = stream;
-    writeln!(out, "{}", json!({ "hello": mine })).map_err(|_| CallError::NotRunning)?;
-    let mut reader = BufReader::new(stream.take(64 << 20));
-    let mut line = String::new();
-    reader.read_line(&mut line).map_err(|_| CallError::NotRunning)?;
-    let challenge: Value = serde_json::from_str(&line).map_err(|_| CallError::NotRunning)?;
-    if let Some(e) = challenge["err"].as_str() {
-        // «Карман» прежней версии не знает о проверке.
-        return Err(CallError::Failed(format!("«Карман» не принял запрос ({e}) — перезапустите «Карман», чтобы он обновился")));
-    }
-    let proof = challenge["proof"].as_str().unwrap_or_default();
-    let Some(theirs) = challenge["nonce"].as_str().filter(|n| valid_nonce(n)) else { return Err(CallError::NotRunning) };
-    if proof.is_empty() || !same(proof, &mcp::link_proof(token, "karman", &mine)) {
-        // На порту не «Карман»: ни ключа, ни запроса ему не отдаём.
-        return Err(CallError::NotRunning);
-    }
-    let req = Request { auth: mcp::link_proof(token, "bridge", theirs), tool: tool.to_string(), args: args.clone() };
-    writeln!(out, "{}", serde_json::to_string(&req).map_err(|e| CallError::Failed(e.to_string()))?).map_err(|_| CallError::NotRunning)?;
-    line.clear();
-    reader.read_line(&mut line).map_err(|e| CallError::Failed(format!("«Карман» не ответил: {e}")))?;
-    let reply: Reply = serde_json::from_str(&line).map_err(|_| CallError::Failed("«Карман» ответил непонятно — обновите его".into()))?;
-    match (reply.ok, reply.err) {
-        (Some(v), _) => Ok(v),
-        (None, Some(e)) => Err(CallError::Failed(e)),
-        _ => Err(CallError::Failed("пустой ответ «Кармана»".into())),
-    }
-}
-
-/// Запустить «Карман» отдельно от приложения Claude (чтобы он не закрылся вместе с ним).
-#[cfg(desktop)]
-fn launch() -> bool {
-    let Ok(exe) = std::env::current_exe() else { return false };
-    let mut cmd = std::process::Command::new(&exe);
-    cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        cmd.creation_flags(CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP);
-        cmd.spawn().is_ok() || {
-            // Если выйти из задания приложения Claude нельзя — обычный запуск.
-            let mut plain = std::process::Command::new(&exe);
-            plain.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
-            plain.creation_flags(CREATE_NEW_PROCESS_GROUP);
-            plain.spawn().is_ok()
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = cmd;
-        false
-    }
-}
-
-#[cfg(desktop)]
-fn forward(dir: &Path, tool: &str, args: &Value) -> Result<Value, String> {
-    match call_app(dir, tool, args) {
-        Ok(v) => return Ok(v),
-        Err(CallError::Failed(e)) => return Err(e),
-        Err(CallError::NotRunning) => {}
-    }
-    // Запуск — только на Windows: там второй запуск лишь открывает уже работающий «Карман».
-    if !cfg!(windows) || !launch() {
-        return Err("«Карман» не запущен: откройте его на этом компьютере и повторите запрос.".into());
-    }
-    let started = std::time::Instant::now();
-    while started.elapsed() < Duration::from_secs(40) {
-        std::thread::sleep(Duration::from_millis(400));
-        match call_app(dir, tool, args) {
-            Ok(v) => return Ok(v),
-            Err(CallError::Failed(e)) => return Err(e),
-            Err(CallError::NotRunning) => {}
-        }
-    }
-    Err("«Карман» не открылся за 40 секунд: откройте его вручную и повторите запрос.".into())
 }
 
 /// `karman --mcp`: MCP по stdio для приложения Claude. Код выхода — 0, когда приложение Claude закрыло поток.
 #[cfg(desktop)]
 pub fn relay() -> i32 {
-    let dir = data_dir();
-    let stdin = std::io::stdin();
-    let mut out = std::io::stdout().lock();
-    for line in stdin.lock().lines() {
-        let Ok(line) = line else { return 1 };
-        if line.trim().is_empty() {
-            continue;
-        }
-        let reply = mcp::handle(&line, env!("CARGO_PKG_VERSION"), &mut |tool, args| forward(&dir, tool, args));
-        if let Some(r) = reply {
-            if writeln!(out, "{r}").and_then(|_| out.flush()).is_err() {
-                return 1;
-            }
-        }
-    }
-    0
+    link::relay(&CONNECTOR, &mcp::tools(), env!("CARGO_PKG_VERSION"))
 }
 
 // ——— Команды экрана ———
@@ -550,87 +302,39 @@ mod tests {
         }
     }
 
+    /// Строки связи — те же, что у «Кармана» до kit: посредник прежней версии найдёт папку данных
+    /// и узнает запущенный «Карман».
     #[test]
-    fn token_compare() {
-        assert!(same("abc", "abc"));
-        assert!(!same("abc", "abd") && !same("abc", "abcd"));
+    fn connector_is_the_same_as_before_kit() {
+        assert_eq!(CONNECTOR.server.name, "karman");
+        assert_eq!(CONNECTOR.server.link_personal, b"karman-link");
+        assert_eq!(CONNECTOR.extension.dir_env, "KARMAN_DIR");
+        assert_eq!(CONNECTOR.identifier, "io.github.primusfixer.karman");
+        assert_eq!(link::LINK_FILE, "claude.json");
+        assert!(!CONNECTOR.names.feminine, "«Карман» не запущен, откройте его");
     }
 
-    /// «Карман» на 127.0.0.1: принимает одно подключение и отвечает эхом запроса.
-    fn fake_karman(token: &'static str) -> (u16, std::thread::JoinHandle<Option<Result<Request, String>>>) {
-        let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let port = l.local_addr().unwrap().port();
-        let h = std::thread::spawn(move || {
-            let (stream, _) = l.accept().unwrap();
-            let got = accept(&stream, token);
-            let reply = match &got {
-                Some(Ok(r)) => Reply { ok: Some(json!({ "tool": r.tool, "args": r.args })), err: None },
-                Some(Err(e)) => Reply { ok: None, err: Some(e.clone()) },
-                None => return got,
-            };
-            let mut out = &stream;
-            writeln!(out, "{}", serde_json::to_string(&reply).unwrap()).unwrap();
-            got
-        });
-        (port, h)
-    }
-
-    fn connect(port: u16) -> std::net::TcpStream {
-        let s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-        s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-        s
-    }
-
-    const KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-
+    /// Посредник находит «Карман» по файлу связи и получает ответ инструмента из базы.
     #[cfg(desktop)]
     #[test]
-    fn bridge_and_karman_prove_the_key_without_sending_it() {
-        let (port, h) = fake_karman(KEY);
-        let v = talk(&connect(port), KEY, "summary", &json!({ "x": 1 })).ok().unwrap();
-        assert_eq!(v, json!({ "tool": "summary", "args": { "x": 1 } }));
-        assert!(matches!(h.join().unwrap(), Some(Ok(_))));
-        // Посредник с чужим ключом: «Карман» не выполняет запрос.
-        let (port, h) = fake_karman(KEY);
-        let other = "f".repeat(64);
-        let r = talk(&connect(port), &other, "summary", &json!({}));
-        // Доказательство «Кармана» не сходится с чужим ключом — посредник сам ничего не отправил.
-        assert!(matches!(r, Err(CallError::NotRunning)));
-        assert!(h.join().unwrap().is_none(), "запрос не ушёл");
+    fn relay_reads_accounts_through_the_link_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut st = Store::open(&dir.path().join("t.db"), &[5; 32], "dev1").unwrap();
+        karman_core::book::ensure_defaults(&mut st).unwrap();
+        let st = Mutex::new(st);
+        link::listen(&CONNECTOR, dir.path(), "test", move |tool, args| tools::read(&st.lock().unwrap(), Date::parse("2026-11-15").unwrap(), tool, args)).unwrap();
+        let v = link::forward(&CONNECTOR, dir.path(), "accounts", &json!({})).unwrap();
+        assert!(v.to_string().contains("Наличные"), "{v}");
+        // Файла связи нет — «Карман» не запущен.
+        assert_eq!(link::forward(&CONNECTOR, &dir.path().join("нет"), "summary", &json!({})), Err("«Карман» не запущен: откройте его на этом компьютере и повторите запрос.".into()));
     }
 
     #[cfg(desktop)]
     #[test]
-    fn a_program_on_the_port_gets_neither_key_nor_request() {
-        let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let port = l.local_addr().unwrap().port();
-        let h = std::thread::spawn(move || {
-            let (stream, _) = l.accept().unwrap();
-            let mut seen = String::new();
-            let mut reader = BufReader::new(&stream);
-            reader.read_line(&mut seen).unwrap();
-            // Самозванец отвечает как умеет — ключа он не знает.
-            let mut out = &stream;
-            writeln!(out, "{}", json!({ "proof": "00".repeat(32), "nonce": "11".repeat(32) })).unwrap();
-            let mut rest = String::new();
-            let _ = reader.read_line(&mut rest);
-            seen + &rest
-        });
-        let r = talk(&connect(port), KEY, "add_operation", &json!({ "title": "Такси до объекта" }));
-        assert!(matches!(r, Err(CallError::NotRunning)));
-        let seen = h.join().unwrap();
-        assert!(seen.contains("hello") && !seen.contains(KEY) && !seen.contains("Такси") && !seen.contains("auth"), "{seen}");
-    }
-
-    #[test]
-    fn old_bridge_is_told_to_restart_claude() {
-        let (port, h) = fake_karman(KEY);
-        let s = connect(port);
-        let mut out = &s;
-        writeln!(out, "{}", json!({ "token": KEY, "tool": "summary", "args": {} })).unwrap();
-        let mut line = String::new();
-        BufReader::new(&s).read_line(&mut line).unwrap();
-        assert!(line.contains("перезапустите приложение Claude"), "{line}");
-        assert!(matches!(h.join().unwrap(), Some(Err(e)) if e == OUTDATED));
+    fn relay_finds_the_data_folder() {
+        std::env::set_var("KARMAN_DIR", "/tmp/karman-test-dir");
+        assert_eq!(link::data_dir(&CONNECTOR), PathBuf::from("/tmp/karman-test-dir"));
+        std::env::remove_var("KARMAN_DIR");
+        assert!(link::data_dir(&CONNECTOR).ends_with("io.github.primusfixer.karman"));
     }
 }
