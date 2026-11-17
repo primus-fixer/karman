@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { addIcons, Icon as KitIcon } from '@primus-fixer/kit/ui';
 import { useCut } from './cuts';
 import type { Attachment, Check, Op, Snapshot } from './api';
 import { blobUrl, sizeText } from './media';
@@ -25,12 +26,12 @@ export function Cut({ id, title, children, gap }: { id: string; title: string; c
   );
 }
 
+// Значки «Кармана» — в общем наборе kit: ими пользуются и элементы kit (экран входа).
+addIcons(ICON);
+
+/** Значок kit; незнакомое имя (например, у своей категории) — значок «Другое». */
 export function Icon({ name, size = 20, stroke = 1.75, d }: { name?: string; size?: number; stroke?: number; d?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d={d || ICON[name || 'other'] || ICON.other} />
-    </svg>
-  );
+  return <KitIcon d={d || ICON[name || 'other'] || ICON.other} size={size} stroke={stroke} />;
 }
 
 /** Переключатель; `fit` — колонки по длине подписей (когда подписи разной длины и их много). */

@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, message, type Account, type AccountView, type Check, type DeviceInfo, type LockStatus, type RemindStatus, type Snapshot } from '../api';
-import type { PinMode } from '../Lock';
+import { SCHEMES, type PinMode, type ThemeMode } from '@primus-fixer/kit/ui';
 import { SIGN, amountText, dMon, parseAmount, rateText as fxText, rub } from '../format';
-import { SCHEMES, type ThemeMode } from '../theme';
 import { Checks, Cut, ErrorText, Icon, Seg } from '../ui';
 import AiSection from './Ai';
 import BackupSection from './Backup';

@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { lockCommands } from '@primus-fixer/kit/ui';
 import { todayIso } from './format';
 
 // Типы повторяют ответы ядра (karman-core, serde).
@@ -284,20 +285,8 @@ export type LanEvent = { received: number; paired: string | null };
 /** Курс валюты на дату: cbr — ЦБ, manual — из настроек, none — курса нет; fallback — сайт ЦБ не ответил, это последние сохранённые курсы. */
 export type FxQuote = { rate: number; source: 'cbr' | 'manual' | 'none'; date: string | null; fallback?: boolean };
 export type ReceiptView = { date: string; time: string; sum: number; fn_number: string; fd: string; fp: string; kind: string };
-export type LockStatus = {
-  pin: boolean;
-  locked: boolean;
-  bio: boolean;
-  bio_ready: boolean;
-  bio_kind: '' | 'fingerprint' | 'face' | 'hello';
-  recover: '' | 'device' | 'hello';
-  wait: number;
-  left: number;
-  recovery: boolean;
-  key: string;
-  error: string | null;
-  notice: string | null;
-};
+/** Вход по PIN-коду, отпечатку и Windows Hello — из общего модуля kit (команды kit-tauri). */
+export { LOCKED, type LockStatus } from '@primus-fixer/kit/ui';
 
 /** Последняя копия на этом компьютере. */
 export type BackupLast = { at: number; path: string; auto: boolean; bytes: number; events: number; blobs: number };
@@ -350,9 +339,6 @@ export type CloudEvent = { running: boolean; received: number; step: CloudStep |
 
 /** Файл копии уходит в ядро кусками по 4 МБ: так он читается и на телефоне, и без лишней памяти. */
 const UPLOAD_CHUNK = 4 << 20;
-
-/** Ответ команд с данными, пока «Карман» заблокирован. */
-export const LOCKED = 'locked';
 
 /** Приложение открыто внутри Tauri, а не в обычном браузере. */
 export const inApp = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -408,15 +394,8 @@ export const api = {
   exportXlsx: (span: StatSpan, anchor: string) => invoke<string>('export_xlsx', { today: today(), span, anchor }),
   remindStatus: (ask: boolean) => invoke<RemindStatus>('remind_status', { ask }),
   remindDesktop: (mode: 'open' | 'windows') => invoke<string>('remind_desktop', { mode }),
-  lockStatus: () => invoke<LockStatus>('lock_status'),
-  pinUnlock: (code: string) => invoke<LockStatus>('pin_unlock', { code }),
-  pinSet: (code: string, current: string | null) => invoke<LockStatus>('pin_set', { code, current }),
-  pinOff: (current: string | null) => invoke<LockStatus>('pin_off', { current }),
-  bioUnlock: () => invoke<LockStatus>('bio_unlock'),
-  bioSet: (on: boolean) => invoke<LockStatus>('bio_set', { on }),
-  pinRecover: () => invoke<LockStatus>('pin_recover'),
-  lockNow: () => invoke<LockStatus>('lock_now'),
-  appVisible: (visible: boolean) => invoke<LockStatus>('app_visible', { visible }),
+  // Вход: lockStatus, pinUnlock, pinSet, pinOff, bioUnlock, bioSet, pinRecover, lockNow, appVisible.
+  ...lockCommands(),
   backupStatus: () => invoke<BackupStatus>('backup_status'),
   backupPassword: (password: string) => invoke<BackupStatus>('backup_password', { password }),
   backupEvery: (every: BackupStatus['every']) => invoke<BackupStatus>('backup_every', { every }),
@@ -493,10 +472,7 @@ export const api = {
 };
 
 /** Ядро сообщает, что «Карман» заблокировался (5 минут в фоне). */
-export async function onLocked(cb: () => void): Promise<() => void> {
-  const { listen } = await import('@tauri-apps/api/event');
-  return listen('locked', cb);
-}
+export const onLocked = lockCommands().onLocked;
 
 /** Сделана автокопия (или не получилась) — обновить сведения о копиях. */
 export async function onBackup(cb: () => void): Promise<() => void> {

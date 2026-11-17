@@ -5,7 +5,7 @@ import { aiOn, loadAi, useAi } from './aiState';
 import ChatSheet from './screens/Chat';
 import { rub } from './format';
 import { applyCats, dueText } from './logic';
-import { bioLabel, LockScreen, PinFlow, type PinMode } from './Lock';
+import { applyTheme, bioLabel, LockScreen, PinFlow, store, stored, type LockNames, type PinMode, type ThemeMode } from '@primus-fixer/kit/ui';
 import { attachFile, pickFiles } from './media';
 import Feed from './screens/Feed';
 import Finance, { type FinanceActions, type FinView } from './screens/Finance';
@@ -15,7 +15,6 @@ import type { OtActions } from './screens/Overtime';
 import TripScreen, { type TripActions, type TripTab } from './screens/Trip';
 import TripForm from './screens/TripForm';
 import Trips from './screens/Trips';
-import { applyTheme, type ThemeMode } from './theme';
 import { Icon, Viewer, type OpActions } from './ui';
 import { showSection } from './cuts';
 
@@ -45,14 +44,13 @@ const ADVANCED: Partial<Record<TripStatus, string>> = {
   closed: 'Поездка закрыта',
 };
 
+/** Название на экране входа: «Карман», «Вход в „Карман“». */
+const LOCK_NAMES: LockNames = { name: 'Карман', nameAcc: 'Карман' };
+
 function loadTheme(): ThemeState {
-  try {
-    const scheme = localStorage.getItem('karman.scheme') || 'shield';
-    const mode = localStorage.getItem('karman.mode') as ThemeMode | null;
-    return { scheme, mode: mode === 'dark' || mode === 'system' ? mode : 'light' };
-  } catch {
-    return { scheme: 'shield', mode: 'light' };
-  }
+  const scheme = stored('karman.scheme', 'shield');
+  const mode = stored('karman.mode', 'light') as ThemeMode;
+  return { scheme, mode: mode === 'dark' || mode === 'system' ? mode : 'light' };
 }
 
 function usePhone(): boolean {
@@ -126,12 +124,8 @@ export default function App() {
   useEffect(() => {
     const apply = () => setDark(applyTheme(theme.scheme, theme.mode) === 'dark');
     apply();
-    try {
-      localStorage.setItem('karman.scheme', theme.scheme);
-      localStorage.setItem('karman.mode', theme.mode);
-    } catch {
-      /* без сохранения темы */
-    }
+    store('karman.scheme', theme.scheme);
+    store('karman.mode', theme.mode);
     if (theme.mode !== 'system') return;
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
     mq.addEventListener('change', apply);
@@ -195,7 +189,7 @@ export default function App() {
     api.lockStatus().then(
       (st) => {
         setLock(st);
-        notice.current = st.notice;
+        notice.current = st.notice ?? null;
         if (st.locked) {
           showLock();
         } else {
@@ -330,7 +324,7 @@ export default function App() {
       try {
         const st = await api.bioSet(on);
         setLock(st);
-        const name = bioLabel(st.bio_kind, info?.os ?? '').name;
+        const name = bioLabel(st.bio_kind).name;
         if (st.error) flash(st.error);
         else if (st.bio === on) flash(on ? `Вход: ${name} включён` : `Вход: ${name} выключен`);
       } catch (e) {
@@ -535,10 +529,11 @@ export default function App() {
 
   const overlay =
     locked && lock ? (
-      <LockScreen key={lockKey} status={lock} os={info?.os ?? ''} onUnlocked={onUnlocked} />
+      <LockScreen key={lockKey} status={lock} api={api} names={LOCK_NAMES} onUnlocked={onUnlocked} />
     ) : pinFlow ? (
       <PinFlow
         mode={pinFlow}
+        api={api}
         onClose={() => setPinFlow(null)}
         onDone={(st, text) => {
           setLock(st);
