@@ -44,8 +44,6 @@ struct AppState {
     /// Связь по Wi-Fi: код, связанные устройства, сервер обмена.
     /// Вход по PIN-коду: заблокирован ли «Карман».
     guard: Lock,
-    /// Вход в облако по коду, который ждёт ввода.
-    cloud_login: Mutex<Option<cloud::Login>>,
 }
 
 impl AppState {
@@ -836,6 +834,7 @@ pub fn run() {
             app.manage(guard.clone());
             #[cfg(desktop)]
             let claude_dir = dir.clone();
+            app.manage(cloud::Sky::new(cloud::settings(), store.clone(), Some(Box::new(cloud::ByCode))));
             app.manage(lan::Wifi::new(&karman_core::lan::LAN, &names::KEYS, store.clone(), me.id.clone(), me.name.clone()));
             app.manage(AppState {
                 store,
@@ -843,7 +842,6 @@ pub fn run() {
                 data_dir: dir,
                 db_path,
                 guard,
-                cloud_login: Mutex::new(None),
             });
             // Коннектор для приложения Claude: ждём посредника `karman --mcp` на 127.0.0.1 —
             // после того как база открыта, чтобы первый же запрос нашёл её.
