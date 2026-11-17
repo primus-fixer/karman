@@ -19,7 +19,8 @@ mod yandex;
 
 use http::{auth_expired, Body, Http, Resp};
 use karman_core::cloud::{Cloud, Dir, Entry};
-use karman_core::error::{CloudFail, Result};
+use kit_core::cloud::CloudFail;
+use kit_core::Result;
 use serde::{Deserialize, Serialize};
 use std::cell::{Cell, RefCell};
 

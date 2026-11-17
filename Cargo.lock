@@ -2125,7 +2125,7 @@ dependencies = [
 
 [[package]]
 name = "karman-app"
-version = "0.15.8"
+version = "0.15.9"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.3.4",
@@ -2154,10 +2154,11 @@ dependencies = [
 
 [[package]]
 name = "karman-cloud"
-version = "0.15.8"
+version = "0.15.9"
 dependencies = [
  "base64 0.22.1",
  "karman-core",
+ "kit-core",
  "serde",
  "serde_json",
  "tempfile",
@@ -2166,7 +2167,7 @@ dependencies = [
 
 [[package]]
 name = "karman-core"
-version = "0.15.8"
+version = "0.15.9"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -2197,16 +2198,18 @@ dependencies = [
 
 [[package]]
 name = "kit-core"
-version = "0.9.0"
-source = "git+https://github.com/primus-fixer/kit?rev=0e24907e8d477f356f2db5c8c35ed601bf8c5622#0e24907e8d477f356f2db5c8c35ed601bf8c5622"
+version = "0.10.0"
+source = "git+https://github.com/primus-fixer/kit?rev=ad91b1bef6421e1776993617ae5e275b50417dc3#ad91b1bef6421e1776993617ae5e275b50417dc3"
 dependencies = [
  "argon2",
  "base64 0.22.1",
  "blake2",
  "chacha20poly1305",
  "getrandom 0.3.4",
+ "miniz_oxide 0.8.9",
  "serde",
  "serde_json",
+ "sha2",
  "spake2",
  "thiserror 2.0.21",
  "zip",
@@ -2214,8 +2217,8 @@ dependencies = [
 
 [[package]]
 name = "kit-secure"
-version = "0.9.0"
-source = "git+https://github.com/primus-fixer/kit?rev=0e24907e8d477f356f2db5c8c35ed601bf8c5622#0e24907e8d477f356f2db5c8c35ed601bf8c5622"
+version = "0.10.0"
+source = "git+https://github.com/primus-fixer/kit?rev=ad91b1bef6421e1776993617ae5e275b50417dc3#ad91b1bef6421e1776993617ae5e275b50417dc3"
 dependencies = [
  "jni",
  "ndk-context",
@@ -2226,8 +2229,8 @@ dependencies = [
 
 [[package]]
 name = "kit-tauri"
-version = "0.9.0"
-source = "git+https://github.com/primus-fixer/kit?rev=0e24907e8d477f356f2db5c8c35ed601bf8c5622#0e24907e8d477f356f2db5c8c35ed601bf8c5622"
+version = "0.10.0"
+source = "git+https://github.com/primus-fixer/kit?rev=ad91b1bef6421e1776993617ae5e275b50417dc3#ad91b1bef6421e1776993617ae5e275b50417dc3"
 dependencies = [
  "kit-core",
  "kit-secure",

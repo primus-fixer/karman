@@ -4,7 +4,8 @@
 use crate::http::{enc, fail, no_access, no_space, odd, server, Body, Resp};
 use crate::Session;
 use karman_core::cloud::{Dir, Entry};
-use karman_core::error::{CloudFail, Result};
+use kit_core::cloud::CloudFail;
+use kit_core::Result;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -32,7 +33,7 @@ struct File {
     size: Option<String>,
 }
 
-fn trouble(r: &Resp) -> karman_core::Error {
+fn trouble(r: &Resp) -> kit_core::Error {
     match (r.status, r.error_code().as_str()) {
         (403, "storageQuotaExceeded") | (413, _) => no_space(),
         (403, "userRateLimitExceeded" | "rateLimitExceeded") | (429, _) => server(429),

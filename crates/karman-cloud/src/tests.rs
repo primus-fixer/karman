@@ -7,7 +7,7 @@ use crate::mock::{Mock, DAV_PASSWORD, DAV_USER};
 use karman_core::backup::Kdf;
 use karman_core::cloud::{self, Cloud, Dir, Round, State};
 use karman_core::db::Store;
-use karman_core::error::Error;
+use kit_core::Error;
 use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 
