@@ -1,11 +1,8 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import '@fontsource/golos-text/400.css';
-import '@fontsource/golos-text/500.css';
-import '@fontsource/golos-text/600.css';
-import '@fontsource/geologica/300.css';
-import '@fontsource/geologica/400.css';
-import '@fontsource/geologica/500.css';
+// Шрифты и экран входа — из общего модуля kit; остальной вид «Кармана» пока свой (docs/kit.md).
+import '@primus-fixer/kit/ui/fonts';
+import '@primus-fixer/kit/ui/lock.css';
 import './styles.css';
 import App from './App';
 

@@ -2125,7 +2125,7 @@ dependencies = [
 
 [[package]]
 name = "karman-app"
-version = "0.15.2"
+version = "0.15.4"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.3.4",
@@ -2154,7 +2154,7 @@ dependencies = [
 
 [[package]]
 name = "karman-cloud"
-version = "0.15.2"
+version = "0.15.4"
 dependencies = [
  "base64 0.22.1",
  "karman-core",
@@ -2166,7 +2166,7 @@ dependencies = [
 
 [[package]]
 name = "karman-core"
-version = "0.15.2"
+version = "0.15.4"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -2183,6 +2183,7 @@ dependencies = [
  "spake2",
  "tempfile",
  "thiserror 2.0.21",
+ "zip",
 ]
 
 [[package]]

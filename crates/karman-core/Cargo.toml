@@ -21,8 +21,10 @@ blake2 = "0.10"
 miniz_oxide = "0.8"
 # Связь устройств по коду (0.15): ключ из короткого кода без перебора вне сети.
 spake2 = "0.4"
+# Общий модуль kit: протокол коннектора для Claude (https://github.com/primus-fixer/kit).
+kit-core = { git = "https://github.com/primus-fixer/kit", rev = "2869254ea0820dfa45cef690f95555db1661eb87" }
 
 [dev-dependencies]
 tempfile = "3"
-# Образцы форматов: хеш PIN-кода из базы 0.15.1 проверяется тем же кодом, что у приложения.
-kit-core = { git = "https://github.com/primus-fixer/kit", rev = "2869254ea0820dfa45cef690f95555db1661eb87" }
+# Проверка файла расширения .mcpb (архив ZIP).
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }

@@ -873,9 +873,6 @@ pub fn run() {
             // Снимки, которые так и не прикрепили к операции, убираем через сутки.
             let _ = store.gc_blobs();
             let today = Date::today_utc().to_string();
-            // Коннектор для приложения Claude: ждём посредника `karman --mcp` на 127.0.0.1.
-            #[cfg(desktop)]
-            claude::start(app.handle().clone(), dir.clone());
             // С PIN-кодом «Карман» открывается заблокированным.
             let store = Arc::new(Mutex::new(store));
             let handle = app.handle().clone();
@@ -892,6 +889,8 @@ pub fn run() {
             let guard = Lock::new(names::APP, StoreMeta(store.clone()), hooks);
             guard.set_notice(notice);
             app.manage(guard.clone());
+            #[cfg(desktop)]
+            let claude_dir = dir.clone();
             app.manage(AppState {
                 store,
                 me,
@@ -901,6 +900,10 @@ pub fn run() {
                 guard,
                 cloud_login: Mutex::new(None),
             });
+            // Коннектор для приложения Claude: ждём посредника `karman --mcp` на 127.0.0.1 —
+            // после того как база открыта, чтобы первый же запрос нашёл её.
+            #[cfg(desktop)]
+            claude::start(app.handle().clone(), claude_dir);
             fx::refresh_on_start(app.handle().clone(), today);
             notify::init(app.handle());
             notify::start_desktop_loop(app.handle().clone());
