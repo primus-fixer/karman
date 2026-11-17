@@ -7,7 +7,7 @@
 use kit_core::AppNames;
 use kit_secure::KeyNames;
 
-pub const APP: AppNames = AppNames { id: "karman", name: "Карман", name_acc: "Карман", name_gen: "Кармана", feminine: false };
+pub const APP: AppNames = karman_core::NAMES;
 
 pub const KEYS: KeyNames = KeyNames { dpapi_entropy: b"karman-db-key-v1", dpapi_label: "Karman", keystore_alias: "karman-db-key" };
 
