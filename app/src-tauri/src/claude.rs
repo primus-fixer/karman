@@ -127,7 +127,7 @@ pub fn run_tool(app: &AppHandle, caller: Caller, tool: &str, args: &Value) -> Re
     let info = tools::find(tool).ok_or_else(|| format!("нет инструмента «{tool}»"))?;
     let store = match state.store() {
         Ok(st) => st,
-        Err(e) if e == crate::guard::LOCKED => {
+        Err(e) if e == kit_tauri::guard::LOCKED => {
             #[cfg(desktop)]
             if caller == Caller::Connector {
                 crate::notify::show_main(app);

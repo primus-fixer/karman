@@ -113,7 +113,7 @@ fn now() -> i64 {
 fn stored_key(st: &Store) -> Res<Option<String>> {
     let Some(text) = st.meta(META_KEY).map_err(err)?.filter(|t| !t.is_empty()) else { return Ok(None) };
     let blob = B64.decode(text.as_bytes()).map_err(|_| "ключ API повреждён — введите его снова".to_string())?;
-    let plain = karman_secure::unprotect(&blob).map_err(|e| format!("ключ API не достать из хранилища системы: {e}"))?;
+    let plain = crate::names::unprotect(&blob).map_err(|e| format!("ключ API не достать из хранилища системы: {e}"))?;
     String::from_utf8(plain).map(Some).map_err(|_| "ключ API повреждён — введите его снова".to_string())
 }
 
@@ -214,7 +214,7 @@ pub fn ai_status(state: State<AppState>, today: String) -> Res<AiStatus> {
 pub fn ai_key_set(state: State<AppState>, today: String, key: String) -> Res<AiStatus> {
     let key = key.trim().to_string();
     ai::check_key(&key)?;
-    let blob = karman_secure::protect(key.as_bytes()).map_err(|e| format!("ключ не сохранить в хранилище системы: {e}"))?;
+    let blob = crate::names::protect(key.as_bytes()).map_err(|e| format!("ключ не сохранить в хранилище системы: {e}"))?;
     let st = state.store()?;
     st.set_meta(META_KEY, &B64.encode(blob)).map_err(err)?;
     st.set_meta(META_CHECKED, "").map_err(err)?;
@@ -784,7 +784,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let st = Store::open(&dir.path().join("t.db"), &[7u8; 32], "dev").unwrap();
         let key = "sk-ant-api03-abcdefghijklmnopqrstuvwxyzA1b2";
-        st.set_meta(META_KEY, &B64.encode(karman_secure::protect(key.as_bytes()).unwrap())).unwrap();
+        st.set_meta(META_KEY, &B64.encode(crate::names::protect(key.as_bytes()).unwrap())).unwrap();
         assert_eq!(stored_key(&st).unwrap().as_deref(), Some(key));
         let s = status(&st, None).unwrap();
         assert!(s.key && s.tail == "sk-ant-…A1b2");

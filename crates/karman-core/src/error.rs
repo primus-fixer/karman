@@ -16,8 +16,6 @@ pub enum Error {
     Format(String),
     #[error("генератор случайных чисел: {0}")]
     Random(String),
-    #[error("PIN-код: {0}")]
-    Pin(String),
     /// Другое устройство не смогло принять записи (старая версия).
     #[error("{0}")]
     Peer(String),

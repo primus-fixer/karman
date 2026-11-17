@@ -25,7 +25,6 @@ pub mod money;
 pub mod overtime;
 pub mod pairing;
 pub mod pdf;
-pub mod pin;
 pub mod receipt;
 pub mod savings;
 pub mod stats;

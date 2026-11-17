@@ -24,8 +24,6 @@ jobs:
   windows:
     uses: primus-fixer/kit/.github/workflows/windows.yml@e7ad1be0130da74f55323d742bd5770ac0e94e6e # kit 0.2.0
     with:
-      # Ключ базы в хранилище Windows (DPAPI) — пока свой, до перехода на kit.
-      tests: -p karman-secure
       mcp-tool: add_operation
   android:
     uses: primus-fixer/kit/.github/workflows/android.yml@e7ad1be0130da74f55323d742bd5770ac0e94e6e # kit 0.2.0

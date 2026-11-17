@@ -13,7 +13,9 @@ use karman_core::cloud::{self, CloudKey, Dir, MemCloud, Round, State};
 use karman_core::db::{blob_id, Store};
 use karman_core::pairing::{self, Invite, Pairing, Qr};
 use karman_core::sync::EventBody;
-use karman_core::{mcp, pin};
+use karman_core::mcp;
+// PIN-код теперь в общем модуле kit — проверяем тем же кодом, которым его проверяет приложение.
+use kit_core::pin;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::fs;
