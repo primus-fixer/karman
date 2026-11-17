@@ -21,8 +21,8 @@ blake2 = "0.10"
 miniz_oxide = "0.8"
 # Связь устройств по коду (0.15): ключ из короткого кода без перебора вне сети.
 spake2 = "0.4"
-# Общий модуль kit: протокол коннектора для Claude, формат резервной копии (https://github.com/primus-fixer/kit).
-kit-core = { git = "https://github.com/primus-fixer/kit", rev = "6d19930282973c7fbae0aa240a27baedc91530b1" }
+# Общий модуль kit: протокол коннектора для Claude, формат резервной копии, протокол синхронизации (https://github.com/primus-fixer/kit).
+kit-core = { git = "https://github.com/primus-fixer/kit", rev = "125a96f3f4f10b932231171dcbf31ad929a46403" }
 
 [dev-dependencies]
 tempfile = "3"
