@@ -30,7 +30,7 @@ use std::time::Duration;
 /// Последний известный номер события от каждого устройства.
 pub type VersionVector = BTreeMap<String, u64>;
 
-pub(crate) use kit::{prepare, Wire, MAX_FRAME};
+use kit::Wire;
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Event {
@@ -140,27 +140,6 @@ const OLD_PEER: &str = "На другом устройстве старая ве
 
 /// Обмен «Кармана»: поле `files` (версии до 0.4 вложений не передают), больших файлов нет.
 pub const PROFILE: Profile = Profile { version: APP_VERSION, files_flag: true, old_peer: OLD_PEER, chunked_since: None };
-
-/// Сообщения обмена.
-pub(crate) type Msg = kit::Msg<Event>;
-
-/// Сообщения поверх канала — для связи по коду (кто я) и проверок.
-pub(crate) trait MsgWire: Wire + Sized {
-    fn send(&mut self, msg: &Msg) -> Result<()> {
-        Ok(kit::send(self, msg)?)
-    }
-    /// Следующее сообщение, не больше `max` байт.
-    fn recv_max(&mut self, max: usize) -> Result<Msg> {
-        Ok(kit::recv_max(self, max)?)
-    }
-    /// Следующее сообщение любого размера до предела — в проверках канала.
-    #[cfg(test)]
-    fn recv(&mut self) -> Result<Msg> {
-        self.recv_max(MAX_FRAME)
-    }
-}
-
-impl<W: Wire> MsgWire for W {}
 
 /// Канал с одним ключом на обе стороны и случайным nonce в каждом пакете — связь по QR-коду до 0.15.
 struct KeyWire<'a> {

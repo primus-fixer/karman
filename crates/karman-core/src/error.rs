@@ -34,22 +34,8 @@ pub enum Error {
     Lan(LanFail, String),
 }
 
-/// Почему не получилась связь по Wi-Fi — чтобы приложение могло ответить по делу.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LanFail {
-    /// На том устройстве код не показан, истёк или уже использован.
-    NoCode,
-    /// Код не подошёл; сколько попыток осталось.
-    WrongCode(u8),
-    /// Код отменён после пяти неверных попыток.
-    Cancelled,
-    /// Устройство не узнало нас: связь отвязана или её не было.
-    Unknown,
-    /// Устройство занято другим обменом.
-    Busy,
-    /// Ответило не то устройство: оно не знает кода или ключа пары.
-    NotPeer,
-}
+/// Почему не получилась связь по Wi-Fi — из общего модуля kit.
+pub use kit_core::lan::LanFail;
 
 /// Что случилось с облаком — от этого зависит подсказка на экране.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -96,6 +82,7 @@ impl From<kit_core::Error> for Error {
             K::Format(s) => Error::Format(s),
             K::Store(s) | K::Peer(s) => Error::Peer(s),
             K::Decrypt => Error::Decrypt,
+            K::Lan(f, s) => Error::Lan(f, s),
             other => Error::Format(other.to_string()),
         }
     }
