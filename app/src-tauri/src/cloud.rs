@@ -194,35 +194,35 @@ enum Conn {
 }
 
 impl Cloud for Conn {
-    fn list(&self, dir: Dir) -> karman_core::Result<Vec<kc::Entry>> {
+    fn list(&self, dir: Dir) -> kit_core::Result<Vec<kc::Entry>> {
         match self {
             Conn::Code(s) => s.list(dir),
             Conn::Dav(d) => d.list(dir),
         }
     }
 
-    fn get(&self, dir: Dir, name: &str, max: usize) -> karman_core::Result<Option<Vec<u8>>> {
+    fn get(&self, dir: Dir, name: &str, max: usize) -> kit_core::Result<Option<Vec<u8>>> {
         match self {
             Conn::Code(s) => s.get(dir, name, max),
             Conn::Dav(d) => d.get(dir, name, max),
         }
     }
 
-    fn put(&self, dir: Dir, name: &str, data: &[u8]) -> karman_core::Result<()> {
+    fn put(&self, dir: Dir, name: &str, data: &[u8]) -> kit_core::Result<()> {
         match self {
             Conn::Code(s) => s.put(dir, name, data),
             Conn::Dav(d) => d.put(dir, name, data),
         }
     }
 
-    fn exists(&self, dir: Dir, name: &str) -> karman_core::Result<bool> {
+    fn exists(&self, dir: Dir, name: &str) -> kit_core::Result<bool> {
         match self {
             Conn::Code(s) => s.exists(dir, name),
             Conn::Dav(d) => d.exists(dir, name),
         }
     }
 
-    fn delete(&self, dir: Dir, name: &str) -> karman_core::Result<()> {
+    fn delete(&self, dir: Dir, name: &str) -> kit_core::Result<()> {
         match self {
             Conn::Code(s) => s.delete(dir, name),
             Conn::Dav(d) => d.delete(dir, name),
@@ -854,7 +854,7 @@ fn run_round(app: &AppHandle) -> Option<CloudFail> {
     let mut last_emit = Instant::now();
     let mut result: karman_core::Result<Report> = Ok(Report::default());
     if let Some(kf_text) = &c.keyfile {
-        match KeyFile::parse(kf_text.as_bytes()).and_then(|kf| kc::put_key_file(&session, &c.key, &kf)) {
+        match kc::parse_key_file(kf_text.as_bytes()).and_then(|kf| kc::put_key_file(&session, &c.key, &kf)) {
             Ok(()) => {
                 if let Ok(st) = state.store.lock() {
                     // Пока шёл обмен, пароль могли сменить ещё раз — тогда ждёт уже новый ключ.

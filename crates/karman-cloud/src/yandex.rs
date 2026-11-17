@@ -4,7 +4,8 @@
 use crate::http::{enc, fail, no_access, no_space, server, Body, Resp};
 use crate::Session;
 use karman_core::cloud::{Dir, Entry};
-use karman_core::error::{CloudFail, Result};
+use kit_core::cloud::CloudFail;
+use kit_core::Result;
 use serde::Deserialize;
 
 pub(crate) const OAUTH: &str = "https://oauth.yandex.ru";
@@ -29,7 +30,7 @@ fn api(s: &Session, tail: &str) -> String {
 }
 
 /// Общие ответы с ошибкой.
-fn trouble(r: &Resp) -> karman_core::Error {
+fn trouble(r: &Resp) -> kit_core::Error {
     match r.status {
         403 => no_access(),
         413 | 507 => no_space(),

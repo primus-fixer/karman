@@ -37,31 +37,8 @@ pub enum Error {
 /// Почему не получилась связь по Wi-Fi — из общего модуля kit.
 pub use kit_core::lan::LanFail;
 
-/// Что случилось с облаком — от этого зависит подсказка на экране.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CloudFail {
-    /// Вход устарел или доступ отозван — войти заново.
-    Auth,
-    /// На диске нет места.
-    Space,
-    /// Нет связи с облаком.
-    Offline,
-    /// Облако ответило ошибкой — обычно временной.
-    Server,
-    /// Данные «Кармана» в облаке удалены.
-    Gone,
-    /// Облако подключили заново, с другим ключом.
-    Replaced,
-    /// Записи этого устройства в облаке расходятся с базой.
-    Conflict,
-    /// Файл записан более новой версией «Кармана».
-    Newer,
-    /// Файл или ответ облака не разобрать.
-    Format,
-    /// Обмен остановлен.
-    Cancelled,
-}
+/// Что случилось с облаком — от этого зависит подсказка на экране (из общего модуля kit).
+pub use kit_core::cloud::CloudFail;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -83,6 +60,8 @@ impl From<kit_core::Error> for Error {
             K::Store(s) | K::Peer(s) => Error::Peer(s),
             K::Decrypt => Error::Decrypt,
             K::Lan(f, s) => Error::Lan(f, s),
+            K::Cloud(f, s) => Error::Cloud(f, s),
+            K::CloudPassword => Error::CloudPassword,
             other => Error::Format(other.to_string()),
         }
     }

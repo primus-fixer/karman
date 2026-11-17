@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/karman-core", "crates/karman-cloud", "app/src-tauri"]
 
 [workspace.package]
-version = "0.15.8"
+version = "0.15.9"
 edition = "2021"
 publish = false
 

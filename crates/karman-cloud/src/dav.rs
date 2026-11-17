@@ -10,7 +10,8 @@ use crate::http::{enc, fail, no_space, odd, server, Body, Http, Resp};
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use karman_core::cloud::{Cloud, Dir, Entry, KEY_FILE};
-use karman_core::error::{CloudFail, Error, Result};
+use kit_core::cloud::CloudFail;
+use kit_core::{Error, Result};
 use std::cell::RefCell;
 
 /// Яндекс Диск по WebDAV.
