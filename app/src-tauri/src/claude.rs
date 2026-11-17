@@ -517,31 +517,8 @@ pub fn bundle(command: &str, dir: &str) -> Res<Vec<u8>> {
     } else {
         "linux"
     };
-    let entry = Path::new(command).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "karman".into());
-    let manifest = json!({
-        "manifest_version": "0.3",
-        "name": "karman",
-        "display_name": "Карман",
-        "version": env!("CARGO_PKG_VERSION"),
-        "description": "Личные деньги и командировки из «Кармана»: сводка, операции, поездки, переработки. Запись — если она разрешена в «Кармане».",
-        "long_description": "Расширение запускает «Карман» на этом компьютере в режиме коннектора. Данные не уходят в интернет, кроме того, что Claude прочитает по вашей просьбе. Включается в «Кармане»: Настройки → Claude.",
-        "author": { "name": "Карман" },
-        "icon": "icon.png",
-        "server": {
-            "type": "binary",
-            "entry_point": entry,
-            "mcp_config": { "command": command, "args": ["--mcp"], "env": { "KARMAN_DIR": dir } }
-        },
-        "tools": tools::list().iter().map(|t| json!({ "name": t.name, "description": t.title })).collect::<Vec<_>>(),
-        "compatibility": { "platforms": [platform] },
-        "keywords": ["finance", "business trips", "overtime"],
-        "license": "Proprietary"
-    });
-    let files = vec![
-        ("manifest.json".to_string(), serde_json::to_vec_pretty(&manifest).map_err(err)?),
-        ("icon.png".to_string(), include_bytes!("../icons/icon.png").to_vec()),
-    ];
-    karman_core::zip::build(&files).map_err(err)
+    let manifest = mcp::manifest(env!("CARGO_PKG_VERSION"), command, dir, platform);
+    mcp::bundle(&manifest, include_bytes!("../icons/icon.png"))
 }
 
 /// Сохранить расширение в «Загрузки».
@@ -559,13 +536,14 @@ pub fn claude_bundle(app: AppHandle, state: State<AppState>) -> Res<String> {
 mod tests {
     use super::*;
 
+    /// Содержимое архива проверяет karman-core (mcp.rs); здесь — что «Карман» собирает его со своим значком.
     #[test]
     fn bundle_is_a_zip_with_a_valid_manifest() {
         let data = bundle(r"C:\Users\Пётр\AppData\Local\Karman\karman.exe", r"C:\Users\Пётр\AppData\Roaming\io.github.primusfixer.karman").unwrap();
         assert_eq!(&data[..4], b"PK\x03\x04");
         let text = String::from_utf8_lossy(&data);
         assert!(text.contains("manifest.json") && text.contains("icon.png"));
-        assert!(text.contains(r#""--mcp""#) && text.contains("karman.exe") && text.contains("KARMAN_DIR"));
+        assert!(data.windows(8).any(|w| w == b"\x89PNG\r\n\x1a\n"), "значок лежит в архиве как есть");
         // Для проверки инструментом mcpb: KARMAN_BUNDLE_OUT=путь cargo test.
         if let Ok(p) = std::env::var("KARMAN_BUNDLE_OUT") {
             std::fs::write(p, &data).unwrap();

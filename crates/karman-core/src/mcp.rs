@@ -1,13 +1,13 @@
-//! Протокол MCP (Model Context Protocol) для коннектора: JSON-RPC 2.0 построчно через stdio.
-//!
-//! Здесь только разбор и ответы: `initialize`, `ping`, `tools/list`, `tools/call`.
+//! Коннектор «Кармана» к приложению Claude. Протокол MCP (JSON-RPC 2.0 построчно через stdio), доказательство
+//! ключа связи и файл расширения `.mcpb` — общие из kit (`kit_core::mcp`); здесь то, чем «Карман» отличается:
+//! имя, подсказка для Claude, строка ключа связи, описание расширения и его инструменты ([`crate::tools`]).
 //! Сам вызов инструмента — снаружи: посредник `karman --mcp` передаёт его запущенному «Карману».
 
 use crate::tools;
-use serde_json::{json, Value};
+use kit_core::mcp::{self as kit, Extension, Server, Tool};
+use serde_json::Value;
 
-/// Версии протокола, которые понимает «Карман», — новая первой.
-pub const VERSIONS: [&str; 4] = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
+pub use kit::{bundle, VERSIONS};
 
 /// Подсказка для Claude: что это за данные и как с ними обращаться.
 pub const INSTRUCTIONS: &str = "«Карман» — личные финансы и командировки пользователя. Суммы — в рублях, даты — ГГГГ-ММ-ДД. \
@@ -19,109 +19,63 @@ pub const INSTRUCTIONS: &str = "«Карман» — личные финансы
 Снимки наряда «Карман» из разговора не получает — напомните добавить их в «Кармане». \
 Если «Карман» заблокирован или запись выключена, скажите человеку, что нужно сделать в «Кармане».";
 
-fn ok(id: &Value, result: Value) -> String {
-    json!({ "jsonrpc": "2.0", "id": id, "result": result }).to_string()
+/// Коннектор «Кармана». Строку ключа связи менять нельзя: посредник прежней версии и запущенный «Карман»
+/// перестанут узнавать друг друга.
+pub const SERVER: Server = Server { name: "karman", title: "Карман", instructions: INSTRUCTIONS, link_personal: b"karman-link" };
+
+/// Расширение «Кармана» для приложения Claude.
+pub const EXTENSION: Extension = Extension {
+    display_name: "Карман",
+    description: "Личные деньги и командировки из «Кармана»: сводка, операции, поездки, переработки. Запись — если она разрешена в «Кармане».",
+    long_description: "Расширение запускает «Карман» на этом компьютере в режиме коннектора. Данные не уходят в интернет, кроме того, что Claude прочитает по вашей просьбе. Включается в «Кармане»: Настройки → Claude.",
+    author: "Карман",
+    keywords: &["finance", "business trips", "overtime"],
+    dir_env: "KARMAN_DIR",
+};
+
+/// Инструменты «Кармана» для протокола: удаляет только `delete_operation`; повторять можно чтение и `set_work_day`.
+pub fn tools() -> Vec<Tool> {
+    tools::list()
+        .into_iter()
+        .map(|t| Tool {
+            destructive: t.name == "delete_operation",
+            idempotent: t.name == "set_work_day",
+            name: t.name,
+            title: t.title,
+            description: t.description,
+            input_schema: t.input_schema,
+            write: t.write,
+        })
+        .collect()
 }
 
-fn fail(id: &Value, code: i64, message: &str) -> String {
-    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } }).to_string()
-}
-
-/// Описание инструментов для `tools/list`.
 /// Доказательство ключа связи посредника (`karman --mcp`) и запущенного «Кармана»: MAC от одноразового
 /// числа другой стороны. Сам ключ по сети не ходит, и программа, занявшая порт, ничего не узнает.
 pub fn link_proof(token: &str, role: &str, nonce: &str) -> String {
-    use blake2::digest::consts::U32;
-    use blake2::digest::Mac;
-    // Ключ BLAKE2b — не длиннее 64 байт (ключ связи — 64 шестнадцатеричных знака).
-    if token.is_empty() || token.len() > 64 {
-        return String::new();
-    }
-    let Ok(mut mac) = blake2::Blake2bMac::<U32>::new_with_salt_and_personal(token.as_bytes(), &[], b"karman-link") else { return String::new() };
-    mac.update(role.as_bytes());
-    mac.update(b"|");
-    mac.update(nonce.as_bytes());
-    mac.finalize().into_bytes().iter().map(|b| format!("{b:02x}")).collect()
+    kit::link_proof(&SERVER, token, role, nonce)
 }
 
+/// Описание инструментов для `tools/list`.
 pub fn tool_list() -> Value {
-    let tools: Vec<Value> = tools::list()
-        .into_iter()
-        .map(|t| {
-            json!({
-                "name": t.name,
-                "title": t.title,
-                "description": t.description,
-                "inputSchema": t.input_schema,
-                "annotations": {
-                    "title": t.title,
-                    "readOnlyHint": !t.write,
-                    "destructiveHint": t.name == "delete_operation",
-                    "idempotentHint": !t.write || t.name == "set_work_day",
-                    "openWorldHint": false
-                }
-            })
-        })
-        .collect();
-    json!({ "tools": tools })
+    kit::tool_list(&tools())
 }
 
 /// Ответ на одну строку запроса; `None` — для уведомлений, на них не отвечают.
 /// `call(имя, аргументы)` выполняет инструмент: `Ok` — данные, `Err` — понятная человеку ошибка.
 pub fn handle(line: &str, version: &str, call: &mut dyn FnMut(&str, &Value) -> Result<Value, String>) -> Option<String> {
-    let msg: Value = match serde_json::from_str(line) {
-        Ok(v) => v,
-        Err(_) => return Some(fail(&Value::Null, -32700, "Parse error")),
-    };
-    if !msg.is_object() {
-        return Some(fail(&Value::Null, -32600, "Invalid Request"));
-    }
-    let method = msg.get("method").and_then(|m| m.as_str());
-    let id = msg.get("id").cloned();
-    let params = msg.get("params").cloned().unwrap_or_else(|| json!({}));
-    // Ответ клиента на наш запрос (мы их не шлём) или уведомление — молча.
-    let (Some(method), Some(id)) = (method, id) else { return None };
-    Some(match method {
-        "initialize" => {
-            let asked = params.get("protocolVersion").and_then(|v| v.as_str()).unwrap_or("");
-            let version_used = if VERSIONS.contains(&asked) { asked } else { VERSIONS[0] };
-            ok(
-                &id,
-                json!({
-                    "protocolVersion": version_used,
-                    "capabilities": { "tools": { "listChanged": false } },
-                    "serverInfo": { "name": "karman", "title": "Карман", "version": version },
-                    "instructions": INSTRUCTIONS
-                }),
-            )
-        }
-        "ping" => ok(&id, json!({})),
-        "tools/list" => ok(&id, tool_list()),
-        "tools/call" => {
-            let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
-            if tools::find(name).is_none() {
-                return Some(fail(&id, -32602, &format!("Unknown tool: {name}")));
-            }
-            let args = match params.get("arguments") {
-                None | Some(Value::Null) => json!({}),
-                Some(a) if a.is_object() => a.clone(),
-                Some(_) => return Some(fail(&id, -32602, "arguments must be an object")),
-            };
-            match call(name, &args) {
-                Ok(v) => ok(&id, json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&v).unwrap_or_default() }], "isError": false })),
-                Err(e) => ok(&id, json!({ "content": [{ "type": "text", "text": e }], "isError": true })),
-            }
-        }
-        "resources/list" => ok(&id, json!({ "resources": [] })),
-        "resources/templates/list" => ok(&id, json!({ "resourceTemplates": [] })),
-        "prompts/list" => ok(&id, json!({ "prompts": [] })),
-        _ => fail(&id, -32601, &format!("Method not found: {method}")),
-    })
+    kit::handle(&SERVER, &tools(), line, version, call)
+}
+
+/// Описание расширения для приложения Claude (`manifest.json` внутри `.mcpb`).
+/// `command` — полный путь к `karman.exe`, `dir` — папка данных «Кармана», `platform` — win32, darwin или linux.
+pub fn manifest(version: &str, command: &str, dir: &str, platform: &str) -> Value {
+    kit::manifest(&SERVER, &EXTENSION, &tools(), version, command, dir, platform)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn link_proof_depends_on_key_role_and_nonce() {
@@ -177,5 +131,35 @@ mod tests {
         assert_eq!(run(r#"{"jsonrpc":"2.0","id":7,"method":"sampling/createMessage"}"#)["error"]["code"], -32601);
         assert_eq!(run("не json")["error"]["code"], -32700);
         assert_eq!(run("[1,2]")["error"]["code"], -32600);
+    }
+
+    #[test]
+    fn bundle_is_a_zip_with_a_valid_manifest() {
+        let m = manifest("0.15.3", r"C:\Users\Пётр\AppData\Local\Karman\karman.exe", r"C:\Users\Пётр\AppData\Roaming\io.github.primusfixer.karman", "win32");
+        assert_eq!(m["name"], "karman");
+        assert_eq!(m["server"]["entry_point"], "karman.exe");
+        assert_eq!(m["server"]["mcp_config"]["args"][0], "--mcp");
+        assert_eq!(m["tools"].as_array().unwrap().len(), tools::list().len());
+        let data = bundle(&m, b"\x89PNG\r\n\x1a\nicon").unwrap();
+        assert_eq!(&data[..4], b"PK\x03\x04");
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(data)).unwrap();
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut z.by_name("manifest.json").unwrap(), &mut text).unwrap();
+        let back: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(back["server"]["mcp_config"]["env"]["KARMAN_DIR"], r"C:\Users\Пётр\AppData\Roaming\io.github.primusfixer.karman");
+        assert_eq!(z.by_name("icon.png").unwrap().size(), 12);
+    }
+
+    /// Аннотации инструментов — как были до общего модуля: удаляет только delete_operation.
+    #[test]
+    fn annotations_are_the_same_as_before_kit() {
+        let list = tool_list();
+        for t in list["tools"].as_array().unwrap() {
+            let name = t["name"].as_str().unwrap();
+            let write = tools::is_write(name);
+            assert_eq!(t["annotations"]["readOnlyHint"], !write, "{name}");
+            assert_eq!(t["annotations"]["destructiveHint"], name == "delete_operation", "{name}");
+            assert_eq!(t["annotations"]["idempotentHint"], !write || name == "set_work_day", "{name}");
+        }
     }
 }
