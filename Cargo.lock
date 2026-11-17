@@ -595,6 +595,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "constant_time_eq"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9eb6feb175df65d0a3ccd3e73484e940d0ac664e8034f0519fd49a93db3071d9"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "cookie"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1421,9 +1430,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 6.0.0",
  "rand_core 0.10.1",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -2114,14 +2125,16 @@ dependencies = [
 
 [[package]]
 name = "karman-app"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.3.4",
  "if-addrs",
  "karman-cloud",
  "karman-core",
- "karman-secure",
+ "kit-core",
+ "kit-secure",
+ "kit-tauri",
  "qrcode",
  "serde",
  "serde_json",
@@ -2141,7 +2154,7 @@ dependencies = [
 
 [[package]]
 name = "karman-cloud"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "base64 0.22.1",
  "karman-core",
@@ -2153,7 +2166,7 @@ dependencies = [
 
 [[package]]
 name = "karman-core"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -2161,6 +2174,7 @@ dependencies = [
  "chacha20poly1305",
  "crc32fast",
  "getrandom 0.3.4",
+ "kit-core",
  "miniz_oxide 0.8.9",
  "rusqlite",
  "serde",
@@ -2172,8 +2186,32 @@ dependencies = [
 ]
 
 [[package]]
-name = "karman-secure"
-version = "0.15.1"
+name = "keyboard-types"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fbe853b403ae61a04233030ae8a79d94975281ed9770a1f9e246732b534b28d"
+dependencies = [
+ "bitflags 2.13.2",
+ "serde",
+]
+
+[[package]]
+name = "kit-core"
+version = "0.4.0"
+source = "git+https://github.com/primus-fixer/kit?rev=2869254ea0820dfa45cef690f95555db1661eb87#2869254ea0820dfa45cef690f95555db1661eb87"
+dependencies = [
+ "argon2",
+ "blake2",
+ "getrandom 0.3.4",
+ "serde_json",
+ "thiserror 2.0.21",
+ "zip",
+]
+
+[[package]]
+name = "kit-secure"
+version = "0.4.0"
+source = "git+https://github.com/primus-fixer/kit?rev=2869254ea0820dfa45cef690f95555db1661eb87#2869254ea0820dfa45cef690f95555db1661eb87"
 dependencies = [
  "jni",
  "ndk-context",
@@ -2183,13 +2221,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "keyboard-types"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fbe853b403ae61a04233030ae8a79d94975281ed9770a1f9e246732b534b28d"
+name = "kit-tauri"
+version = "0.4.0"
+source = "git+https://github.com/primus-fixer/kit?rev=2869254ea0820dfa45cef690f95555db1661eb87#2869254ea0820dfa45cef690f95555db1661eb87"
 dependencies = [
- "bitflags 2.13.2",
+ "kit-core",
+ "kit-secure",
  "serde",
+ "tauri",
+ "tauri-plugin-biometric",
 ]
 
 [[package]]
@@ -2429,6 +2469,18 @@ name = "nix"
 version = "0.31.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
+]
+
+[[package]]
+name = "nix"
+version = "0.32.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77730ed34f01f4990cb2ea67fec715ecebc6fab9a6396cf83c5529b13f581bdc"
 dependencies = [
  "bitflags 2.13.2",
  "cfg-if",
@@ -2788,7 +2840,7 @@ checksum = "9cf20a545b305cf1da722b236b5155c9bb35f1d5ceb28c048bd96ca842f41b5b"
 dependencies = [
  "android_system_properties",
  "log",
- "nix",
+ "nix 0.31.3",
  "objc2",
  "objc2-foundation",
  "objc2-ui-kit",
@@ -4703,6 +4755,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
+name = "typed-path"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ce898823d8cd0f028662d2f349694b1af0a5cc9be83f1d213a00d3147445e1e"
+
+[[package]]
 name = "typeid"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5655,6 +5713,20 @@ name = "zeroize"
 version = "1.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879"
+dependencies = [
+ "zeroize_derive",
+]
+
+[[package]]
+name = "zeroize_derive"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "zerotrie"
@@ -5687,6 +5759,25 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
+]
+
+[[package]]
+name = "zip"
+version = "9.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "953a376f4930ed5af88e1e65948385f76866b45e7f75b21ac275327d0eeb9b46"
+dependencies = [
+ "constant_time_eq",
+ "crc32fast",
+ "flate2",
+ "getrandom 0.4.3",
+ "indexmap 2.14.2",
+ "libc",
+ "memchr",
+ "nix 0.32.0",
+ "typed-path",
+ "windows-sys 0.61.2",
+ "zeroize",
 ]
 
 [[package]]

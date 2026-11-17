@@ -17,7 +17,12 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 karman-core = { path = "../../crates/karman-core" }
-karman-secure = { path = "../../crates/karman-secure" }
+# Общий модуль kit 0.4.0: ключ базы в хранилище системы, PIN-код и вход
+# (https://github.com/primus-fixer/kit). Ссылка — на коммит версии; когда у kit появится метка
+# v0.4.0, `rev` заменяется на `tag = "v0.4.0"`.
+kit-core = { git = "https://github.com/primus-fixer/kit", rev = "2869254ea0820dfa45cef690f95555db1661eb87" }
+kit-secure = { git = "https://github.com/primus-fixer/kit", rev = "2869254ea0820dfa45cef690f95555db1661eb87" }
+kit-tauri = { git = "https://github.com/primus-fixer/kit", rev = "2869254ea0820dfa45cef690f95555db1661eb87" }
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 if-addrs = "0.13"
 getrandom = "0.3"

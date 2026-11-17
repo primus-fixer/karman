@@ -24,3 +24,5 @@ spake2 = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
+# Образцы форматов: хеш PIN-кода из базы 0.15.1 проверяется тем же кодом, что у приложения.
+kit-core = { git = "https://github.com/primus-fixer/kit", rev = "2869254ea0820dfa45cef690f95555db1661eb87" }

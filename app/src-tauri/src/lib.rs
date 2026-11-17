@@ -1,15 +1,17 @@
 //! «Карман»: мост между экранами и ядром.
 //!
 //! Экраны получают одну сводку (`snapshot`) и после каждого изменения — новую.
-//! Вся логика расчётов — в ядре `karman-core`. Вход по PIN-коду и отпечатку — в `guard`.
+//! Вся логика расчётов — в ядре `karman-core`. Вход по PIN-коду, отпечатку и Windows Hello и ключи
+//! в хранилище системы — из общего модуля kit (`kit_tauri::guard`, `names`): пока «Карман» заблокирован,
+//! команды с данными отвечают `locked`.
 
 mod ai;
 mod backup;
 mod claude;
 mod cloud;
 mod fx;
-mod guard;
 mod lan;
+mod names;
 mod notify;
 mod overtime;
 
@@ -32,7 +34,7 @@ use base64::Engine;
 use std::time::Instant;
 use tauri::{AppHandle, Manager, State};
 
-use guard::{Guard, LOCKED};
+use kit_tauri::guard::{self, Lock};
 
 struct AppState {
     store: Arc<Mutex<Store>>,
@@ -41,8 +43,8 @@ struct AppState {
     db_path: PathBuf,
     /// Связь по Wi-Fi: код, связанные устройства, сервер обмена.
     lan: lan::Lan,
-    guard: Mutex<Guard>,
-    notice: Mutex<Option<String>>,
+    /// Вход по PIN-коду: заблокирован ли «Карман».
+    guard: Lock,
     /// Вход в облако по коду, который ждёт ввода.
     cloud_login: Mutex<Option<cloud::Login>>,
 }
@@ -56,10 +58,20 @@ impl AppState {
 
     /// Пока «Карман» заблокирован, команды с данными отвечают `locked`.
     fn unlocked(&self) -> Res<()> {
-        if self.guard.lock().map_err(err)?.locked {
-            return Err(LOCKED.into());
-        }
-        Ok(())
+        self.guard.check()
+    }
+}
+
+/// Местные настройки базы — для входа по PIN-коду: там лежат его хеш и счётчик ошибок.
+struct StoreMeta(Arc<Mutex<Store>>);
+
+impl guard::Meta for StoreMeta {
+    fn get(&self, key: &str) -> Res<Option<String>> {
+        self.0.lock().map_err(err)?.meta(key).map_err(err)
+    }
+
+    fn set(&self, key: &str, value: &str) -> Res<()> {
+        self.0.lock().map_err(err)?.set_meta(key, value).map_err(err)
     }
 }
 
@@ -115,14 +127,14 @@ fn load_key(dir: &Path) -> Res<[u8; 32]> {
     let sec = dir.join("key.sec");
     let plain = dir.join("key.bin");
     if let Ok(blob) = std::fs::read(&sec) {
-        let k = karman_secure::unprotect(&blob).map_err(|e| format!("ключ базы не достать из хранилища системы: {e}"))?;
+        let k = names::unprotect(&blob).map_err(|e| format!("ключ базы не достать из хранилища системы: {e}"))?;
         return <[u8; 32]>::try_from(k.as_slice()).map_err(|_| "ключ базы повреждён".to_string());
     }
     let key = match std::fs::read(&plain).ok().and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok()) {
         Some(k) => k,
         None => random_key().map_err(err)?,
     };
-    if karman_secure::supported() {
+    if kit_secure::supported() {
         match protect_key(&sec, &key) {
             Ok(()) => wipe(&plain),
             Err(e) => {
@@ -140,8 +152,8 @@ fn load_key(dir: &Path) -> Res<[u8; 32]> {
 }
 
 fn protect_key(path: &Path, key: &[u8; 32]) -> Res<()> {
-    let blob = karman_secure::protect(key).map_err(err)?;
-    if karman_secure::unprotect(&blob).map_err(err)?.as_slice() != key {
+    let blob = names::protect(key).map_err(err)?;
+    if names::unprotect(&blob).map_err(err)?.as_slice() != key {
         return Err("проверка защищённого ключа не сошлась".into());
     }
     let tmp = path.with_extension("tmp");
@@ -861,18 +873,32 @@ pub fn run() {
             // Снимки, которые так и не прикрепили к операции, убираем через сутки.
             let _ = store.gc_blobs();
             let today = Date::today_utc().to_string();
-            let guard = Guard::new(guard::has_pin(&store));
             // Коннектор для приложения Claude: ждём посредника `karman --mcp` на 127.0.0.1.
             #[cfg(desktop)]
             claude::start(app.handle().clone(), dir.clone());
+            // С PIN-кодом «Карман» открывается заблокированным.
+            let store = Arc::new(Mutex::new(store));
+            let handle = app.handle().clone();
+            let hooks = guard::Hooks {
+                // Пока «Карман» заблокирован, по прежнему коду связи не подключиться.
+                on_lock: Box::new(move || {
+                    if let Some(state) = handle.try_state::<AppState>() {
+                        stop_sync(&state);
+                    }
+                }),
+                // Вернулись в «Карман» — заодно обменяться с облаком, если давно не обменивались.
+                on_resume: Box::new(cloud::resumed),
+            };
+            let guard = Lock::new(names::APP, StoreMeta(store.clone()), hooks);
+            guard.set_notice(notice);
+            app.manage(guard.clone());
             app.manage(AppState {
-                store: Arc::new(Mutex::new(store)),
+                store,
                 me,
                 data_dir: dir,
                 db_path,
                 lan: lan::Lan::default(),
-                guard: Mutex::new(guard),
-                notice: Mutex::new(notice),
+                guard,
                 cloud_login: Mutex::new(None),
             });
             fx::refresh_on_start(app.handle().clone(), today);
