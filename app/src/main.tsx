@@ -1,13 +1,18 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-// Шрифты и экран входа — из общего модуля kit; остальной вид «Кармана» пока свой (docs/kit.md).
+// Общий вид приложений на kit: шрифты, стили, своя полоса окна; свои стили «Кармана» — после общих.
 import '@primus-fixer/kit/ui/fonts';
-import '@primus-fixer/kit/ui/lock.css';
+import '@primus-fixer/kit/ui/styles.css';
 import './styles.css';
+import { TitleBar, customTitleBar } from '@primus-fixer/kit/ui';
 import App from './App';
+
+// Своя полоса окна — сразу, чтобы раскладка не прыгала.
+if (customTitleBar) document.documentElement.classList.add('own-titlebar');
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
+    <TitleBar />
     <App />
   </StrictMode>,
 );

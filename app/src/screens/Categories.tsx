@@ -62,11 +62,11 @@ function CategoryEditor({ initial, onSave, onCancel }: { initial: Category; onSa
         save();
       }}
     >
-      <label className="label">
+      <label className="field">
         <span>Название</span>
-        <input className="field" value={name} maxLength={24} autoFocus onChange={(e) => setName(e.target.value)} placeholder="Например, Дача" aria-label="Название категории" />
+        <input className="input" value={name} maxLength={24} autoFocus onChange={(e) => setName(e.target.value)} placeholder="Например, Дача" aria-label="Название категории" />
       </label>
-      <span className="note">Иконка</span>
+      <span className="small muted">Иконка</span>
       <div className="iconpick" role="radiogroup" aria-label="Иконка категории">
         {CAT_ICONS.map((i) => (
           <button key={i} type="button" role="radio" aria-checked={i === icon} aria-label={ICON_LABEL[i] ?? i} title={ICON_LABEL[i]} className={'iconbtn' + (i === icon ? ' sel' : '')} onClick={() => setIcon(i)}>
@@ -75,11 +75,11 @@ function CategoryEditor({ initial, onSave, onCancel }: { initial: Category; onSa
         ))}
       </div>
       <ErrorText text={error} />
-      <div className="wrap">
+      <div className="sec-actions">
         <button type="submit" className="btn own" disabled={busy || !name.trim()}>
           {busy ? 'Сохраняю…' : initial.id ? 'Сохранить' : 'Добавить'}
         </button>
-        <button type="button" className="btn ghost" onClick={onCancel} disabled={busy}>
+        <button type="button" className="btn line" onClick={onCancel} disabled={busy}>
           Отмена
         </button>
       </div>
@@ -113,7 +113,7 @@ export default function CategoriesSection({ snap, run }: { snap: Snapshot; run: 
   const custom = (snap.categories ?? []).length;
   return (
     <Cut id="cats" title="Категории трат">
-      <p className="note" style={{ marginBottom: 8 }}>
+      <p className="small muted" style={{ marginBottom: 8 }}>
         Категории личных и семейных трат. Скрытую не предлагает окно ввода, а записанные операции, лимиты и регулярные платежи остаются с ней. Свои категории видны на всех ваших устройствах.
       </p>
       {OWN_OUT_ALL.map((id) => {
@@ -129,19 +129,19 @@ export default function CategoriesSection({ snap, run }: { snap: Snapshot; run: 
           <div key={id} className={'setrow catrow' + (hidden ? ' off' : '')} style={{ cursor: 'default', minHeight: 54 }}>
             <span style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
               <Icon name={c.i} size={20} />
-              <span className="stack" style={{ minWidth: 0 }}>
+              <span className="stack gap0" style={{ minWidth: 0 }}>
                 <span>{c.n}</span>
-                {note && <span className="note">{note.charAt(0).toUpperCase() + note.slice(1)}</span>}
+                {note && <span className="small muted">{note.charAt(0).toUpperCase() + note.slice(1)}</span>}
               </span>
             </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 'none' }}>
               {own && (
-                <button type="button" className="btn ghost small" onClick={() => setEdit(id)} aria-label={`Изменить «${c.n}»`}>
+                <button type="button" className="btn line small" onClick={() => setEdit(id)} aria-label={`Изменить «${c.n}»`}>
                   Изменить
                 </button>
               )}
               {id === 'other' ? (
-                <span className="note">всегда</span>
+                <span className="small muted">всегда</span>
               ) : (
                 <input
                   type="checkbox"
@@ -159,7 +159,7 @@ export default function CategoriesSection({ snap, run }: { snap: Snapshot; run: 
       {edit === 'new' ? (
         <CategoryEditor initial={{ id: '', name: '', icon: 'star' }} onSave={save} onCancel={() => setEdit(null)} />
       ) : (
-        <button type="button" className="btn ghost" style={{ marginTop: 10, alignSelf: 'flex-start' }} onClick={() => setEdit('new')} disabled={custom >= 50}>
+        <button type="button" className="btn line" style={{ marginTop: 10, alignSelf: 'flex-start' }} onClick={() => setEdit('new')} disabled={custom >= 50}>
           Добавить категорию
         </button>
       )}

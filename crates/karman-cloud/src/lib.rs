@@ -24,7 +24,7 @@ use kit_core::Result;
 use serde::{Deserialize, Serialize};
 use std::cell::{Cell, RefCell};
 
-pub use http::now;
+pub use kit_cloud::now;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -148,7 +148,7 @@ impl TokenAnswer {
 
 impl Auth {
     pub fn new(provider: Provider, client: Client, ends: Endpoints) -> Auth {
-        Auth { provider, client, ends, http: Http::new() }
+        Auth { provider, client, ends, http: http::http() }
     }
 
     fn form(&self, path: &str, form: &[(&str, &str)]) -> Result<Resp> {

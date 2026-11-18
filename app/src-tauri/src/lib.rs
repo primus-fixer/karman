@@ -42,11 +42,8 @@ struct AppState {
     data_dir: PathBuf,
     db_path: PathBuf,
     /// Связь по Wi-Fi: код, связанные устройства, сервер обмена.
-    lan: lan::Lan,
     /// Вход по PIN-коду: заблокирован ли «Карман».
     guard: Lock,
-    /// Вход в облако по коду, который ждёт ввода.
-    cloud_login: Mutex<Option<cloud::Login>>,
 }
 
 impl AppState {
@@ -662,56 +659,6 @@ fn calc_check() -> Vec<Check> {
 
 // ——— Связь устройств ———
 
-pub(crate) fn local_ipv4() -> Vec<String> {
-    let mut out: Vec<String> = if_addrs::get_if_addrs()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|i| !i.is_loopback())
-        .filter_map(|i| match i.ip() {
-            std::net::IpAddr::V4(v4) if !v4.is_link_local() => Some(v4.to_string()),
-            _ => None,
-        })
-        .collect();
-    // Сначала адреса домашних сетей и точки доступа телефона.
-    out.sort_by_key(|ip| if ip.starts_with("192.168.") { 0 } else if ip.starts_with("10.") { 1 } else { 2 });
-    out.dedup();
-    out
-}
-
-pub(crate) fn qr_svg(text: &str) -> Res<String> {
-    use qrcode::render::svg;
-    let code = qrcode::QrCode::new(text.as_bytes()).map_err(err)?;
-    Ok(code
-        .render::<svg::Color>()
-        .min_dimensions(232, 232)
-        .dark_color(svg::Color("#15232D"))
-        .light_color(svg::Color("#FFFFFF"))
-        .build())
-}
-
-/// «Карман» заблокировался — код связи больше не действует. Обмен со связанными устройствами идёт дальше.
-fn stop_sync(state: &AppState) {
-    lan::on_lock(state);
-}
-
-fn version_num(v: &str) -> (u32, u32, u32) {
-    let mut it = v.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
-    (it.next().unwrap_or(0), it.next().unwrap_or(0), it.next().unwrap_or(0))
-}
-
-/// Что сказать, если версии на устройствах разные: записи новых видов старая версия не показывает.
-pub(crate) fn version_hint(peer_app: &str) -> String {
-    let mine = env!("CARGO_PKG_VERSION");
-    if peer_app.is_empty() {
-        return format!("На другом устройстве «Карман» старше 0.5: переводы и новые записи там не видны, пока его не обновите до {mine}.");
-    }
-    match version_num(peer_app).cmp(&version_num(mine)) {
-        std::cmp::Ordering::Less => format!("На другом устройстве версия {peer_app} — обновите его до {mine}, чтобы видеть там все записи."),
-        std::cmp::Ordering::Greater => format!("На другом устройстве версия {peer_app}, новее этой ({mine}) — обновите это устройство, чтобы видеть все записи."),
-        std::cmp::Ordering::Equal => String::new(),
-    }
-}
-
 // ——— Снимки и файлы чеков ———
 
 #[derive(Serialize)]
@@ -878,11 +825,7 @@ pub fn run() {
             let handle = app.handle().clone();
             let hooks = guard::Hooks {
                 // Пока «Карман» заблокирован, по прежнему коду связи не подключиться.
-                on_lock: Box::new(move || {
-                    if let Some(state) = handle.try_state::<AppState>() {
-                        stop_sync(&state);
-                    }
-                }),
+                on_lock: Box::new(move || lan::on_lock(&handle)),
                 // Вернулись в «Карман» — заодно обменяться с облаком, если давно не обменивались.
                 on_resume: Box::new(cloud::resumed),
             };
@@ -891,14 +834,14 @@ pub fn run() {
             app.manage(guard.clone());
             #[cfg(desktop)]
             let claude_dir = dir.clone();
+            app.manage(cloud::Sky::new(cloud::settings(), store.clone(), Some(Box::new(cloud::ByCode))));
+            app.manage(lan::Wifi::new(&karman_core::lan::LAN, &names::KEYS, store.clone(), me.id.clone(), me.name.clone()));
             app.manage(AppState {
                 store,
                 me,
                 data_dir: dir,
                 db_path,
-                lan: lan::Lan::default(),
                 guard,
-                cloud_login: Mutex::new(None),
             });
             // Коннектор для приложения Claude: ждём посредника `karman --mcp` на 127.0.0.1 —
             // после того как база открыта, чтобы первый же запрос нашёл её.

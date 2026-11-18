@@ -272,16 +272,9 @@ export type Category = { id: string; name: string; icon: string };
 
 export type Check = { ok: boolean; text: string };
 export type DeviceInfo = { id: string; name: string; os: string; arch: string; version: string; data_dir: string; encrypted: boolean; cipher: string; events: number; unknown: number };
-/** Показанный код связи: «6WVG-HEWK», сколько секунд ещё действует, сколько попыток осталось; QR — код и адрес для телефона. */
-export type LanCode = { code: string; secs: number; left: number; wrong: number; qr_svg: string; hosts: string[]; port: number };
-/** Связанное устройство: в сети ли, идёт ли обмен, последний обмен (unix), версия, почему не получился обмен. */
-export type LanPeer = { id: string; name: string; online: boolean; syncing: boolean; last: number | null; app: string; error: string | null };
-/** Устройство рядом в сети с показанным кодом. */
-export type LanNearby = { device: string; name: string; addr: string };
-export type LanView = { name: string; hosts: string[]; code: LanCode | null; note: string | null; peers: LanPeer[]; nearby: LanNearby[] };
-/** Связь по коду или обмен: с кем, сколько ушло и пришло; `remembered` — устройство запомнено (а не разовый обмен по QR прежней версии). */
-export type PairResult = { peer_name: string; sent: number; received: number; files_sent: number; files_received: number; hint: string; remembered: boolean };
-export type LanEvent = { received: number; paired: string | null };
+/** Связь по Wi-Fi и облако — общие разделы kit: их данные и команды одинаковы у приложений на kit. */
+export type { CloudEvent, CloudLast, CloudStatus, CloudStep, LanCode, LanEvent, LanNearby, LanPeer, LanView, PairResult } from '@primus-fixer/kit/ui';
+import type { CloudEvent, CloudStatus, LanEvent, LanView, PairResult } from '@primus-fixer/kit/ui';
 /** Курс валюты на дату: cbr — ЦБ, manual — из настроек, none — курса нет; fallback — сайт ЦБ не ответил, это последние сохранённые курсы. */
 export type FxQuote = { rate: number; source: 'cbr' | 'manual' | 'none'; date: string | null; fallback?: boolean };
 export type ReceiptView = { date: string; time: string; sum: number; fn_number: string; fd: string; fp: string; kind: string };
@@ -307,35 +300,6 @@ export type BackupStatus = {
 /** Что в файле копии (пароль подошёл, файл прочитан целиком). */
 export type BackupInfo = { created: number; device: string; app: string; ops: number; trips: number; events: number; blobs: number; bytes: number };
 export type RestoreResult = { events: number; blobs: number; ops: number; trips: number; snapshot: Snapshot };
-
-/** yadisk — Яндекс Диск по паролю приложения, webdav — другой сервер WebDAV; yandex и google — вход по коду. */
-export type CloudProvider = 'yadisk' | 'webdav' | 'yandex' | 'google';
-/** Чем занят обмен с облаком. */
-export type CloudStep = { step: 'events' } | { step: 'upload'; done: number; total: number } | { step: 'download'; done: number; total: number };
-export type CloudLast = { at: number; received: number; sent: number; files_received: number; files_sent: number; files_waiting: number; problems: string[] };
-export type CloudProblem = { kind: 'auth' | 'space' | 'offline' | 'server' | 'gone' | 'replaced' | 'conflict' | 'newer' | 'format' | 'cancelled'; text: string; at: number };
-/** Облако на этом устройстве: off — не подключено, signin — ждём код, password — нужен пароль копий, relogin — вход устарел, ready — подключено. */
-export type CloudStatus = {
-  desktop: boolean;
-  /** Чем можно подключиться: password — логин и пароль, code — вход по коду в браузере. */
-  providers: { code: CloudProvider; title: string; kind: 'password' | 'code' }[];
-  state: 'off' | 'signin' | 'password' | 'relogin' | 'ready';
-  provider: CloudProvider | null;
-  title: string | null;
-  login: { provider: CloudProvider; title: string; user_code: string; url: string; seconds_left: number } | null;
-  /** Вход по паролю: сервер и логин. */
-  dav: { url: string; host: string; user: string } | null;
-  cloud_exists: boolean;
-  backup_password: boolean;
-  every: 'auto' | 'manual';
-  running: boolean;
-  progress: CloudStep | null;
-  last: CloudLast | null;
-  error: CloudProblem | null;
-  key_pending: boolean;
-  notice: string | null;
-};
-export type CloudEvent = { running: boolean; received: number; step: CloudStep | null };
 
 /** Файл копии уходит в ядро кусками по 4 МБ: так он читается и на телефоне, и без лишней памяти. */
 const UPLOAD_CHUNK = 4 << 20;
@@ -457,18 +421,21 @@ export const api = {
   /** Наряды и дни одним действием; orders в ответе — номера сохранённых нарядов (для «Вернуть»). */
   otApply: (orders: WorkOrder[], del: string[], days: WorkDay[]) => invoke<{ snap: Snapshot; orders: string[] }>('ot_apply', { today: today(), orders, delete: del, days }),
   cloudStatus: () => invoke<CloudStatus>('cloud_status'),
-  cloudLogin: (provider: CloudProvider) => invoke<CloudStatus>('cloud_login', { provider }),
-  cloudOpenPage: () => invoke<null>('cloud_open_page'),
+  /** Вход по коду в браузере (Яндекс, Google) — только у «Кармана». */
+  cloudLogin: (provider: string) => invoke<CloudStatus>('cloud_login', { provider }),
+  cloudOpenPage: () => invoke<void>('cloud_open_page'),
   /** Вход по логину и паролю: Яндекс Диск (пароль приложения) или другой сервер WebDAV. */
-  cloudDavLogin: (kind: 'yadisk' | 'webdav', url: string | null, user: string, password: string) => invoke<CloudStatus>('cloud_dav_login', { kind, url, user, password }),
+  cloudDavLogin: (kind: string, url: string | null, user: string, password: string) => invoke<CloudStatus>('cloud_dav_login', { kind, url, user, password }),
   /** Страница Яндекс ID, где создают пароль приложения. */
-  cloudAppPasswords: () => invoke<null>('cloud_app_passwords'),
+  cloudAppPasswords: () => invoke<void>('cloud_app_passwords'),
   cloudLoginCancel: () => invoke<CloudStatus>('cloud_login_cancel'),
   cloudLoginCheck: () => invoke<CloudStatus>('cloud_login_check'),
   cloudPassword: (password: string) => invoke<CloudStatus>('cloud_password', { password }),
   cloudSyncNow: () => invoke<CloudStatus>('cloud_sync_now'),
   cloudEvery: (every: CloudStatus['every']) => invoke<CloudStatus>('cloud_every', { every }),
   cloudDisconnect: (wipe: boolean) => invoke<CloudStatus>('cloud_disconnect', { wipe }),
+  onCloud: (cb: (e: CloudEvent) => void) => onCloud(cb),
+  onLan: (cb: (e: LanEvent) => void) => onLan(cb),
 };
 
 /** Ядро сообщает, что «Карман» заблокировался (5 минут в фоне). */

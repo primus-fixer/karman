@@ -83,13 +83,13 @@ export default function ChatSheet({ snap, isPhone, onClose, locked }: { snap: Sn
   return (
     <section className="chatsheet" role="dialog" aria-label="Спросить Claude">
       <div className="between" style={{ alignItems: 'center', gap: 6 }}>
-        <h2 className="h2" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <h2 className="sec" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Icon name="spark" size={20} />
           Спросить Claude
         </h2>
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           {items.length > 0 && (
-            <button type="button" className="btn link" disabled={busy} onClick={reset}>
+            <button type="button" className="link-btn warn-text" disabled={busy} onClick={reset}>
               Новый разговор
             </button>
           )}
@@ -101,7 +101,7 @@ export default function ChatSheet({ snap, isPhone, onClose, locked }: { snap: Sn
       <div className="chatlog" ref={log} aria-live="polite">
         {items.length === 0 && !busy && (
           <div className="stack gap10" style={{ padding: '6px 0' }}>
-            <p className="note">Спросите о деньгах, поездках, переработках, бюджете или долгах. Claude видит только то, что запросит в «Кармане».</p>
+            <p className="small muted">Спросите о деньгах, поездках, переработках, бюджете или долгах. Claude видит только то, что запросит в «Кармане».</p>
             <div className="chips">
               {SUGGEST.map((q) => (
                 <button key={q} type="button" className="chip" onClick={() => send(q)}>
@@ -119,29 +119,29 @@ export default function ChatSheet({ snap, isPhone, onClose, locked }: { snap: Sn
                 {m.actions.map((a, j) => (
                   <span key={j}>✓ {a}</span>
                 ))}
-                <span className="note">Отменить — кнопкой «Вернуть» в сообщении внизу или в Настройки → Claude</span>
+                <span className="small muted">Отменить — кнопкой «Вернуть» в сообщении внизу или в Настройки → Claude</span>
               </span>
             )}
             {(m.confirm ?? []).map((c) => (
               <span key={c.id} className="chatconfirm" role="group" aria-label="Claude предлагает удалить">
                 <span>{c.text}</span>
                 {c.state === 'wait' ? (
-                  <span className="wrap">
+                  <span className="sec-actions">
                     <button type="button" className="btn warn" disabled={busy} onClick={() => decide(c.id, true)}>
                       {c.button}
                     </button>
-                    <button type="button" className="btn ghost" disabled={busy} onClick={() => decide(c.id, false)}>
+                    <button type="button" className="btn line" disabled={busy} onClick={() => decide(c.id, false)}>
                       Оставить
                     </button>
                   </span>
                 ) : (
-                  <span className="note">{c.state === 'done' ? '✓ Сделано — отменить можно кнопкой «Вернуть»' : c.state === 'kept' ? 'Оставлено как есть' : 'Не получилось'}</span>
+                  <span className="small muted">{c.state === 'done' ? '✓ Сделано — отменить можно кнопкой «Вернуть»' : c.state === 'kept' ? 'Оставлено как есть' : 'Не получилось'}</span>
                 )}
               </span>
             ))}
           </div>
         ))}
-        {busy && <div className="chatmsg assistant faint">Claude думает…</div>}
+        {busy && <div className="chatmsg assistant muted3">Claude думает…</div>}
       </div>
       {error && (
         <p className="error" role="alert">
@@ -149,12 +149,12 @@ export default function ChatSheet({ snap, isPhone, onClose, locked }: { snap: Sn
         </p>
       )}
       <div className="chatin">
-        <textarea ref={input} className="field" rows={2} aria-label="Вопрос Claude" placeholder="Например: сколько я потратил на такси в октябре?" value={text} maxLength={2000} onChange={(e) => setText(e.target.value)} onKeyDown={keys} />
+        <textarea ref={input} className="input" rows={2} aria-label="Вопрос Claude" placeholder="Например: сколько я потратил на такси в октябре?" value={text} maxLength={2000} onChange={(e) => setText(e.target.value)} onKeyDown={keys} />
         <button type="button" className="btn work" disabled={busy || !text.trim()} onClick={() => send()}>
           Спросить
         </button>
       </div>
-      <p className="note" style={{ fontSize: 12, lineHeight: '16px' }}>
+      <p className="small muted" style={{ fontSize: 12, lineHeight: '16px' }}>
         {write ? 'Claude может записывать — каждое действие с «Вернуть».' : 'Claude только читает; запись включается в Настройки → ИИ.'}
         {view && view.usd > 0 ? ' Разговор: ' + costText(view.usd, snap.fx) + '.' : ''}
       </p>

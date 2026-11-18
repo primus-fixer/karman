@@ -550,11 +550,11 @@ export default function App() {
           <main className="main" style={{ display: 'grid', placeItems: 'center', padding: 24 }}>
             {fatal ? (
               <div className="stack gap12" style={{ maxWidth: 420 }}>
-                <h1 className="h1">Карман</h1>
+                <h1 className="screen-title">Карман</h1>
                 <p className="error">{fatal}</p>
               </div>
             ) : (
-              <p className="note">{locked ? '' : 'Открываю базу…'}</p>
+              <p className="small muted">{locked ? '' : 'Открываю базу…'}</p>
             )}
           </main>
         </div>
@@ -641,6 +641,7 @@ export default function App() {
     );
 
   const tab = currentTab();
+  const showFab = isPhone && !entry && !chat && (screen === 'overview' || screen === 'feed' || screen === 'trips');
   const entryEl = entry && (
     <Entry key={entry.key} snap={snap} initial={entry.draft} editing={entry.editing} isPhone={isPhone} mobile={mobile} onSave={(op) => run(api.opSave(op))} onClose={closeEntry} flash={flash} />
   );
@@ -648,11 +649,11 @@ export default function App() {
 
   return (
     <>
-    <div className={'app ' + (isPhone ? 'phone' : 'desktop')} inert={!!overlay}>
+    <div className={isPhone ? 'app phone' : 'app wide'} inert={!!overlay}>
       {!isPhone && (
         <aside className="side">
-          <p className="logo">Карман</p>
-          <button type="button" className="newop" aria-expanded={!!entry} onClick={() => (entry ? setEntry(null) : openEntry())}>
+          <p className="wordmark num">Карман</p>
+          <button type="button" className="btn primary side-add" aria-expanded={!!entry} onClick={() => (entry ? setEntry(null) : openEntry())}>
             <Icon name={entry ? 'x' : 'plus'} size={20} stroke={2} />
             Новая операция
           </button>
@@ -671,7 +672,7 @@ export default function App() {
         </aside>
       )}
       <main className="main" ref={mainRef}>
-        <div className={'inner' + (screen === 'trip' ? '' : ' narrow')}>{body}</div>
+        <div className={'inner' + (screen === 'trip' ? '' : ' narrow') + (showFab ? ' with-fab' : '')}>{body}</div>
       </main>
       {!isPhone && (chatEl || entryEl)}
       {isPhone && (
@@ -690,7 +691,7 @@ export default function App() {
           {chatEl}
         </>
       )}
-      {isPhone && !entry && !chat && (screen === 'overview' || screen === 'feed' || screen === 'trips') && (
+      {showFab && (
         <button type="button" className="fab" aria-label="Записать операцию" onClick={() => openEntry()}>
           <Icon name="plus" size={26} stroke={2} />
         </button>
@@ -702,11 +703,12 @@ export default function App() {
         </>
       )}
       {toast && (
-        <div key={toast.key} className="toast" role="status">
+        <div key={toast.key} className={toast.undo ? 'toast with-action' : 'toast'} role="status">
           <span>{toast.text}</span>
           {toast.undo && (
             <button
               type="button"
+              className="toast-btn"
               onClick={() => {
                 toast.undo?.();
                 setToast(null);

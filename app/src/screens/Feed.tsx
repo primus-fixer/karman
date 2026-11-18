@@ -35,27 +35,27 @@ export default function Feed({ snap, act }: { snap: Snapshot; act: OpActions }) 
 
   return (
     <div className="stack gap12">
-      <h1 className="h1">Лента</h1>
-      <Seg
+      <h1 className="screen-title">Лента</h1>
+      <Seg cols
         label="Чьи операции показать"
         value={scope}
-        onPick={setScope}
-        items={[
-          { id: 'all', label: 'Всё' },
-          { id: 'own', label: 'Личное', tone: 'own' },
-          { id: 'trips', label: 'Поездки', tone: 'work' },
+        onChange={setScope}
+        options={[
+          ['all', 'Всё'],
+          ['own', 'Личное', 'own'],
+          ['trips', 'Поездки', 'work'],
         ]}
       />
-      <div className="between note">
+      <div className="between small muted">
         <span style={{ flex: 'none' }}>{monthName(snap.today)}</span>
         <span className="num" style={{ textAlign: 'right' }}>
           {summary.join(', ')}
         </span>
       </div>
-      {groups.length === 0 && <p className="empty">Операций пока нет. Запишите первую кнопкой «+».</p>}
-      <div className="stack">
+      {groups.length === 0 && <p className="row muted">Операций пока нет. Запишите первую кнопкой «+».</p>}
+      <div className="stack gap0">
         {groups.map((g) => (
-          <section key={g.date} className="stack">
+          <section key={g.date} className="stack gap0">
             <div className="dayhead">
               <h2 style={{ margin: 0, font: 'inherit' }}>{(g.date === snap.today ? 'Сегодня, ' : g.date === yesterday ? 'Вчера, ' : '') + dMon(g.date)}</h2>
               <span className="num">{g.out ? '−' + rub(g.out) : ''}</span>

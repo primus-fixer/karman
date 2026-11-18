@@ -137,7 +137,7 @@ function MonthsChart({ months }: { months: MonthStat[] }) {
   };
   return (
     <div className="stack gap10">
-      <div className="legend" aria-hidden="true">
+      <div className="legend small muted" aria-hidden="true">
         <span>
           <i style={{ background: 'var(--serOwn)' }} />
           Доходы
@@ -201,8 +201,8 @@ function MonthsChart({ months }: { months: MonthStat[] }) {
           </svg>
         )}
       </div>
-      {empty && <p className="note">За эти месяцы доходов и расходов нет.</p>}
-      <button type="button" className="btn link" style={{ alignSelf: 'flex-start', color: 'var(--own)', padding: 0 }} aria-expanded={table} onClick={() => setTable(!table)}>
+      {empty && <p className="small muted">За эти месяцы доходов и расходов нет.</p>}
+      <button type="button" className="link-btn" style={{ alignSelf: 'flex-start' }} aria-expanded={table} onClick={() => setTable(!table)}>
         {table ? 'Скрыть таблицу' : 'Таблица по месяцам'}
       </button>
       {table && (
@@ -238,9 +238,9 @@ function Categories({ stats, span }: { stats: Stats; span: StatSpan }) {
   const max = Math.max(1, ...shown.map((c) => c.amount));
   const cmp = compareText(span, stats);
   return (
-    <div className="stack">
+    <div className="stack gap0">
       <p className="statbig">{rub(stats.spent)}</p>
-      <p className="note" style={{ marginBottom: 10 }}>
+      <p className="small muted" style={{ marginBottom: 10 }}>
         {cmp}
         {cmp && stats.income ? ' · ' : ''}
         {stats.income ? `доходы ${rub(stats.income)}` : ''}
@@ -255,7 +255,7 @@ function Categories({ stats, span }: { stats: Stats; span: StatSpan }) {
             <span className="opicon own" aria-hidden="true">
               <Icon name={cat.i} size={18} />
             </span>
-            <span className="stack" style={{ minWidth: 0, gap: 5 }}>
+            <span className="stack gap0" style={{ minWidth: 0, gap: 5 }}>
               <span className="between">
                 <span className="optitle">{cat.n}</span>
                 <span className="num" style={{ flex: 'none' }}>
@@ -265,7 +265,7 @@ function Categories({ stats, span }: { stats: Stats; span: StatSpan }) {
               <span className="hbar" aria-hidden="true">
                 <i style={{ width: `${Math.max(1, (c.amount / max) * 100)}%` }} />
               </span>
-              <span className="note">
+              <span className="small muted">
                 {share < 1 ? 'меньше 1%' : `${Math.round(share)}%`} расходов · {vs}
               </span>
             </span>
@@ -273,12 +273,12 @@ function Categories({ stats, span }: { stats: Stats; span: StatSpan }) {
         );
       })}
       {gone.length > 0 && (
-        <p className="note" style={{ paddingTop: 10, borderTop: '1px solid var(--line)' }}>
+        <p className="small muted" style={{ paddingTop: 10, borderTop: '1px solid var(--line)' }}>
           {cap(base(span, stats))} были ещё: {gone.map((c) => `${(CATS[c.cat] || CATS.other).n.toLowerCase()} — ${rub(c.prev)}`).join(', ')}.
         </p>
       )}
-      {shown.length === 0 && <p className="empty">Расходов за этот период нет.</p>}
-      <p className="note" style={{ marginTop: 10 }}>
+      {shown.length === 0 && <p className="row muted">Расходов за этот период нет.</p>}
+      <p className="small muted" style={{ marginTop: 10 }}>
         Личные и семейные расходы. Деньги компании, переводы между счетами и долги сюда не входят.
       </p>
     </div>
@@ -288,7 +288,7 @@ function Categories({ stats, span }: { stats: Stats; span: StatSpan }) {
 /** Командировки за год: итоги и список поездок. */
 function Trips({ stats, openTrip }: { stats: Stats; openTrip: (id: string) => void }) {
   const t = stats.trips;
-  if (!t.count) return <p className="empty">В {t.year} году поездок нет.</p>;
+  if (!t.count) return <p className="row muted">В {t.year} году поездок нет.</p>;
   const figs: { label: string; value: string; warn?: boolean }[] = [
     { label: plural(t.count, 'Поездка', 'Поездки', 'Поездок'), value: String(t.count) },
     { label: 'Дней в поездках', value: String(t.days) },
@@ -298,12 +298,12 @@ function Trips({ stats, openTrip }: { stats: Stats; openTrip: (id: string) => vo
     { label: 'Долг перед компанией', value: rub(t.debt), warn: t.debt > 0 },
   ];
   return (
-    <div className="stack">
-      <div className="figures statfigs" style={{ marginBottom: 12 }}>
+    <div className="stack gap0">
+      <div className="figs statfigs" style={{ marginBottom: 12 }}>
         {figs.map((f) => (
-          <div key={f.label} className="figure">
+          <div key={f.label} className="fig">
             <span className="lab">{f.label}</span>
-            <span className={'val' + (f.warn ? ' warn' : '')}>{f.value}</span>
+            <span className={'val' + (f.warn ? ' warn-text' : '')}>{f.value}</span>
           </div>
         ))}
       </div>
@@ -318,17 +318,17 @@ function Trips({ stats, openTrip }: { stats: Stats; openTrip: (id: string) => vo
             </span>
           </span>
           <span className="between">
-            <span className="note">
+            <span className="small muted">
               {dRange(it.start, it.end)}, {it.days}
               {NB}
               {plural(it.days, 'день', 'дня', 'дней')}
               {it.finished ? '' : ', ещё идёт'}
             </span>
-            <span className="note" style={{ flex: 'none' }}>
+            <span className="small muted" style={{ flex: 'none' }}>
               суточные
             </span>
           </span>
-          <span className={'note' + (it.debt > 0 ? ' warn' : '')}>
+          <span className={'small muted' + (it.debt > 0 ? ' warn-text' : '')}>
             {it.debt > 0 ? `Долг перед компанией ${rub(it.debt)}` : `Осталось от суточных ${rub(it.left)}`}
             {it.confirmed ? ` · с документами ${rub(it.confirmed)}` : ''}
           </span>
@@ -384,25 +384,25 @@ export default function StatsScreen({ snap, act, mobile, openTrip }: { snap: Sna
   return (
     <div className="stack gap26" style={{ marginTop: 10 }}>
       <div className="stack gap10">
-        <Seg
+        <Seg cols
           label="Период"
           value={span}
-          onPick={setSpan}
-          items={[
-            { id: 'month', label: 'Месяц' },
-            { id: 'quarter', label: 'Квартал' },
-            { id: 'year', label: 'Год' },
+          onChange={setSpan}
+          options={[
+            ['month', 'Месяц'],
+            ['quarter', 'Квартал'],
+            ['year', 'Год'],
           ]}
         />
         <div className="between" style={{ alignItems: 'center' }}>
           <button type="button" className="iconbtn" aria-label="Предыдущий период" disabled={!stats} onClick={() => stats && setAnchor(addDays(stats.from, -1))}>
             <Icon name="left" size={22} stroke={2} />
           </button>
-          <span className="stack" style={{ alignItems: 'center' }}>
-            <span className="h2" aria-live="polite">
+          <span className="stack gap0" style={{ alignItems: 'center' }}>
+            <span className="sec" aria-live="polite">
               {stats ? periodTitle(at, stats.from) : NB}
             </span>
-            {stats && at === 'quarter' && <span className="note">{dRange(stats.from, stats.to)}</span>}
+            {stats && at === 'quarter' && <span className="small muted">{dRange(stats.from, stats.to)}</span>}
           </span>
           <button type="button" className="iconbtn" aria-label="Следующий период" disabled={!canNext} onClick={() => stats && setAnchor(addDays(stats.to, 1))}>
             <Icon name="right" size={22} stroke={2} />
@@ -413,31 +413,31 @@ export default function StatsScreen({ snap, act, mobile, openTrip }: { snap: Sna
       {stats && at === 'month' && stats.from <= snap.today && snap.today <= stats.to && <MonthCard snap={snap} locked={act.locked} />}
       {stats && (
         <div className="stack gap26" style={{ opacity: busy ? 0.6 : 1, transition: 'opacity .15s' }}>
-          <section className="stack">
-            <h2 className="h2" style={{ marginBottom: 6 }}>
+          <section className="stack gap0">
+            <h2 className="sec" style={{ marginBottom: 6 }}>
               Расходы по категориям
             </h2>
             <Categories stats={stats} span={at} />
           </section>
-          <section className="stack">
-            <h2 className="h2" style={{ marginBottom: 10 }}>
+          <section className="stack gap0">
+            <h2 className="sec" style={{ marginBottom: 10 }}>
               Доходы и расходы по месяцам
             </h2>
             <MonthsChart months={stats.months} />
           </section>
-          <section className="stack">
-            <h2 className="h2" style={{ marginBottom: 10 }}>
+          <section className="stack gap0">
+            <h2 className="sec" style={{ marginBottom: 10 }}>
               Командировки за {stats.trips.year} год
             </h2>
             <Trips stats={stats} openTrip={openTrip} />
           </section>
           {!mobile && (
             <section className="stack gap10">
-              <button type="button" className="btn ghost" style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 8 }} disabled={saving || busy} onClick={exportXlsx}>
+              <button type="button" className="btn line" style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 8 }} disabled={saving || busy} onClick={exportXlsx}>
                 <Icon name="download" size={18} />
                 Выгрузить в Excel
               </button>
-              <p className="note">
+              <p className="small muted">
                 Операции за {periodWhat(at, stats.from)}, итоги по категориям и по месяцам, командировки за {stats.trips.year} год — файлом в «Загрузки».
               </p>
             </section>

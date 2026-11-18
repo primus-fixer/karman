@@ -33,16 +33,16 @@ function GoalMove({ snap, view, take, act, onDone }: { snap: Snapshot; view: Goa
   return (
     <div className="stack gap10" style={{ paddingTop: 6 }}>
       <div className="form-grid">
-        <label className="label">
+        <label className="field">
           <span>Сумма, ₽</span>
-          <input className="field num" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus />
+          <input className="input num" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus />
         </label>
-        <label className="label">
+        <label className="field">
           <span>Дата</span>
-          <input className="field" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </label>
       </div>
-      <span className="note">{take ? 'На какой счёт' : 'С какого счёта'}</span>
+      <span className="small muted">{take ? 'На какой счёт' : 'С какого счёта'}</span>
       <div className="chips scroll" role="group" aria-label={take ? 'На какой счёт' : 'С какого счёта'}>
         {others.map((a) => (
           <button key={a.account.id} type="button" aria-pressed={a.account.id === account} className={'chip' + (a.account.id === account ? ' sel' : '')} style={{ minWidth: 44, padding: '0 10px' }} onClick={() => setAccount(a.account.id)}>
@@ -51,11 +51,11 @@ function GoalMove({ snap, view, take, act, onDone }: { snap: Snapshot; view: Goa
         ))}
       </div>
       <ErrorText text={error} />
-      <div className="wrap">
+      <div className="sec-actions">
         <button type="button" className="btn own" onClick={save}>
           {take ? 'Взять' : 'Отложить'}
         </button>
-        <button type="button" className="btn ghost" onClick={onDone}>
+        <button type="button" className="btn line" onClick={onDone}>
           Отмена
         </button>
       </div>
@@ -82,22 +82,22 @@ function GoalEditor({ snap, view, act, onClose }: { snap: Snapshot; view: GoalVi
   };
   return (
     <div className="card stack gap12">
-      <h2 className="h2">{g ? 'Цель' : 'Новая цель'}</h2>
+      <h2 className="sec">{g ? 'Цель' : 'Новая цель'}</h2>
       <div className="form-grid">
-        <label className="label">
+        <label className="field">
           <span>На что копите</span>
-          <input className="field" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Например, отпуск" />
+          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Например, отпуск" />
         </label>
-        <label className="label">
+        <label className="field">
           <span>Сколько нужно, ₽</span>
-          <input className="field num" inputMode="decimal" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="0" />
+          <input className="input num" inputMode="decimal" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="0" />
         </label>
-        <label className="label">
+        <label className="field">
           <span>К какой дате (необязательно)</span>
-          <input className="field" type="date" value={due} onChange={(e) => setDue(e.target.value)} />
+          <input className="input" type="date" value={due} onChange={(e) => setDue(e.target.value)} />
         </label>
       </div>
-      <span className="note">Куда откладывать</span>
+      <span className="small muted">Куда откладывать</span>
       <div className="chips scroll" role="group" aria-label="Счёт цели">
         {choice.map((a) => (
           <button key={a.account.id} type="button" aria-pressed={a.account.id === account} className={'chip' + (a.account.id === account ? ' sel' : '')} style={{ minWidth: 44, padding: '0 10px' }} onClick={() => setAccount(a.account.id)}>
@@ -105,16 +105,16 @@ function GoalEditor({ snap, view, act, onClose }: { snap: Snapshot; view: GoalVi
           </button>
         ))}
       </div>
-      {!saving.length && <p className="note warn">Накопительного счёта нет. Заведите его в настройках (тип «Накопительный»), чтобы цель шла в «Отложено».</p>}
-      <p className="note" style={{ marginTop: -6 }}>
+      {!saving.length && <p className="small warn-text">Накопительного счёта нет. Заведите его в настройках (тип «Накопительный»), чтобы цель шла в «Отложено».</p>}
+      <p className="small muted" style={{ marginTop: -6 }}>
         «Отложить» — перевод на этот счёт с меткой цели. На одном счёте можно копить на несколько целей.
       </p>
       <ErrorText text={error} />
-      <div className="wrap">
+      <div className="sec-actions">
         <button type="button" className="btn own" onClick={save}>
           {g ? 'Сохранить' : 'Записать цель'}
         </button>
-        <button type="button" className="btn ghost" onClick={onClose}>
+        <button type="button" className="btn line" onClick={onClose}>
           Отмена
         </button>
       </div>
@@ -137,7 +137,7 @@ function GoalRow({ snap, view, act, onEdit }: { snap: Snapshot; view: GoalView; 
         <span className="opicon own">
           <Icon name="interest" size={18} />
         </span>
-        <span className="stack" style={{ minWidth: 0, gap: 4 }}>
+        <span className="stack gap0" style={{ minWidth: 0, gap: 4 }}>
           <span className="optitle">{g.title}</span>
           <Bar value={view.saved} limit={g.target} />
           <span className="opsub">{sub}</span>
@@ -169,24 +169,24 @@ function GoalRow({ snap, view, act, onEdit }: { snap: Snapshot; view: GoalView; 
           {move ? (
             <GoalMove snap={snap} view={view} take={move === 'take'} act={act} onDone={() => setMove(null)} />
           ) : (
-            <div className="wrap">
+            <div className="sec-actions">
               {!g.done && (
                 <button type="button" className="btn own" onClick={() => setMove('put')}>
                   Отложить
                 </button>
               )}
               {view.saved > 0 && (
-                <button type="button" className="btn ghost" onClick={() => setMove('take')}>
+                <button type="button" className="btn line" onClick={() => setMove('take')}>
                   Взять из цели
                 </button>
               )}
-              <button type="button" className="btn ghost" onClick={onEdit}>
+              <button type="button" className="btn line" onClick={onEdit}>
                 Изменить
               </button>
-              <button type="button" className="btn ghost" onClick={() => act.run(api.goalSave({ ...g, done: !g.done }), g.done ? 'Цель снова в работе' : 'Цель достигнута!')}>
+              <button type="button" className="btn line" onClick={() => act.run(api.goalSave({ ...g, done: !g.done }), g.done ? 'Цель снова в работе' : 'Цель достигнута!')}>
                 {g.done ? 'Вернуть в работу' : 'Цель достигнута'}
               </button>
-              <button type="button" className="btn link" onClick={() => act.run(api.goalDelete(g.id), 'Цель удалена, переводы остались в ленте')}>
+              <button type="button" className="link-btn warn-text" onClick={() => act.run(api.goalDelete(g.id), 'Цель удалена, переводы остались в ленте')}>
                 Удалить
               </button>
             </div>
@@ -203,14 +203,14 @@ export default function Savings({ snap, act, goSettings }: { snap: Snapshot; act
   const goalView = edit && edit !== 'new' ? snap.goals.find((v) => v.goal.id === edit) ?? null : null;
   return (
     <div className="stack gap26">
-      <section className="stack">
+      <section className="stack gap0">
         <div className="between" style={{ marginBottom: 8 }}>
-          <h2 className="h2">Отложено</h2>
+          <h2 className="sec">Отложено</h2>
           <span className="num" style={{ fontWeight: 500 }}>
             {rub(snap.saved)}
           </span>
         </div>
-        <p className="note" style={{ marginBottom: 6 }}>
+        <p className="small muted" style={{ marginBottom: 6 }}>
           {snap.saved_in_mine ? 'Входит в «Мои деньги» — так задано в настройках.' : 'Не входит в «Мои деньги»: это деньги на потом. Включить — в настройках, раздел «Счета».'}
         </p>
         {accounts.map((a) => {
@@ -221,30 +221,30 @@ export default function Savings({ snap, act, goSettings }: { snap: Snapshot; act
               <span className="opicon own">
                 <Icon name={a.account.kind === 'deposit' ? 'interest' : 'finance'} size={18} />
               </span>
-              <span className="stack" style={{ minWidth: 0, gap: 2 }}>
+              <span className="stack gap0" style={{ minWidth: 0, gap: 2 }}>
                 <span className="between">
                   <span>{a.account.name}</span>
                   <span className="num">{rub(a.balance, a.account.currency)}</span>
                 </span>
                 {d && f && (
-                  <span className="note">
+                  <span className="small muted">
                     {rateText(d.rate)}% годовых{d.capitalize ? ', с капитализацией' : ''} · ≈{NB}+{rub(f.month)} в месяц
                     {f.until && f.days_left != null && f.days_left >= 0 ? ` · до ${dMon(f.until)}: доход ≈${NB}${rub(f.income)}, будет ≈${NB}${rub(f.at_end)}` : f.until ? ` · срок закончился ${dMon(f.until)}` : ''}
                   </span>
                 )}
-                {a.account.kind === 'deposit' && !d && <span className="note">Условия вклада не заданы — укажите ставку и срок в настройках.</span>}
+                {a.account.kind === 'deposit' && !d && <span className="small muted">Условия вклада не заданы — укажите ставку и срок в настройках.</span>}
               </span>
             </div>
           );
         })}
-        {accounts.length === 0 && <p className="empty">Накопительных счетов и вкладов нет. Заведите их в настройках: тип счёта «Накопительный» или «Вклад».</p>}
-        <button type="button" className="btn link" style={{ alignSelf: 'flex-start', color: 'var(--own)', padding: 0 }} onClick={goSettings}>
+        {accounts.length === 0 && <p className="row muted">Накопительных счетов и вкладов нет. Заведите их в настройках: тип счёта «Накопительный» или «Вклад».</p>}
+        <button type="button" className="link-btn" style={{ alignSelf: 'flex-start' }} onClick={goSettings}>
           Счета и вклады — в настройках
         </button>
       </section>
 
-      <section className="stack">
-        <h2 className="h2" style={{ marginBottom: 8 }}>
+      <section className="stack gap0">
+        <h2 className="sec" style={{ marginBottom: 8 }}>
           Цели
         </h2>
         {edit === 'new' && <GoalEditor snap={snap} view={null} act={act} onClose={() => setEdit(null)} />}
@@ -255,9 +255,9 @@ export default function Savings({ snap, act, goSettings }: { snap: Snapshot; act
             <GoalRow key={v.goal.id} snap={snap} view={v} act={act} onEdit={() => setEdit(v.goal.id)} />
           ),
         )}
-        {snap.goals.length === 0 && edit !== 'new' && <p className="empty">Отпуск, ремонт, подушка безопасности — «Карман» посчитает, сколько откладывать в месяц, чтобы успеть.</p>}
+        {snap.goals.length === 0 && edit !== 'new' && <p className="row muted">Отпуск, ремонт, подушка безопасности — «Карман» посчитает, сколько откладывать в месяц, чтобы успеть.</p>}
         {edit !== 'new' && (
-          <button type="button" className="btn ghost" style={{ marginTop: 10, alignSelf: 'flex-start' }} onClick={() => setEdit('new')}>
+          <button type="button" className="btn line" style={{ marginTop: 10, alignSelf: 'flex-start' }} onClick={() => setEdit('new')}>
             Новая цель
           </button>
         )}

@@ -80,7 +80,7 @@ export function DueRow({ snap, due, act, compact = false }: { snap: Snapshot; du
   return (
     <div className="duerow">
       <div className="between" style={{ alignItems: 'flex-start' }}>
-        <span className="stack" style={{ minWidth: 0 }}>
+        <span className="stack gap0" style={{ minWidth: 0 }}>
           <span className="optitle">{due.title}</span>
           <span className={'opsub' + (late ? ' warn' : '')}>
             {dueText(due.days)}, {dMon(due.date)} · {what}
@@ -91,7 +91,7 @@ export function DueRow({ snap, due, act, compact = false }: { snap: Snapshot; du
         </span>
       </div>
       {!paying && (
-        <div className="wrap" style={{ gap: 6 }}>
+        <div className="sec-actions" style={{ gap: 6 }}>
           {due.kind === 'plan' && !due.auto && (
             <button type="button" className="btn own small" onClick={() => act.run(api.planPay(due.id, due.date, null, null), `Оплачено: ${due.title}`)}>
               Оплачено
@@ -103,7 +103,7 @@ export function DueRow({ snap, due, act, compact = false }: { snap: Snapshot; du
             </button>
           )}
           {due.kind === 'plan' && (
-            <button type="button" className="btn ghost small" onClick={() => act.run(api.planSkip(due.id, due.date), `Пропущено: ${due.title}, ${dMon(due.date)}`)}>
+            <button type="button" className="btn line small" onClick={() => act.run(api.planSkip(due.id, due.date), `Пропущено: ${due.title}, ${dMon(due.date)}`)}>
               Пропустить
             </button>
           )}
@@ -136,23 +136,23 @@ function DebtPay({ snap, view, act, onDone }: { snap: Snapshot; view: DebtView; 
   return (
     <div className="stack gap10" style={{ paddingTop: 6 }}>
       <div className="form-grid">
-        <label className="label">
+        <label className="field">
           <span>Сумма, ₽</span>
-          <input className="field num" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus />
+          <input className="input num" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus />
         </label>
-        <label className="label">
+        <label className="field">
           <span>Дата</span>
-          <input className="field" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </label>
       </div>
-      <span className="note">{iOwe ? 'С какого счёта отдаёте' : 'На какой счёт пришли деньги'}</span>
+      <span className="small muted">{iOwe ? 'С какого счёта отдаёте' : 'На какой счёт пришли деньги'}</span>
       <AccountChips snap={snap} value={account} onPick={setAccount} label={iOwe ? 'С какого счёта' : 'На какой счёт'} />
       <ErrorText text={error} />
-      <div className="wrap">
+      <div className="sec-actions">
         <button type="button" className="btn own" onClick={save}>
           Записать возврат
         </button>
-        <button type="button" className="btn ghost" onClick={onDone}>
+        <button type="button" className="btn line" onClick={onDone}>
           Отмена
         </button>
       </div>
@@ -195,37 +195,37 @@ function DebtEditor({ snap, view, act, onClose }: { snap: Snapshot; view: DebtVi
   };
   return (
     <div className="card stack gap12">
-      <h2 className="h2">{d ? 'Долг' : 'Новый долг'}</h2>
-      <Seg
+      <h2 className="sec">{d ? 'Долг' : 'Новый долг'}</h2>
+      <Seg cols
         label="Кто кому должен"
         value={dir}
-        onPick={setDir}
-        items={[
-          { id: 'i_owe', label: 'Я должен' },
-          { id: 'owed_to_me', label: 'Мне должны' },
+        onChange={setDir}
+        options={[
+          ['i_owe', 'Я должен'],
+          ['owed_to_me', 'Мне должны'],
         ]}
       />
       <div className="form-grid">
-        <label className="label">
+        <label className="field">
           <span>{iOwe ? 'Кому' : 'Кто'}</span>
-          <input className="field" value={who} onChange={(e) => setWho(e.target.value)} placeholder={iOwe ? 'Например, Сбербанк или Иван' : 'Например, Иван'} />
+          <input className="input" value={who} onChange={(e) => setWho(e.target.value)} placeholder={iOwe ? 'Например, Сбербанк или Иван' : 'Например, Иван'} />
         </label>
-        <label className="label">
+        <label className="field">
           <span>{iOwe ? 'Сколько осталось вернуть, ₽' : 'Сколько должны, ₽'}</span>
-          <input className="field num" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+          <input className="input num" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
         </label>
-        <label className="label">
+        <label className="field">
           <span>Когда появился</span>
-          <input className="field" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </label>
-        <label className="label">
+        <label className="field">
           <span>Вернуть до (необязательно)</span>
-          <input className="field" type="date" value={due} onChange={(e) => setDue(e.target.value)} />
+          <input className="input" type="date" value={due} onChange={(e) => setDue(e.target.value)} />
         </label>
       </div>
-      <label className="label">
+      <label className="field">
         <span>Заметка</span>
-        <input className="field" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Например, за ремонт машины" />
+        <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Например, за ремонт машины" />
       </label>
       {!d && (
         <>
@@ -233,7 +233,7 @@ function DebtEditor({ snap, view, act, onClose }: { snap: Snapshot; view: DebtVi
             {iOwe ? 'Деньги пришли на счёт — записать' : 'Деньги ушли со счёта — записать'}
           </Check>
           {money && <AccountChips snap={snap} value={account} onPick={setAccount} label="Счёт" />}
-          <p className="note" style={{ marginTop: -6 }}>
+          <p className="small muted" style={{ marginTop: -6 }}>
             Сам долг «Мои деньги» не уменьшает: меняются только остатки на счетах, когда деньги действительно двигаются.
           </p>
         </>
@@ -246,16 +246,16 @@ function DebtEditor({ snap, view, act, onClose }: { snap: Snapshot; view: DebtVi
           {credit && (
             <div className="stack gap10">
               <div className="form-grid">
-                <label className="label">
+                <label className="field">
                   <span>Платёж в месяц, ₽</span>
-                  <input className="field num" inputMode="decimal" value={pay} onChange={(e) => setPay(e.target.value)} placeholder="0" />
+                  <input className="input num" inputMode="decimal" value={pay} onChange={(e) => setPay(e.target.value)} placeholder="0" />
                 </label>
-                <label className="label">
+                <label className="field">
                   <span>Ближайший платёж</span>
-                  <input className="field" type="date" value={first} onChange={(e) => setFirst(e.target.value)} />
+                  <input className="input" type="date" value={first} onChange={(e) => setFirst(e.target.value)} />
                 </label>
               </div>
-              <span className="note">С какого счёта платите</span>
+              <span className="small muted">С какого счёта платите</span>
               <AccountChips snap={snap} value={account} onPick={setAccount} label="Счёт платежа" />
               <Check checked={auto} onChange={setAuto}>
                 Списывается само (автоплатёж)
@@ -265,11 +265,11 @@ function DebtEditor({ snap, view, act, onClose }: { snap: Snapshot; view: DebtVi
         </>
       )}
       <ErrorText text={error} />
-      <div className="wrap">
+      <div className="sec-actions">
         <button type="button" className="btn own" onClick={save}>
           {d ? 'Сохранить' : 'Записать долг'}
         </button>
-        <button type="button" className="btn ghost" onClick={onClose}>
+        <button type="button" className="btn line" onClick={onClose}>
           Отмена
         </button>
       </div>
@@ -311,46 +311,46 @@ function PlanEditor({ snap, view, act, onClose }: { snap: Snapshot; view: PlanVi
   };
   return (
     <div className="card stack gap12">
-      <h2 className="h2">{p ? 'Регулярный платёж' : 'Новый регулярный платёж'}</h2>
+      <h2 className="sec">{p ? 'Регулярный платёж' : 'Новый регулярный платёж'}</h2>
       <div className="form-grid">
-        <label className="label">
+        <label className="field">
           <span>Название</span>
-          <input className="field" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Например, Интернет" />
+          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Например, Интернет" />
         </label>
-        <label className="label">
+        <label className="field">
           <span>Сумма, {SIGN[cur] || cur}</span>
-          <input className="field num" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+          <input className="input num" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
         </label>
       </div>
-      <span className="note">Счёт</span>
+      <span className="small muted">Счёт</span>
       <AccountChips snap={snap} value={account} onPick={setAccount} label="Счёт" />
-      <Seg
+      <Seg cols
         label="Как часто"
         value={every}
-        onPick={setEvery}
-        items={[
-          { id: 'month', label: 'Каждый месяц' },
-          { id: 'week', label: 'Неделя' },
-          { id: 'year', label: 'Год' },
+        onChange={setEvery}
+        options={[
+          ['month', 'Каждый месяц'],
+          ['week', 'Неделя'],
+          ['year', 'Год'],
         ]}
       />
       <div className="form-grid">
-        <label className="label">
+        <label className="field">
           <span>{p ? 'Первый платёж' : 'Ближайший платёж'}</span>
-          <input className="field" type="date" value={start} onChange={(e) => setStart(e.target.value)} />
+          <input className="input" type="date" value={start} onChange={(e) => setStart(e.target.value)} />
         </label>
-        <label className="label">
+        <label className="field">
           <span>Последний (необязательно)</span>
-          <input className="field" type="date" value={until} onChange={(e) => setUntil(e.target.value)} />
+          <input className="input" type="date" value={until} onChange={(e) => setUntil(e.target.value)} />
         </label>
       </div>
-      <p className="note" style={{ marginTop: -6 }}>
+      <p className="small muted" style={{ marginTop: -6 }}>
         {start ? 'Повтор: ' + everyText({ ...(p as Plan), every, start }) + '.' : ''}
       </p>
       {credits.length > 0 && (
-        <label className="label">
+        <label className="field">
           <span>Кредит или рассрочка</span>
-          <select className="field" value={debt} onChange={(e) => setDebt(e.target.value)}>
+          <select className="input" value={debt} onChange={(e) => setDebt(e.target.value)}>
             <option value="">Нет — обычный расход</option>
             {credits.map((v) => (
               <option key={v.debt.id} value={v.debt.id}>
@@ -374,9 +374,9 @@ function PlanEditor({ snap, view, act, onClose }: { snap: Snapshot; view: PlanVi
           )}
         </div>
       )}
-      <label className="label">
+      <label className="field">
         <span>Напоминать</span>
-        <select className="field" value={remind} onChange={(e) => setRemind(e.target.value)}>
+        <select className="input" value={remind} onChange={(e) => setRemind(e.target.value)}>
           {REMIND.map((r) => (
             <option key={r.id} value={r.id}>
               {r.id === '' ? `Как в настройках (${REMIND.find((x) => x.id === String(snap.remind_days))?.label.toLowerCase() ?? 'за ' + snap.remind_days + ' дн.'})` : r.label}
@@ -387,7 +387,7 @@ function PlanEditor({ snap, view, act, onClose }: { snap: Snapshot; view: PlanVi
       <Check checked={auto} onChange={setAuto}>
         Списывается само (автоплатёж с карты)
       </Check>
-      <p className="note" style={{ marginTop: -6 }}>
+      <p className="small muted" style={{ marginTop: -6 }}>
         {auto ? 'В день платежа операция запишется сама. Если списания не было — удалите её или нажмите «Пропустить».' : 'В день платежа «Карман» напомнит, а вы нажмёте «Оплачено».'}
       </p>
       {p && (
@@ -396,11 +396,11 @@ function PlanEditor({ snap, view, act, onClose }: { snap: Snapshot; view: PlanVi
         </Check>
       )}
       <ErrorText text={error} />
-      <div className="wrap">
+      <div className="sec-actions">
         <button type="button" className="btn own" onClick={save}>
           {p ? 'Сохранить' : 'Записать платёж'}
         </button>
-        <button type="button" className="btn ghost" onClick={onClose}>
+        <button type="button" className="btn line" onClick={onClose}>
           Отмена
         </button>
       </div>
@@ -427,13 +427,13 @@ function DebtRow({ snap, view, act, onEdit }: { snap: Snapshot; view: DebtView; 
         <span className="opicon own">
           <Icon name="debt" size={19} />
         </span>
-        <span className="stack" style={{ minWidth: 0 }}>
+        <span className="stack gap0" style={{ minWidth: 0 }}>
           <span className="optitle">{d.who}</span>
           <span className={'opsub' + (view.overdue ? ' warn' : '')}>{sub}</span>
         </span>
         <span className="opright">
           <span className={'amount' + (iOwe ? '' : ' in')}>{rub(d.closed ? 0 : view.left)}</span>
-          {view.repaid > 0 && view.left > 0 && <span className="note faint">из {rub(d.amount)}</span>}
+          {view.repaid > 0 && view.left > 0 && <span className="small muted muted3">из {rub(d.amount)}</span>}
         </span>
       </button>
       {open && (
@@ -462,7 +462,7 @@ function DebtRow({ snap, view, act, onEdit }: { snap: Snapshot; view: DebtView; 
             </div>
           )}
           {history.length > 0 && (
-            <div className="stack" style={{ gap: 2 }}>
+            <div className="stack gap0" style={{ gap: 2 }}>
               {history.slice(0, 6).map((o) => {
                 const v = opView(snap, o);
                 return (
@@ -479,21 +479,21 @@ function DebtRow({ snap, view, act, onEdit }: { snap: Snapshot; view: DebtView; 
           {paying ? (
             <DebtPay snap={snap} view={view} act={act} onDone={() => setPaying(false)} />
           ) : (
-            <div className="wrap">
+            <div className="sec-actions">
               {!d.closed && view.left > 0 && (
                 <button type="button" className="btn own" onClick={() => setPaying(true)}>
                   Записать возврат
                 </button>
               )}
-              <button type="button" className="btn ghost" onClick={onEdit}>
+              <button type="button" className="btn line" onClick={onEdit}>
                 Изменить
               </button>
-              <button type="button" className="btn ghost" onClick={() => act.run(api.debtSave({ ...d, closed: !d.closed }, null), d.closed ? 'Долг открыт снова' : 'Долг закрыт')}>
+              <button type="button" className="btn line" onClick={() => act.run(api.debtSave({ ...d, closed: !d.closed }, null), d.closed ? 'Долг открыт снова' : 'Долг закрыт')}>
                 {d.closed ? 'Открыть снова' : 'Закрыть долг'}
               </button>
               <button
                 type="button"
-                className="btn link"
+                className="link-btn warn-text"
                 onClick={() => act.run(api.debtDelete(d.id), view.plan ? 'Долг и его график удалены, записанные платежи остались в ленте' : 'Долг удалён, записанные платежи остались в ленте')}
               >
                 Удалить
@@ -522,13 +522,13 @@ function PlanRow({ snap, view, act, onEdit }: { snap: Snapshot; view: PlanView; 
         <span className="opicon own">
           <Icon name={p.debt ? 'credit' : (CATS[p.cat] || CATS.other).i} size={19} />
         </span>
-        <span className="stack" style={{ minWidth: 0 }}>
+        <span className="stack gap0" style={{ minWidth: 0 }}>
           <span className="optitle">{p.title}</span>
           <span className={'opsub' + (late ? ' warn' : '')}>{sub}</span>
         </span>
         <span className="opright">
           <span className="amount">{rub(p.amount, cur)}</span>
-          {p.auto && <span className="tag grey">само</span>}
+          {p.auto && <span className="tag">само</span>}
         </span>
       </button>
       {open && (
@@ -550,19 +550,19 @@ function PlanRow({ snap, view, act, onEdit }: { snap: Snapshot; view: PlanView; 
           {view.overdue > 1 && (
             <div className="d">
               <span>Просрочено</span>
-              <span className="warn">{view.overdue}</span>
+              <span className="warn-text">{view.overdue}</span>
             </div>
           )}
-          <div className="wrap">
+          <div className="sec-actions">
             {view.next && !p.paused && (
               <button type="button" className="btn own" onClick={() => act.run(api.planPay(p.id, view.next as string, null, null), `Оплачено: ${p.title}, ${dMon(view.next as string)}`)}>
                 Оплачено за {dMon(view.next)}
               </button>
             )}
-            <button type="button" className="btn ghost" onClick={onEdit}>
+            <button type="button" className="btn line" onClick={onEdit}>
               Изменить
             </button>
-            <button type="button" className="btn link" onClick={() => act.run(api.planDelete(p.id), 'Платёж удалён, записанные операции остались в ленте')}>
+            <button type="button" className="link-btn warn-text" onClick={() => act.run(api.planDelete(p.id), 'Платёж удалён, записанные операции остались в ленте')}>
               Удалить
             </button>
           </div>
@@ -575,17 +575,17 @@ function PlanRow({ snap, view, act, onEdit }: { snap: Snapshot; view: PlanView; 
 export default function Finance({ snap, act, view, setView, goSettings, openTrip, mobile }: { snap: Snapshot; act: FinanceActions; view: FinView; setView: (v: FinView) => void; goSettings: () => void; openTrip: (id: string) => void; mobile: boolean }) {
   return (
     <div className="stack gap16">
-      <h1 className="h1">Финансы</h1>
+      <h1 className="screen-title">Финансы</h1>
       <Seg
         label="Раздел финансов"
-        fit
+        small
         value={view}
-        onPick={setView}
-        items={[
-          { id: 'pay', label: 'Платежи' },
-          { id: 'budget', label: 'Бюджет' },
-          { id: 'save', label: 'Накопления' },
-          { id: 'stats', label: 'Статистика' },
+        onChange={setView}
+        options={[
+          ['pay', 'Платежи'],
+          ['budget', 'Бюджет'],
+          ['save', 'Накопления'],
+          ['stats', 'Статистика'],
         ]}
       />
       {view === 'pay' && <Payments snap={snap} act={act} />}
@@ -610,34 +610,34 @@ function Payments({ snap, act }: { snap: Snapshot; act: FinanceActions }) {
   const planView = editPlan && editPlan !== 'new' ? snap.plans.find((v) => v.plan.id === editPlan) ?? null : null;
   return (
     <div className="stack gap26" style={{ marginTop: 10 }}>
-      <section className="stack">
+      <section className="stack gap0">
         <div className="between" style={{ marginBottom: 8 }}>
-          <h2 className="h2">Скоро</h2>
+          <h2 className="sec">Скоро</h2>
           {due.length > shown.length && (
-            <button type="button" className="btn link" style={{ color: 'var(--own)', padding: 0 }} onClick={() => setAllDue(true)}>
+            <button type="button" className="link-btn" onClick={() => setAllDue(true)}>
               Весь месяц: {due.length}
             </button>
           )}
         </div>
-        {shown.length === 0 && <p className="empty">{due.length ? `Ближайший платёж — ${dMon(due[0].date)}: ${due[0].title}.` : 'Платежей и сроков в ближайший месяц нет.'}</p>}
+        {shown.length === 0 && <p className="row muted">{due.length ? `Ближайший платёж — ${dMon(due[0].date)}: ${due[0].title}.` : 'Платежей и сроков в ближайший месяц нет.'}</p>}
         {shown.map((u) => (
           <DueRow key={u.kind + u.id + u.date} snap={snap} due={u} act={act} />
         ))}
       </section>
 
-      <section className="stack">
-        <h2 className="h2" style={{ marginBottom: 8 }}>
+      <section className="stack gap0">
+        <h2 className="sec" style={{ marginBottom: 8 }}>
           Долги
         </h2>
         {(snap.i_owe > 0 || snap.owed_to_me > 0) && (
-          <div className="figures" style={{ marginBottom: 6 }}>
-            <div className="figure" style={{ cursor: 'default' }}>
+          <div className="figs" style={{ marginBottom: 6 }}>
+            <div className="fig" style={{ cursor: 'default' }}>
               <span className="lab">Я должен</span>
               <span className="val" style={{ fontSize: 22, lineHeight: '28px' }}>
                 {rub(snap.i_owe)}
               </span>
             </div>
-            <div className="figure" style={{ cursor: 'default' }}>
+            <div className="fig" style={{ cursor: 'default' }}>
               <span className="lab">Мне должны</span>
               <span className="val" style={{ fontSize: 22, lineHeight: '28px' }}>
                 {rub(snap.owed_to_me)}
@@ -653,7 +653,7 @@ function Payments({ snap, act }: { snap: Snapshot; act: FinanceActions }) {
             <DebtRow key={v.debt.id} snap={snap} view={v} act={act} onEdit={() => setEditDebt(v.debt.id)} />
           ),
         )}
-        {openDebts.length === 0 && editDebt !== 'new' && <p className="empty">Долгов нет. Кредит или рассрочку тоже можно записать как долг — с графиком платежей.</p>}
+        {openDebts.length === 0 && editDebt !== 'new' && <p className="row muted">Долгов нет. Кредит или рассрочку тоже можно записать как долг — с графиком платежей.</p>}
         {closedDebts.length > 0 && (
           <button type="button" className="collapse" aria-expanded={showClosed} onClick={() => setShowClosed(!showClosed)}>
             <span>Возвращённые и закрытые: {closedDebts.length}</span>
@@ -669,14 +669,14 @@ function Payments({ snap, act }: { snap: Snapshot; act: FinanceActions }) {
             ),
           )}
         {editDebt !== 'new' && (
-          <button type="button" className="btn ghost" style={{ marginTop: 10, alignSelf: 'flex-start' }} onClick={() => setEditDebt('new')}>
+          <button type="button" className="btn line" style={{ marginTop: 10, alignSelf: 'flex-start' }} onClick={() => setEditDebt('new')}>
             Новый долг
           </button>
         )}
       </section>
 
-      <section className="stack">
-        <h2 className="h2" style={{ marginBottom: 8 }}>
+      <section className="stack gap0">
+        <h2 className="sec" style={{ marginBottom: 8 }}>
           Регулярные платежи
         </h2>
         {editPlan === 'new' && <PlanEditor snap={snap} view={null} act={act} onClose={() => setEditPlan(null)} />}
@@ -687,13 +687,13 @@ function Payments({ snap, act }: { snap: Snapshot; act: FinanceActions }) {
             <PlanRow key={v.plan.id} snap={snap} view={v} act={act} onEdit={() => setEditPlan(v.plan.id)} />
           ),
         )}
-        {snap.plans.length === 0 && editPlan !== 'new' && <p className="empty">Связь, аренда, подписки, коммуналка — «Карман» напомнит заранее, а автоплатежи запишет сам.</p>}
+        {snap.plans.length === 0 && editPlan !== 'new' && <p className="row muted">Связь, аренда, подписки, коммуналка — «Карман» напомнит заранее, а автоплатежи запишет сам.</p>}
         {editPlan !== 'new' && (
-          <button type="button" className="btn ghost" style={{ marginTop: 10, alignSelf: 'flex-start' }} onClick={() => setEditPlan('new')}>
+          <button type="button" className="btn line" style={{ marginTop: 10, alignSelf: 'flex-start' }} onClick={() => setEditPlan('new')}>
             Новый платёж
           </button>
         )}
-        <p className="note" style={{ marginTop: 10 }}>
+        <p className="small muted" style={{ marginTop: 10 }}>
           Напоминания: {snap.remind_days ? `за ${snap.remind_days}${NB}дн. и в день платежа` : 'в день платежа'} — меняется в настройках.
         </p>
       </section>

@@ -1,265 +1,27 @@
-/* Вид из макета «Карман». Цвета задаются переменными (theme.ts). */
+/* Свой вид «Кармана» — то, чего нет в общих стилях kit (они подключаются раньше, main.tsx).
+   Цвета — переменные схемы (theme.ts kit); здесь только затемнение под листом ввода. */
 :root {
-  --bg: #eef2f3;
-  --surf: #f9fbfb;
-  --inset: #e3e9eb;
-  --ink: #15232d;
-  --ink2: #3f4f5a;
-  --ink3: #566671;
-  --line: #cdd6da;
-  --work: #a64a08;
-  --workBg: #f7e6d8;
-  --onWork: #ffffff;
-  --own: #0e5a8a;
-  --ownBg: #dceaf3;
-  --onOwn: #ffffff;
-  --pos: #0b6b57;
-  --warn: #a4262c;
-  --warnBg: #f8e3e1;
   --scrim: rgba(15, 25, 32, 0.45);
-  --num: 'Geologica', 'Golos Text', Arial, sans-serif;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html,
-body,
-#root {
-  height: 100%;
-  margin: 0;
-}
-
-body {
-  background: var(--bg);
-  color: var(--ink);
-  font-family: 'Golos Text', 'Segoe UI', Roboto, Arial, sans-serif;
-  font-size: 15px;
-  line-height: 21px;
-  font-variant-numeric: tabular-nums;
-  -webkit-text-size-adjust: 100%;
-  -webkit-tap-highlight-color: transparent;
-}
-
-button,
-input,
-select,
-textarea {
-  font: inherit;
-  color: inherit;
-}
-
-button {
-  cursor: pointer;
-}
-
-.num {
-  font-family: var(--num);
 }
 
 /* ——— Оболочка ——— */
-.app {
-  height: 100%;
-  display: flex;
-  background: var(--bg);
-}
-
-.app.phone {
-  flex-direction: column;
-  position: relative;
-  overflow: hidden;
-}
-
-.main {
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-  overflow-y: auto;
-  scrollbar-width: none;
-}
-
-.phone .main {
-  padding: max(20px, env(safe-area-inset-top)) 16px 104px;
-}
-
-.desktop .main {
-  padding: 32px 36px 60px;
-}
-
-.inner {
-  margin: 0 auto;
-  min-width: 0;
-}
-
-.desktop .inner.narrow {
+.app.wide .inner.narrow {
   max-width: 880px;
 }
 
-.side {
-  flex: 0 0 232px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 28px 14px;
-  border-right: 1px solid var(--line);
+/* «Карман» длиннее «Полки»: название в боковом меню чуть мельче, чтобы поместилось в ширину меню. */
+.wordmark {
+  font-size: 50px;
+  line-height: 56px;
 }
 
-/* Логотип — по центру бокового меню. */
-.logo {
-  margin: 0 0 24px;
-  text-align: center;
-  font-family: var(--num);
-  font-weight: 500;
-  font-size: 44px;
-  line-height: 50px;
-  letter-spacing: -0.015em;
-}
-
-.newop {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 44px;
-  margin-bottom: 14px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 12px;
-  background: var(--ink);
-  color: var(--bg);
-  font-weight: 500;
-}
-
-.navitem {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 44px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 12px;
-  background: transparent;
-  color: var(--ink2);
-  text-align: left;
-}
-
-.navitem.on {
-  background: var(--inset);
-  color: var(--ink);
-  font-weight: 600;
-}
-
-.bottomnav {
-  flex: none;
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
-  padding: 4px 4px max(6px, env(safe-area-inset-bottom));
-  background: var(--surf);
-  border-top: 1px solid var(--line);
-}
-
-.bottomnav button {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  min-height: 56px;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--ink2);
-  font-size: 12px;
-  line-height: 16px;
-}
-
-.bottomnav button.on {
-  color: var(--ink);
-  font-weight: 600;
-}
-
-.fab {
-  position: absolute;
-  left: 50%;
-  bottom: calc(78px + env(safe-area-inset-bottom));
-  z-index: 3;
-  transform: translateX(-50%);
-  display: grid;
-  place-items: center;
-  width: 58px;
-  height: 58px;
-  border: 0;
-  border-radius: 17px;
-  background: var(--ink);
-  color: var(--bg);
-}
-
-.toast {
-  position: absolute;
-  left: 16px;
-  right: 16px;
-  bottom: calc(146px + env(safe-area-inset-bottom));
-  z-index: 8;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 14px;
-  border-radius: 12px;
-  background: var(--ink);
-  color: var(--bg);
-  font-size: 14px;
-  line-height: 19px;
-}
-
-.desktop .toast {
-  position: fixed;
-  left: 256px;
-  right: auto;
-  bottom: 24px;
-  max-width: 420px;
-}
-
-/* ——— Текст ——— */
-.h1 {
-  margin: 0;
-  font-family: var(--num);
-  font-weight: 400;
-  font-size: 26px;
-  line-height: 32px;
-}
-
-.h2 {
-  margin: 0;
-  font-family: var(--num);
-  font-weight: 500;
-  font-size: 17px;
-  line-height: 22px;
-}
-
-.note {
-  margin: 0;
-  font-size: 13px;
-  line-height: 18px;
-  color: var(--ink2);
-}
-
-.faint {
-  color: var(--ink3);
-}
-
-.warn {
-  color: var(--warn);
-}
-
+/* ——— Текст и отступы ——— */
 .pos {
   color: var(--pos);
 }
 
-.stack {
-  display: flex;
-  flex-direction: column;
+.gap0 {
+  gap: 0;
 }
 
 .gap6 {
@@ -293,66 +55,7 @@ button {
   gap: 12px;
 }
 
-.wrap {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
 /* ——— Элементы ——— */
-.seg {
-  display: grid;
-  gap: 2px;
-  padding: 3px;
-  background: var(--inset);
-  border-radius: 12px;
-}
-
-.seg button {
-  min-height: 40px;
-  padding: 0 4px;
-  border: 0;
-  border-radius: 9px;
-  background: transparent;
-  color: var(--ink2);
-  font-weight: 500;
-}
-
-.seg button.on {
-  background: var(--ink);
-  color: var(--bg);
-}
-
-/* Подписи разной длины: колонки по словам, свободное место — поровну */
-.seg.fit {
-  grid-auto-flow: column;
-  grid-auto-columns: auto;
-}
-
-@media (max-width: 380px) {
-  .seg.fit button {
-    padding: 0 3px;
-    font-size: 14px;
-  }
-}
-
-@media (max-width: 340px) {
-  .seg.fit {
-    grid-auto-flow: row;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-.seg button.on.own {
-  background: var(--own);
-  color: var(--onOwn);
-}
-
-.seg button.on.work {
-  background: var(--work);
-  color: var(--onWork);
-}
-
 .card {
   display: flex;
   flex-direction: column;
@@ -370,18 +73,18 @@ button {
   align-items: start;
 }
 
-.line {
+.kv {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   padding: 4px 0;
 }
 
-.line > span:first-child {
+.kv > span:first-child {
   color: var(--ink2);
 }
 
-.line > span:last-child {
+.kv > span:last-child {
   flex: none;
   font-family: var(--num);
   text-align: right;
@@ -408,23 +111,6 @@ button {
   line-height: 26px;
 }
 
-.row {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 0;
-  border-top: 1px solid var(--line);
-}
-
-.row > span:first-child {
-  color: var(--ink2);
-}
-
-.row > span:last-child {
-  text-align: right;
-  overflow-wrap: anywhere;
-}
-
 .listbtn {
   display: flex;
   align-items: center;
@@ -439,88 +125,13 @@ button {
   text-align: left;
 }
 
-.btn {
-  min-height: 44px;
-  padding: 0 14px;
-  border: 0;
-  border-radius: 12px;
-  background: var(--ink);
-  color: var(--bg);
-  font-weight: 500;
-}
-
-.btn.work {
-  background: var(--work);
-  color: var(--onWork);
-}
-
-.btn.own {
-  background: var(--own);
-  color: var(--onOwn);
-}
-
-.btn.ghost {
-  background: none;
-  color: var(--ink);
-  border: 1px solid var(--line);
-}
-
-.btn.warn {
-  background: var(--warnBg);
-  color: var(--warn);
-}
-
-.btn.link {
-  min-height: 40px;
-  padding: 0 6px;
-  background: none;
-  color: var(--warn);
-  font-weight: 400;
-}
-
-.btn:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-.btn.wide {
-  min-height: 48px;
-}
-
-.field {
-  min-height: 44px;
-  padding: 0 12px;
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  background: var(--bg);
-  min-width: 0;
-}
-
-textarea.field {
-  padding: 8px 10px;
-  resize: vertical;
-  line-height: 20px;
-}
-
-.label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.label > span:first-child {
-  font-size: 13px;
-  line-height: 18px;
-  color: var(--ink2);
-}
-
-.figures {
+.figs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px 12px;
 }
 
-.figure {
+.fig {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -531,7 +142,7 @@ textarea.field {
   text-align: left;
 }
 
-.figure .lab {
+.fig .lab {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -540,7 +151,7 @@ textarea.field {
   color: var(--ink2);
 }
 
-.figure .val {
+.fig .val {
   font-family: var(--num);
   font-size: 24px;
   line-height: 30px;
@@ -563,7 +174,7 @@ textarea.field {
   border-color: var(--warn);
 }
 
-.big {
+.hero {
   margin: 0;
   font-family: var(--num);
   font-weight: 300;
@@ -572,7 +183,7 @@ textarea.field {
   letter-spacing: -0.025em;
 }
 
-.big small {
+.hero small {
   font-size: 26px;
   letter-spacing: -0.01em;
 }
@@ -685,7 +296,7 @@ textarea.field {
   outline-offset: 2px;
 }
 
-.rail .bar {
+.rail .rline {
   position: absolute;
   top: 6px;
   left: calc(50% + 7px);
@@ -694,7 +305,7 @@ textarea.field {
   background: var(--line);
 }
 
-.rail .bar.on {
+.rail .rline.on {
   background: var(--work);
 }
 
@@ -712,7 +323,7 @@ textarea.field {
 }
 
 .rail.closed .sq.on,
-.rail.closed .bar.on {
+.rail.closed .rline.on {
   background: var(--ink3);
   border-color: var(--ink3);
 }
@@ -912,12 +523,6 @@ textarea.field {
   border-top: 1px solid var(--line);
 }
 
-.btn.small {
-  min-height: 36px;
-  padding: 0 12px;
-  font-size: 14px;
-}
-
 /* Строка бюджета, вклада или цели с полоской */
 .budrow {
   display: flex;
@@ -929,30 +534,6 @@ textarea.field {
 
 .budrow > .stack {
   flex: 1;
-}
-
-/* Полоска «потрачено из лимита» */
-.bar {
-  display: block;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--inset);
-  overflow: hidden;
-}
-
-.bar > i {
-  display: block;
-  height: 100%;
-  border-radius: 3px;
-  background: var(--own);
-}
-
-.bar.near > i {
-  background: var(--work);
-}
-
-.bar.over > i {
-  background: var(--warn);
 }
 
 /* Статистика */
@@ -977,27 +558,6 @@ textarea.field {
   height: 100%;
   border-radius: 0 4px 4px 0;
   background: var(--serWork);
-}
-
-.legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 18px;
-  font-size: 13px;
-  line-height: 18px;
-  color: var(--ink2);
-}
-
-.legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.legend i {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
 }
 
 .readout {
@@ -1110,7 +670,7 @@ textarea.field {
   line-height: 28px;
 }
 
-.desktop .statfigs {
+.app.wide .statfigs {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
@@ -1128,30 +688,6 @@ textarea.field {
 
 .amount.in {
   color: var(--pos);
-}
-
-.tag {
-  padding: 0 6px;
-  border-radius: 5px;
-  font-size: 12px;
-  line-height: 18px;
-  background: var(--workBg);
-  color: var(--work);
-}
-
-.tag.grey {
-  background: var(--inset);
-  color: var(--ink2);
-}
-
-.tag.warn {
-  background: var(--warnBg);
-  color: var(--warn);
-}
-
-.tag.own {
-  background: var(--ownBg);
-  color: var(--own);
 }
 
 .opdetails {
@@ -1216,21 +752,6 @@ textarea.field {
   line-height: 20px;
 }
 
-.qr {
-  align-self: center;
-  width: 232px;
-  height: 232px;
-  padding: 8px;
-  background: #fff;
-  border-radius: 12px;
-}
-
-.qr svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
 /* ——— Быстрый ввод ——— */
 .scrim {
   position: absolute;
@@ -1241,14 +762,14 @@ textarea.field {
   background: var(--scrim);
 }
 
-.sheet {
+.entry {
   display: flex;
   flex-direction: column;
   gap: 9px;
   background: var(--surf);
 }
 
-.phone .sheet {
+.phone .entry {
   position: absolute;
   left: 0;
   right: 0;
@@ -1261,18 +782,12 @@ textarea.field {
   border-radius: 22px 22px 0 0;
 }
 
-.desktop .sheet {
+.app.wide .entry {
   flex: 0 0 400px;
   gap: 14px;
   padding: 28px 20px;
   overflow-y: auto;
   border-left: 1px solid var(--line);
-}
-
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
 }
 
 /* Окно ввода: строка «Фразой» и кнопка «Заполнить». */
@@ -1281,7 +796,7 @@ textarea.field {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 6px;
 }
-.phrase .field {
+.phrase .input {
   height: 44px;
   font-size: 14px;
 }
@@ -1291,22 +806,6 @@ textarea.field {
   gap: 6px;
   height: 44px;
   padding: 0 12px;
-}
-
-.chip {
-  min-height: 42px;
-  padding: 0 11px;
-  border: 1.5px solid transparent;
-  border-radius: 11px;
-  background: var(--inset);
-  color: var(--ink);
-  font-size: 14px;
-}
-
-.chip.sel {
-  border-color: var(--accent);
-  background: var(--tint);
-  color: var(--accent);
 }
 
 /* «Ещё N» — остальные категории. */
@@ -1401,24 +900,6 @@ textarea.field {
   align-items: center;
 }
 
-.empty {
-  padding: 18px 0;
-  border-top: 1px solid var(--line);
-  color: var(--ink2);
-}
-
-.toast button {
-  flex: none;
-  min-height: 36px;
-  padding: 0 4px;
-  border: 0;
-  background: none;
-  color: inherit;
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
 /* ——— Настройки ——— */
 .setrow {
   display: flex;
@@ -1437,62 +918,20 @@ textarea.field {
   min-width: 0;
 }
 
-.rule {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
-  gap: 12px;
-  padding: 10px 0;
-  border-top: 1px solid var(--line);
-}
-
-.rule > span:first-child {
-  color: var(--ink2);
-}
-
-.rule > span:last-child {
-  text-align: right;
-}
-
-.schemes {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
-  gap: 8px;
-}
-
-.scheme {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 68px;
-  padding: 10px 12px;
-  border: 2px solid var(--line);
-  border-radius: 12px;
-  font-size: 14px;
-  text-align: left;
-}
-
-.scheme.on {
-  border-color: var(--ink);
-}
-
-select.field {
-  appearance: auto;
-}
-
-textarea.field {
-  padding: 10px 12px;
-  resize: vertical;
+/* Строки подряд в разделе настроек — сплошным списком (как строки kit). */
+.cut-body > :is(.setrow, .listbtn, .row) + :is(.setrow, .listbtn, .row) {
+  margin-top: -8px;
 }
 
 /* Кнопка записи всегда видна, даже если лист ввода прокручивается. */
-.phone .sheet .submit {
+.phone .entry .submit {
   position: sticky;
   bottom: 0;
   box-shadow: 0 0 0 8px var(--surf);
 }
 
 @media (max-height: 760px) {
-  .phone .sheet {
+  .phone .entry {
     gap: 7px;
   }
   .keypad button {
@@ -1505,7 +944,7 @@ textarea.field {
 }
 
 @media (max-width: 1100px) {
-  .desktop .sheet {
+  .app.wide .entry {
     flex-basis: 340px;
     padding: 24px 16px;
   }
@@ -1520,20 +959,20 @@ textarea.field {
 
 /* Невысокий телефон: ряды кнопок ввода листаются вбок, чтобы сумма и цифры помещались вместе. */
 @media (max-height: 800px) {
-  .phone .sheet .chips.scroll {
+  .phone .entry .chips.scroll {
     flex-wrap: nowrap;
     overflow-x: auto;
     margin: 0 -14px;
     padding: 0 14px;
     scrollbar-width: none;
   }
-  .phone .sheet .chips.scroll::-webkit-scrollbar {
+  .phone .entry .chips.scroll::-webkit-scrollbar {
     display: none;
   }
-  .phone .sheet .chips.scroll > .chip {
+  .phone .entry .chips.scroll > .chip {
     flex: none;
   }
-  .phone .sheet .chip {
+  .phone .entry .chip {
     min-height: 38px;
   }
 }
@@ -1764,12 +1203,6 @@ button.otday.open {
   }
 }
 
-.tag.off {
-  background: var(--inset);
-  background: color-mix(in srgb, var(--pos) 16%, transparent);
-  color: var(--pos);
-}
-
 .oted {
   display: flex;
   flex-direction: column;
@@ -1778,7 +1211,7 @@ button.otday.open {
   background: var(--inset);
 }
 
-.oted .field {
+.oted .input {
   background: var(--surf);
 }
 
@@ -1841,7 +1274,7 @@ button.otday.open {
   gap: 4px;
   flex: none;
 }
-.scantimes .field {
+.scantimes .input {
   width: 70px;
   height: 38px;
   padding: 0 6px;
@@ -1886,7 +1319,7 @@ button.otday.open {
   min-height: 0;
   background: var(--surf);
 }
-.desktop .chatsheet {
+.app.wide .chatsheet {
   flex: 0 0 400px;
   padding: 24px 20px 16px;
   border-left: 1px solid var(--line);
@@ -1966,7 +1399,7 @@ button.otday.open {
   height: 46px;
 }
 @media (max-width: 1100px) {
-  .desktop .chatsheet {
+  .app.wide .chatsheet {
     flex-basis: 340px;
     padding: 20px 16px 14px;
   }
@@ -1998,80 +1431,9 @@ button.otday.open {
   font-size: 12px;
   font-weight: 600;
 }
-.findings li.warn .fmark {
+.findings li.warn-text .fmark {
   background: var(--warn);
   color: var(--surf);
-}
-
-
-/* ——— Облако ——— */
-.logincode {
-  align-self: flex-start;
-  padding: 10px 16px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  font-size: 28px;
-  line-height: 36px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  font-variant-numeric: tabular-nums;
-  user-select: all;
-}
-
-.confirmbox {
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-}
-
-/* Настройки: разделы под катом — список заголовков, раскрытый раздел — с отступом снизу. */
-.settings > .h1 {
-  margin-bottom: 14px;
-}
-.cut {
-  border-bottom: 1px solid var(--line);
-}
-.cut > .h2 {
-  margin: 0;
-}
-.cuthead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-  min-height: 54px;
-  padding: 6px 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.cuthead .chev {
-  display: inline-flex;
-  color: var(--ink3);
-  transition: transform 0.15s ease;
-}
-.cuthead[aria-expanded='true'] .chev {
-  transform: rotate(180deg);
-}
-.cuthead:focus-visible {
-  outline: 2px solid var(--own);
-  outline-offset: 2px;
-  border-radius: 8px;
-}
-.cutbody {
-  padding: 2px 0 22px;
-}
-.cutbody[hidden] {
-  display: none;
-}
-@media (prefers-reduced-motion: reduce) {
-  .cuthead .chev {
-    transition: none;
-  }
 }
 
 /* ——— Категории трат ——— */
@@ -2104,55 +1466,4 @@ button.otday.open {
   border-color: var(--accent);
   background: var(--tint);
   color: var(--accent);
-}
-
-/* ——— Wi-Fi: связанные устройства и код связи ——— */
-.wifi .h3 {
-  margin: 0;
-  font-size: 15px;
-  line-height: 20px;
-  font-weight: 500;
-}
-
-.peerrow {
-  padding: 10px 0;
-  border-top: 1px solid var(--line);
-}
-
-.dot {
-  flex: none;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  border: 2px solid var(--line);
-}
-
-.dot.on {
-  border-color: var(--pos);
-  background: var(--pos);
-}
-
-.paircard {
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--surf);
-}
-
-.paircode {
-  margin: 0;
-  font-family: var(--num);
-  font-size: 34px;
-  line-height: 40px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
-}
-
-.codefield {
-  font-family: var(--num);
-  font-size: 20px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }

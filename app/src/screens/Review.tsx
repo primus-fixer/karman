@@ -6,9 +6,9 @@ import { Icon } from '../ui';
 import { costText } from './Ai';
 
 const LEVEL: Record<Finding['level'], { mark: string; cls: string; label: string }> = {
-  problem: { mark: '!', cls: 'warn', label: 'исправить' },
+  problem: { mark: '!', cls: 'warn-text', label: 'исправить' },
   check: { mark: '?', cls: '', label: 'проверить' },
-  fine: { mark: '✓', cls: 'faint', label: 'в порядке' },
+  fine: { mark: '✓', cls: 'muted3', label: 'в порядке' },
 };
 
 /** Находки Claude списком: сначала что исправить, потом что проверить. */
@@ -58,14 +58,14 @@ export function TripCheck({ tripId, locked }: { tripId: string; locked: () => vo
           <Icon name="spark" size={18} />
           Проверка перед сдачей
         </span>
-        <button type="button" className="btn ghost small" disabled={busy} onClick={check}>
+        <button type="button" className="btn line small" disabled={busy} onClick={check}>
           {busy ? 'Claude проверяет…' : res ? 'Проверить ещё раз' : 'Проверить с Claude'}
         </button>
       </div>
-      {!res && !busy && !error && <p className="note">Claude посмотрит отчёт поездки: документы, статьи против заявки, суточные и долг — и скажет, что поправить до сдачи.</p>}
-      {busy && <p className="note">Обычно до минуты.</p>}
+      {!res && !busy && !error && <p className="small muted">Claude посмотрит отчёт поездки: документы, статьи против заявки, суточные и долг — и скажет, что поправить до сдачи.</p>}
+      {busy && <p className="small muted">Обычно до минуты.</p>}
       {res && <Findings summary={res.summary} items={res.items} />}
-      {res && res.usd > 0 && <p className="note faint">Запрос: {costText(res.usd)}</p>}
+      {res && res.usd > 0 && <p className="small muted muted3">Запрос: {costText(res.usd)}</p>}
       {error && (
         <p className="error" role="alert">
           {error}
@@ -111,12 +111,12 @@ export function MonthCard({ snap, locked }: { snap: Snapshot; locked: () => void
   const diff = ins.spent - ins.usual_to_date;
   return (
     <section className="card stack gap10" aria-label="Сводка месяца">
-      <h2 className="h2">Сводка месяца</h2>
+      <h2 className="sec">Сводка месяца</h2>
       <p style={{ margin: 0 }}>
         Потрачено {rub(ins.spent)} за {ins.days}
         {NB}дн.
         {ins.usual_to_date > 0 && (
-          <span className={diff > 0 ? 'warn' : 'faint'}>
+          <span className={diff > 0 ? 'warn-text' : 'muted3'}>
             {' '}
             — {diff > 0 ? 'больше' : 'меньше'} обычного на {rub(Math.abs(diff))}
           </span>
@@ -124,40 +124,40 @@ export function MonthCard({ snap, locked }: { snap: Snapshot; locked: () => void
       </p>
       {ins.unusual.length > 0 && (
         <div className="stack gap6">
-          <span className="note">Больше обычного</span>
+          <span className="small muted">Больше обычного</span>
           {ins.unusual.map((c) => (
             <span key={c.cat}>
-              {c.name}: {rub(c.spent)} <span className="note">(обычно {rub(c.usual)} в месяц)</span>
+              {c.name}: {rub(c.spent)} <span className="small muted">(обычно {rub(c.usual)} в месяц)</span>
             </span>
           ))}
         </div>
       )}
       {ins.big.length > 0 && (
         <div className="stack gap6">
-          <span className="note">Крупные покупки</span>
+          <span className="small muted">Крупные покупки</span>
           {ins.big.map((b) => (
             <span key={b.id}>
-              {b.title}: {rub(b.amount)} <span className="note">{dMon(b.date)}</span>
+              {b.title}: {rub(b.amount)} <span className="small muted">{dMon(b.date)}</span>
             </span>
           ))}
         </div>
       )}
       {ins.recurring.length > 0 && (
         <div className="stack gap6">
-          <span className="note">Подписки и регулярные траты</span>
+          <span className="small muted">Подписки и регулярные траты</span>
           {ins.recurring.map((r) => (
             <span key={r.title}>
-              {r.title}: {rub(r.amount)} в месяц <span className="note">· следующая ≈ {ddmm(r.next)}</span>
-              {!r.in_plans && <span className="note warn"> · не в регулярных платежах</span>}
+              {r.title}: {rub(r.amount)} в месяц <span className="small muted">· следующая ≈ {ddmm(r.next)}</span>
+              {!r.in_plans && <span className="small warn-text"> · не в регулярных платежах</span>}
             </span>
           ))}
         </div>
       )}
       <div className="stack gap6">
-        <span className="note">Прогноз «Моих денег» на конец месяца</span>
+        <span className="small muted">Прогноз «Моих денег» на конец месяца</span>
         <span>
           ≈ {rub(f.end)}{' '}
-          <span className="note">
+          <span className="small muted">
             (сейчас {rub(f.now)}
             {f.income > 0 ? `, ожидаются доходы +${rub(f.income)}` : ''}
             {f.planned > 0 ? `, регулярные платежи −${rub(f.planned)}` : ''}
@@ -167,12 +167,12 @@ export function MonthCard({ snap, locked }: { snap: Snapshot; locked: () => void
       </div>
       {aiOn(ai, 'review') && (
         <div className="stack gap10" style={{ borderTop: '1px solid var(--line)', paddingTop: 10 }}>
-          <button type="button" className="btn ghost small" style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 6 }} disabled={busy} onClick={tell}>
+          <button type="button" className="btn line small" style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 6 }} disabled={busy} onClick={tell}>
             <Icon name="spark" size={16} />
             {busy ? 'Claude пишет сводку…' : sum ? 'Пересказать ещё раз' : 'Пересказать с Claude'}
           </button>
           {sum && <Findings summary={sum.summary} items={sum.items} />}
-          {sum && sum.usd > 0 && <p className="note faint">Запрос: {costText(sum.usd)}</p>}
+          {sum && sum.usd > 0 && <p className="small muted muted3">Запрос: {costText(sum.usd)}</p>}
         </div>
       )}
       {error && (
