@@ -13,8 +13,8 @@ mock = []
 base64 = "0.22"
 karman-core = { path = "../karman-core" }
 # Облако «Кармана» — формат, обмен, клиент WebDAV и запросы из общего модуля kit (https://github.com/primus-fixer/kit).
-kit-core = { git = "https://github.com/primus-fixer/kit", rev = "43cb989f2a1423413b5ca9c9f30328688bd9da25" }
-kit-cloud = { git = "https://github.com/primus-fixer/kit", rev = "43cb989f2a1423413b5ca9c9f30328688bd9da25" }
+kit-core = { git = "https://github.com/primus-fixer/kit", rev = "c676e4a7674b71758668329760be7f4365502c76" }
+kit-cloud = { git = "https://github.com/primus-fixer/kit", rev = "c676e4a7674b71758668329760be7f4365502c76" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

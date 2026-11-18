@@ -21,7 +21,7 @@ blake2 = "0.10"
 miniz_oxide = "0.8"
 # Общий модуль kit: протокол коннектора для Claude, формат резервной копии, протокол синхронизации,
 # связь по Wi-Fi, облако (https://github.com/primus-fixer/kit).
-kit-core = { git = "https://github.com/primus-fixer/kit", rev = "43cb989f2a1423413b5ca9c9f30328688bd9da25", features = ["db"] }
+kit-core = { git = "https://github.com/primus-fixer/kit", rev = "c676e4a7674b71758668329760be7f4365502c76", features = ["db"] }
 
 [dev-dependencies]
 tempfile = "3"
