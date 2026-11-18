@@ -3,7 +3,8 @@
 //! Каждое изменение — событие с номером от устройства. Таблица записей
 //! (операции, поездки, счета, настройки) собирается из событий: при споре
 //! двух устройств побеждает более позднее изменение (по часам Лэмпорта,
-//! при равенстве — по номеру устройства).
+//! при равенстве — по номеру устройства). Открытие базы, таблицы, `meta`, выборки журнала
+//! и вложения — общие, из kit (`kit_core::db`).
 
 use crate::book::Account;
 use crate::error::{Error, Result};
@@ -12,9 +13,9 @@ use crate::finance::{Debt, Plan};
 use crate::savings::Goal;
 use crate::sync::{Event, EventBody, VersionVector};
 use crate::trip::{Op, Trip};
+use kit_core::db;
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::de::DeserializeOwned;
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -27,9 +28,7 @@ pub const MAX_BLOB: usize = 15 * 1024 * 1024;
 pub const BLOB_TYPES: [&str; 4] = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
 
 /// Номер вложения — SHA-256 содержимого.
-pub fn blob_id(data: &[u8]) -> String {
-    hex(&Sha256::digest(data))
-}
+pub use kit_core::cloud::blob_id;
 
 /// Проверяет размер, тип и первые байты файла: под видом снимка не пролезет что-то другое.
 pub fn check_blob(mime: &str, data: &[u8]) -> Result<()> {
@@ -70,29 +69,11 @@ pub fn is_plaintext_sqlite(path: &Path) -> std::io::Result<bool> {
 impl Store {
     /// Открывает или создаёт базу, зашифрованную 256-битным ключом.
     pub fn open(path: &Path, key: &[u8; 32], device: &str) -> Result<Store> {
-        let conn = Connection::open(path)?;
-        // Строку с ключом после использования затираем.
-        let mut pragma = format!("PRAGMA key = \"x'{}'\";", hex(key)).into_bytes();
-        let keyed = conn.execute_batch(std::str::from_utf8(&pragma).unwrap_or_default());
-        pragma.fill(0);
-        std::hint::black_box(&pragma);
-        keyed?;
-        conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0))
-            .map_err(|_| Error::WrongKey)?;
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-             CREATE TABLE IF NOT EXISTS events(
-               device TEXT NOT NULL, seq INTEGER NOT NULL, lamport INTEGER NOT NULL, body TEXT NOT NULL,
-               PRIMARY KEY(device, seq));
-             CREATE TABLE IF NOT EXISTS items(
-               kind TEXT NOT NULL, id TEXT NOT NULL, body TEXT, deleted INTEGER NOT NULL DEFAULT 0,
-               lamport INTEGER NOT NULL, device TEXT NOT NULL,
-               PRIMARY KEY(kind, id));
-             CREATE TABLE IF NOT EXISTS blobs(
-               id TEXT PRIMARY KEY, mime TEXT NOT NULL, size INTEGER NOT NULL, data BLOB NOT NULL,
-               added INTEGER NOT NULL);",
-        )?;
+        // Ключ, таблицы — общие (kit); строка с ключом после использования затирается.
+        let conn = db::open(path, key).map_err(|e| match e {
+            db::Open::WrongKey => Error::WrongKey,
+            db::Open::Db(e) => e.into(),
+        })?;
         let mut store = Store { conn, device: device.to_string() };
         let schema = store.meta("schema")?;
         if schema.as_deref() != Some(SCHEMA) {
@@ -153,14 +134,7 @@ impl Store {
     }
 
     fn all_events(&self) -> Result<Vec<Event>> {
-        let mut st = self.conn.prepare("SELECT device, seq, lamport, body FROM events ORDER BY lamport, device")?;
-        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?)))?;
-        let mut out = Vec::new();
-        for row in rows {
-            let (device, seq, lamport, body) = row?;
-            out.push(Event { device, seq: seq as u64, lamport: lamport as u64, body: serde_json::from_str(&body)? });
-        }
-        Ok(out)
+        db::events_by_lamport(&self.conn)?.into_iter().map(event).collect()
     }
 
     /// Сколько событий пришло из более новой версии и пока не показывается.
@@ -176,17 +150,6 @@ impl Store {
         Ok(self.conn.query_row("PRAGMA cipher_version", [], |r| r.get(0))?)
     }
 
-    fn max_lamport(&self) -> Result<u64> {
-        Ok(self.conn.query_row("SELECT coalesce(max(lamport), 0) FROM events", [], |r| r.get::<_, i64>(0))? as u64)
-    }
-
-    fn next_seq(&self) -> Result<u64> {
-        let s: i64 = self
-            .conn
-            .query_row("SELECT coalesce(max(seq), 0) FROM events WHERE device = ?1", [&self.device], |r| r.get(0))?;
-        Ok(s as u64 + 1)
-    }
-
     /// Записывает своё изменение.
     pub fn append(&mut self, body: EventBody) -> Result<Event> {
         Ok(self.append_all(vec![body])?.remove(0))
@@ -194,8 +157,8 @@ impl Store {
 
     /// Несколько своих изменений одной транзакцией.
     pub fn append_all(&mut self, bodies: Vec<EventBody>) -> Result<Vec<Event>> {
-        let mut seq = self.next_seq()?;
-        let mut lamport = self.max_lamport()?;
+        let (seq, lamport) = db::next(&self.conn, &self.device)?;
+        let (mut seq, mut lamport) = (seq as u64, lamport as u64 - 1);
         let tx = self.conn.transaction()?;
         let mut out = Vec::with_capacity(bodies.len());
         for body in bodies {
@@ -234,32 +197,19 @@ impl Store {
 
     /// Последний известный номер события от каждого устройства.
     pub fn version_vector(&self) -> Result<VersionVector> {
-        let mut st = self.conn.prepare("SELECT device, max(seq) FROM events GROUP BY device")?;
-        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64)))?;
-        let mut vv = VersionVector::new();
-        for row in rows {
-            let (d, s) = row?;
-            vv.insert(d, s);
-        }
-        Ok(vv)
+        Ok(db::versions(&self.conn)?.into_iter().map(|(d, s)| (d, s as u64)).collect())
     }
 
     /// События, которых нет у устройства с таким вектором версий.
     pub fn events_after(&self, known: &VersionVector) -> Result<Vec<Event>> {
-        let mine = self.version_vector()?;
         let mut out = Vec::new();
-        let mut st = self.conn.prepare("SELECT device, seq, lamport, body FROM events WHERE device = ?1 AND seq > ?2 ORDER BY seq")?;
-        for (device, max) in mine {
+        for (device, max) in self.version_vector()? {
             let from = known.get(&device).copied().unwrap_or(0);
             if from >= max {
                 continue;
             }
-            let rows = st.query_map(params![device, from as i64], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?))
-            })?;
-            for row in rows {
-                let (device, seq, lamport, body) = row?;
-                out.push(Event { device, seq: seq as u64, lamport: lamport as u64, body: serde_json::from_str(&body)? });
+            for r in db::events_after(&self.conn, &device, from as i64)? {
+                out.push(event(r)?);
             }
         }
         Ok(out)
@@ -267,16 +217,7 @@ impl Store {
 
     /// События одного устройства с номерами from..=to, по порядку.
     pub fn events_range(&self, device: &str, from: u64, to: u64) -> Result<Vec<Event>> {
-        let mut st = self.conn.prepare("SELECT device, seq, lamport, body FROM events WHERE device = ?1 AND seq BETWEEN ?2 AND ?3 ORDER BY seq")?;
-        let rows = st.query_map(params![device, from as i64, to as i64], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?))
-        })?;
-        let mut out = Vec::new();
-        for row in rows {
-            let (device, seq, lamport, body) = row?;
-            out.push(Event { device, seq: seq as u64, lamport: lamport as u64, body: serde_json::from_str(&body)? });
-        }
-        Ok(out)
+        db::events_range(&self.conn, device, from as i64, to as i64)?.into_iter().map(event).collect()
     }
 
     fn items<T: DeserializeOwned>(&self, kind: &str) -> Result<Vec<T>> {
@@ -374,37 +315,30 @@ impl Store {
 
     /// Тело события, если оно есть в журнале.
     pub fn event_body(&self, device: &str, seq: u64) -> Result<Option<serde_json::Value>> {
-        let body: Option<String> = self
-            .conn
-            .query_row("SELECT body FROM events WHERE device = ?1 AND seq = ?2", params![device, seq as i64], |r| r.get(0))
-            .optional()?;
-        Ok(match body {
+        Ok(match db::event_body(&self.conn, device, seq as i64)? {
             Some(b) => Some(serde_json::from_str(&b)?),
             None => None,
         })
     }
 
     pub fn event_count(&self) -> Result<u64> {
-        Ok(self.conn.query_row("SELECT count(*) FROM events", [], |r| r.get::<_, i64>(0))? as u64)
+        Ok(db::event_count(&self.conn)?)
     }
 
     pub fn meta(&self, key: &str) -> Result<Option<String>> {
-        Ok(self.conn.query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0)).optional()?)
+        Ok(db::meta(&self.conn, key)?)
     }
 
     pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
-        self.conn.execute("INSERT INTO meta(key, value) VALUES(?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value", params![key, value])?;
-        Ok(())
+        Ok(db::set_meta(&self.conn, key, value)?)
     }
 
     /// Сохраняет вложение и возвращает его номер (SHA-256). Повтор того же файла ничего не меняет.
     pub fn put_blob(&self, mime: &str, data: &[u8]) -> Result<String> {
         check_blob(mime, data)?;
         let id = blob_id(data);
-        self.conn.execute(
-            "INSERT OR IGNORE INTO blobs(id, mime, size, data, added) VALUES(?1, ?2, ?3, ?4, CAST(strftime('%s','now') AS INTEGER))",
-            params![id, mime, data.len() as i64, data],
-        )?;
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        db::insert_blob(&self.conn, &id, mime, data, now)?;
         Ok(id)
     }
 
@@ -417,14 +351,11 @@ impl Store {
     }
 
     pub fn blob(&self, id: &str) -> Result<Option<(String, Vec<u8>)>> {
-        Ok(self
-            .conn
-            .query_row("SELECT mime, data FROM blobs WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?)))
-            .optional()?)
+        Ok(db::blob(&self.conn, id)?)
     }
 
     pub fn has_blob(&self, id: &str) -> Result<bool> {
-        Ok(self.conn.query_row("SELECT count(*) FROM blobs WHERE id = ?1", [id], |r| r.get::<_, i64>(0))? > 0)
+        Ok(db::has_blob(&self.conn, id)?)
     }
 
     /// Вложения, на которые ссылаются операции и наряды.
@@ -485,11 +416,12 @@ impl Store {
 }
 
 fn insert_event(tx: &Transaction, ev: &Event) -> Result<bool> {
-    let n = tx.execute(
-        "INSERT OR IGNORE INTO events(device, seq, lamport, body) VALUES(?1, ?2, ?3, ?4)",
-        params![ev.device, ev.seq as i64, ev.lamport as i64, serde_json::to_string(&ev.body)?],
-    )?;
-    Ok(n == 1)
+    Ok(db::insert_event(tx, &ev.device, ev.seq as i64, ev.lamport as i64, &serde_json::to_string(&ev.body)?)?)
+}
+
+/// Событие журнала из строки базы.
+fn event(r: db::Row) -> Result<Event> {
+    Ok(Event { device: r.device, seq: r.seq as u64, lamport: r.lamport as u64, body: serde_json::from_str(&r.body)? })
 }
 
 fn materialize(tx: &Transaction, ev: &Event) -> Result<()> {
